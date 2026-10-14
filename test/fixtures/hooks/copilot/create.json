@@ -1,0 +1,8 @@
+{
+  "_provenance": "derived from docs.github.com hooks reference fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "sessionId": "0f3a9c2e-6b14-4a7d-9d21-8c5b1e77aa03",
+  "timestamp": 1788652802000,
+  "cwd": "/Users/dev/repos/example",
+  "toolName": "create",
+  "toolArgs": "{\"path\":\"/Users/dev/repos/example/src/config.ts\",\"file_text\":\"export const token = \\\"ghp_9747444363esztrbftaqcdztcqaekxuxfd\\\";\\n\"}"
+}

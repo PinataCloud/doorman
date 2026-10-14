@@ -1,0 +1,498 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:doorman:schemas:detections-export.v1",
+  "title": "Doorman detections export",
+  "description": "Every detection the Security Radar shows on this Mac, with the rules that raised them. Masked: no raw values.",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "generated_at",
+    "app_version",
+    "detectors",
+    "detections"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "urn:doorman:schemas:detections-export.v1",
+      "description": "This file's own schema."
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the file was written."
+    },
+    "app_version": {
+      "type": "string",
+      "description": "The app that wrote it."
+    },
+    "detectors": {
+      "type": "array",
+      "description": "Each rule that appears in `detections`, with its label and current mode.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Detector id."
+          },
+          "label": {
+            "type": "string",
+            "description": "Human label."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "observe",
+              "warn",
+              "ask",
+              "block",
+              "off",
+              "radar"
+            ]
+          }
+        }
+      }
+    },
+    "detections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/detection"
+      }
+    }
+  },
+  "$defs": {
+    "detection": {
+      "title": "Doorman detection",
+      "description": "One Security Radar finding on this Mac: which rule fired, how sure it was, the mode it was in, what enforcement did, when, where, and the masked evidence.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "finding_id",
+        "detector",
+        "severity",
+        "excerpt",
+        "occurrences",
+        "source",
+        "origin",
+        "status",
+        "first_seen_at",
+        "last_seen_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "description": "This schema's version."
+        },
+        "finding_id": {
+          "type": "string",
+          "description": "Stable identity: a hash of detector + session + key name.",
+          "minLength": 1
+        },
+        "detector": {
+          "type": "string",
+          "description": "The rule that fired: a shipped detector id, or `custom:<id>` for the person's own rule.",
+          "pattern": "^(custom:[a-z0-9][a-z0-9_-]{0,47}|[a-z][a-z0-9_]*)$"
+        },
+        "detector_label": {
+          "type": "string",
+          "description": "A custom rule's label at the time it fired."
+        },
+        "severity": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "description": "How bad it is if real."
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "description": "How sure the rule (or a model's second look) was. Absent means high."
+        },
+        "rule_mode": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "warn",
+            "ask",
+            "block",
+            "off",
+            "radar"
+          ],
+          "description": "The rule's enforcement level when this was last seen: observe/warn/ask/block, `off` (disabled), or `radar` (a Radar-only rule the guard never enforces)."
+        },
+        "app_version": {
+          "type": "string",
+          "description": "The app version that last recorded this row — which build of the detectors fired."
+        },
+        "assist": {
+          "type": "object",
+          "description": "A model's second look at the rule's hit.",
+          "required": [
+            "by",
+            "model",
+            "verdict"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "by": {
+              "type": "string",
+              "enum": [
+                "injection_classifier",
+                "second_opinion"
+              ]
+            },
+            "model": {
+              "type": "string",
+              "description": "The model's name."
+            },
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "stood_down",
+                "confirmed",
+                "unsure"
+              ]
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        },
+        "account": {
+          "type": "object",
+          "description": "What happened, in quotable fields and a sentence (lib/account.ts). Paths, command words and hosts — never a value.",
+          "required": [
+            "by",
+            "source_kind",
+            "placeholder_signals",
+            "sentence",
+            "title",
+            "so",
+            "next"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "by": {
+              "type": "string",
+              "enum": [
+                "extractor",
+                "local_reader"
+              ]
+            },
+            "source_kind": {
+              "type": "string",
+              "enum": [
+                "file",
+                "env",
+                "prompt",
+                "secret_manager",
+                "tool_output",
+                "unknown"
+              ]
+            },
+            "source_ref": {
+              "type": "string",
+              "description": "The file the value came from."
+            },
+            "name": {
+              "type": "string",
+              "description": "The secret-shaped name a value was assigned to."
+            },
+            "read_via": {
+              "type": "string",
+              "description": "The command or tool that read it."
+            },
+            "sink_tool": {
+              "type": "string",
+              "description": "The command or tool that carried it out."
+            },
+            "destination_host": {
+              "type": "string",
+              "description": "The host it was sent to."
+            },
+            "credential_family": {
+              "type": "string",
+              "description": "The redaction family of the value."
+            },
+            "family_noun": {
+              "type": "string",
+              "description": "The family in words."
+            },
+            "gap": {
+              "type": "string",
+              "description": "Time between a flow's two ends."
+            },
+            "placeholder_signals": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "test_path",
+                  "doc_example",
+                  "synthetic_value",
+                  "named_as_example"
+                ]
+              }
+            },
+            "sentence": {
+              "type": "string",
+              "description": "The card's sentence."
+            },
+            "title": {
+              "type": "string",
+              "description": "The card's headline."
+            },
+            "so": {
+              "type": "string",
+              "description": "The consequence, in one line."
+            },
+            "next": {
+              "type": "string",
+              "description": "What to do, in one line."
+            }
+          }
+        },
+        "key_name": {
+          "type": "string",
+          "description": "The exposed or matched name (a file, a variable, a credential family)."
+        },
+        "excerpt": {
+          "type": "string",
+          "description": "Masked context around the match; redacted values read `[redacted:<family>]`."
+        },
+        "secrets": {
+          "type": "array",
+          "description": "The values redacted from the evidence, as fingerprints.",
+          "items": {
+            "type": "object",
+            "description": "A value redaction removed from the evidence, as a fingerprint — never the value.",
+            "required": [
+              "label",
+              "length",
+              "fingerprint"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "The redaction family (`aws`, `github`, `credentials`); empty for an anonymous value."
+              },
+              "length": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Characters in the value."
+              },
+              "fingerprint": {
+                "type": "string",
+                "description": "HMAC-SHA256 of the value under this machine's vault key, first 16 hex characters.",
+                "pattern": "^[0-9a-f]{16}$"
+              },
+              "primary": {
+                "type": "boolean",
+                "description": "The value this detection is about, when the evidence held several."
+              }
+            }
+          }
+        },
+        "occurrences": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Times it matched in the newest sighting."
+        },
+        "tool_name": {
+          "type": "string",
+          "description": "The tool the agent called."
+        },
+        "target": {
+          "type": "string",
+          "description": "The file, command target or host the call named."
+        },
+        "source": {
+          "type": "string",
+          "description": "The capture rail or guarded host (`claude-code`, `codex`, …).",
+          "minLength": 1
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "transcript",
+            "guard",
+            "config",
+            "gateway",
+            "integrity"
+          ],
+          "description": "How it was detected: a transcript scan, the pre-tool-use guard, an MCP config file, the MCP gateway, or the guard-integrity check."
+        },
+        "session_id": {
+          "type": "string",
+          "description": "The agent session it happened in."
+        },
+        "turn_id": {
+          "type": "string",
+          "description": "The ledger turn it sits under."
+        },
+        "source_turn_id": {
+          "type": "string",
+          "description": "Session-flow rows: the turn where the flow began."
+        },
+        "source_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Session-flow rows: when the flow began."
+        },
+        "burned_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "agent_loop only: what the repeated turns cost, priced on this Mac (an estimate; the app shows tokens instead)."
+        },
+        "burned_tokens": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "agent_loop only: input+output tokens the repeated turns burned — the figure the app shows."
+        },
+        "config_host": {
+          "type": "string",
+          "description": "Config rows: the app whose config file this is."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "The call's working directory."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "resolved",
+            "false_positive",
+            "accepted_risk"
+          ],
+          "description": "Triage state."
+        },
+        "first_seen_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "First sighting."
+        },
+        "last_seen_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Newest sighting."
+        },
+        "enforced": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "deny",
+            "warn",
+            "excepted"
+          ],
+          "description": "What the guard did: held, refused, warned, or let it through under an exception. Absent means observed."
+        },
+        "exception": {
+          "type": "object",
+          "description": "The scoped ignore rule that let an `excepted` call through, as it stood then.",
+          "required": [
+            "pattern"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "description": "The rule's pattern."
+            },
+            "detector": {
+              "type": "string",
+              "description": "The detector it is limited to."
+            },
+            "cwd_prefix": {
+              "type": "string",
+              "description": "The directory it is limited to."
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When it lapses."
+            },
+            "note": {
+              "type": "string",
+              "description": "Why it exists."
+            },
+            "origin": {
+              "type": "string",
+              "enum": [
+                "approval",
+                "manual"
+              ]
+            }
+          }
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "allowed",
+            "denied",
+            "timeout",
+            "unattended",
+            "unavailable"
+          ],
+          "description": "How a held call ended."
+        },
+        "held_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the hold was raised."
+        },
+        "decided_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it was answered."
+        },
+        "decided_via": {
+          "type": "string",
+          "enum": [
+            "panel",
+            "window",
+            "notification",
+            "editor",
+            "timeout",
+            "app-absent"
+          ],
+          "description": "Which surface answered it."
+        },
+        "hold_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Milliseconds from hold to decision."
+        },
+        "allow_scope": {
+          "type": "string",
+          "enum": [
+            "project"
+          ],
+          "description": "The person allowed it for this project."
+        }
+      }
+    }
+  }
+}

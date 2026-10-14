@@ -1,0 +1,11 @@
+{
+  // Type-checks the tests alongside the sources; never emits.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["main/**/*.ts", "test/**/*.ts"]
+}

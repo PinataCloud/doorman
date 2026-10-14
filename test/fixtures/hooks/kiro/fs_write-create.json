@@ -1,0 +1,12 @@
+{
+  "_provenance": "docs-derived from https://kiro.dev/docs/cli/hooks/ on 2026-09-06; not a live recording",
+  "hook_event_name": "preToolUse",
+  "cwd": "/Users/dev/projects/api",
+  "session_id": "abc123-def456-789",
+  "tool_name": "fs_write",
+  "tool_input": {
+    "command": "create",
+    "path": "/Users/dev/projects/api/.env",
+    "file_text": "DATABASE_URL=postgres://admin:hunter2@db.internal/prod\n"
+  }
+}

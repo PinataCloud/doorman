@@ -1,0 +1,9 @@
+{
+  "_provenance": "derived from cursor.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "conversation_id": "conv_01JCURSORDEMO0010",
+  "generation_id": "gen_01JCURSORDEMO0010",
+  "hook_event_name": "afterFileEdit",
+  "workspace_roots": ["/Users/dev/projects/acme-api"],
+  "file_path": "/Users/dev/projects/acme-api/src/config.ts",
+  "edits": [{ "old_string": "a", "new_string": "b" }]
+}

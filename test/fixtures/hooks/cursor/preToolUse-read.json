@@ -1,0 +1,10 @@
+{
+  "_provenance": "derived from cursor.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "conversation_id": "conv_01JCURSORDEMO0006",
+  "generation_id": "gen_01JCURSORDEMO0006",
+  "hook_event_name": "preToolUse",
+  "workspace_roots": ["/Users/dev/projects/acme-api"],
+  "tool_name": "Read",
+  "tool_use_id": "toolu_01JCURSORDEMO0006",
+  "tool_input": { "file_path": "/Users/dev/projects/acme-api/.env" }
+}

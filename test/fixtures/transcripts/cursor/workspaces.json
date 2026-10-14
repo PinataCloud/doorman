@@ -1,0 +1,38 @@
+{
+  "_provenance": "SYNTHETIC — not a live recording. See _provenance.json in this directory. Shapes modelled on Cursor 3.15.19 (macOS) workspaceStorage/<hash>/, observed 2026-09-06.",
+  "workspaces": {
+    "ws-acme": {
+      "workspace.json": { "folder": "file:///Users/dev/projects/acme-api" },
+      "ItemTable": {
+        "composer.composerData": {
+          "allComposers": [
+            {
+              "type": "head",
+              "composerId": "11111111-1111-4111-8111-111111111111",
+              "name": "Retry the fetch helper",
+              "createdAt": 1788000000000,
+              "lastUpdatedAt": 1788000030000,
+              "unifiedMode": "agent",
+              "forceMode": "edit",
+              "hasUnreadMessages": false
+            }
+          ],
+          "selectedComposerIds": ["11111111-1111-4111-8111-111111111111"],
+          "hasMigratedComposerData": true,
+          "hasMigratedMultipleComposers": true
+        }
+      }
+    },
+    "ws-beta": {
+      "workspace.json": { "folder": "file:///Users/dev/projects/beta%20service" },
+      "ItemTable": {}
+    },
+    "ws-multiroot": {
+      "workspace.json": { "workspace": "file:///Users/dev/projects/all.code-workspace" },
+      "ItemTable": {}
+    },
+    "ws-empty": {
+      "ItemTable": {}
+    }
+  }
+}

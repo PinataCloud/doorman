@@ -1,0 +1,9 @@
+{
+  "_provenance": "derived from hermes-agent.nousresearch.com/docs/user-guide/features/hooks and tools/*.py fetched 2026-09-06; not a live recording — replace with a recorded payload when one exists",
+  "hook_event_name": "pre_tool_call",
+  "tool_name": "web_extract",
+  "tool_input": { "urls": ["https://pastebin.com/raw/x9Yz8Wv7", "https://example.com/notes"], "char_limit": 20000 },
+  "session_id": "sess_7f3a9c2e",
+  "cwd": "/Users/dev/projects/api",
+  "extra": { "task_id": "task_01", "tool_call_id": "call_3b5d7f9a" }
+}

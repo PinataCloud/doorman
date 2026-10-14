@@ -1,0 +1,18 @@
+{
+  "_provenance": "recorded live 2026-09-10 from the Hermes plugin path (Hermes 0.21.1 + main 61afcde, hermes -z one-shot, plugins/doorman-guard/__init__.py envelope_for \u2192 guard stdin, captured with a tee wrapper); cwd anonymized to /Users/dev/projects/api, everything else byte-for-byte. native_ask was true on this first run \u2014 the presence gate (can_ask) added afterwards makes it false in a one-shot run.",
+  "hook_event_name": "pre_tool_call",
+  "tool_name": "terminal",
+  "tool_input": {
+    "command": "echo DOORMAN_ASK_ME"
+  },
+  "session_id": "20260910_065013_63c75b",
+  "cwd": "/Users/dev/projects/api",
+  "extra": {
+    "task_id": "1d223091-1b9b-4499-9749-8c462f39f967",
+    "tool_call_id": "toolu_bdrk_01ByqHrLUUPoovir1kfXWyUu",
+    "turn_id": "20260910_065013_63c75b:1d223091-1b9b-4499-9749-8c462f39f967:7eb75af2",
+    "api_request_id": "20260910_065013_63c75b:1d223091-1b9b-4499-9749-8c462f39f967:7eb75af2:api:3"
+  },
+  "native_ask": true,
+  "via": "plugin"
+}

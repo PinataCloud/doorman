@@ -1,0 +1,11 @@
+{
+  "_provenance": "docs-derived from https://github.com/charmbracelet/crush/blob/main/docs/hooks/README.md on 2026-09-06; not a live recording",
+  "event": "PreToolUse",
+  "session_id": "crush-8d2b4e6f-1a3c-4d5e-8f9a-0b1c2d3e4f5a",
+  "cwd": "/Users/dev/projects/api",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "rm -rf ~/.ssh",
+    "description": "cleanup"
+  }
+}

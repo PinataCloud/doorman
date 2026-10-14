@@ -1,0 +1,254 @@
+/* The design tokens: the @font-face declarations and the one :root block.
+   Hand-maintained, and deliberately tokens only — component styles live in
+   app.css, so a palette change here never restyles a component by accident. */
+
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url("_asset/fonts/HankenGroteskVariable.ttf") format("truetype");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+
+@font-face {
+  font-family: "ABC Diatype";
+  src: url("_asset/fonts/ABCDiatypeVariable.ttf") format("truetype");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+
+@font-face {
+  font-family: "ABC Diatype Mono";
+  src: url("_asset/fonts/ABCDiatypeMonoVariable.ttf") format("truetype");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+
+@font-face {
+  font-family: "ABC Diatype Extended";
+  src: url("_asset/fonts/ABCDiatypeExtended-Light.otf") format("opentype");
+  font-weight: 300; font-style: normal; font-display: swap;
+}
+
+@font-face {
+  font-family: "ABC Diatype Extended";
+  src: url("_asset/fonts/ABCDiatypeExtended-Regular.otf") format("opentype");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
+@font-face {
+  font-family: "ABC Diatype Extended";
+  src: url("_asset/fonts/ABCDiatypeExtended-Medium.otf") format("opentype");
+  font-weight: 500 650; font-style: normal; font-display: swap;
+}
+
+@font-face {
+  font-family: "ABC Diatype Extended";
+  src: url("_asset/fonts/ABCDiatypeExtended-Bold.otf") format("opentype");
+  font-weight: 700 900; font-style: normal; font-display: swap;
+}
+
+:root {
+  /* Surfaces — cream #F0E8D5 canvas, #E8DFC8 recessed, #FAF5EC cards. */
+  --linen:        #F0E8D5;  /* app background */
+  --linen-2:      #E8DFC8;  /* recessed / rail */
+  --paper:        #FAF5EC;  /* cards / panels */
+  --paper-2:      #F4EDDC;  /* subtle raised (between cream and cream3) */
+  --ink-on-dark:  #F0E8D5;
+
+  /* Ink — a warm brown-black ramp, stepped as a φ CONTRAST
+     ladder: each tier's WCAG ratio against --paper is the previous ÷ φ, so
+     "demote one level" is the same perceptual step everywhere in the app.
+     Anchored at --ink (16.56:1, unchanged) and derived downward — hue and
+     chroma held, lightness solved for the target ratio. Re-solve if --paper
+     ever moves: irregular steps leave muted text and placeholders below AA. */
+  --ink:          #1A1612;  /* primary   16.56:1  (anchor) */
+  --ink-2:        #443A2B;  /* secondary 10.25:1  (16.56/φ) */
+  --ink-3:        #64594B;  /* muted      6.29:1  (16.56/φ²) */
+  --ink-4:        #85796A;  /* faint      3.91:1  (16.56/φ³) */
+
+  /* Borders — every hairline in one warm rule color. */
+  --tan:          #C8B898;  /* default hairline */
+  --tan-2:        #B9A583;  /* stronger */
+  --tan-3:        #A8925F;  /* emphasis / focus ring base */
+
+  /* Brand palette — navy and blue. */
+  --navy:         #0D1F4E;  /* Doorman Navy */
+  --navy-2:       #1A2744;  /* panel navy */
+  --blue:         #1A4FD6;  /* Doorman Blue */
+  --blue-deep:    #143FAC;
+  --blue-soft:    #E0E6FA;
+  --accent-blue:  #4A6B8A;
+  --accent-blue-soft: #E2E9F0;
+  --gold:         #C9A66B;  /* Gold Accent */
+  --gold-deep:    #A8854A;
+  --gold-soft:    #F1E7D3;
+  /* Warm fill for outlined chips. Deliberately NOT --gold-soft, which is
+     within 2/255 of --linen and so vanishes on the drawer body. */
+  --chip-soft:    #F3E7CD;
+  --graphite:     #1A1612;
+  --steel:        #4A6B8A;
+
+  /* Active accent (JS overrides) */
+  --accent:       var(--blue);
+  --accent-deep:  var(--blue-deep);
+  --accent-soft:  var(--blue-soft);
+
+  /* Semantic — dark, print-like status inks. */
+  --good:         #1A5C2A;
+  --good-soft:    #DDEBDB;
+  --warn:         #996600;
+  --warn-soft:    #F3E7CD;
+  --bad:          #8B1A1A;
+  --bad-soft:     #F2DDD4;
+  --info:         #2A6F9E;
+  --info-soft:    #DBEAF5;
+
+  /* Source family colors. These are chart colors in practice — the overview's
+     stacked "Spend over time" paints its series from them — so they are pinned
+     to validated slots of the ramp below rather than picked separately. Before,
+     src-codex (steel, hue 248) sat 16deg from src-claude (hue 264) and read as
+     the same blue, and src-custom was #C9A66B at 2.11:1 against the card
+     surface — a fill you could not see. */
+  --src-claude:   var(--c1);  /* Anthropic  → brand blue */
+  --src-codex:    var(--c4);  /* OpenAI-ish → gold  (NOT c3: both are blues) */
+  --src-custom:   var(--c6);  /* Custom     → umber */
+  --src-sdk:      var(--c8);  /* Doorman SDK → periwinkle */
+  /* claude/codex/custom are an all-pairs set — a source is never guaranteed to
+     sit next to a particular neighbour — so they take the mutually-farthest
+     triple in the ramp, not the first three slots. c1/c4/c6 hold a worst
+     pairwise CVD dE of 17; the c1/c3/c4 triple the ramp's order would suggest
+     holds only 10, because c3 is a second blue. src-sdk extends the set with
+     the remaining slot farthest from all three: c8 is a blue by hue, but at
+     L .614 vs c1's .487 it separates from brand blue by lightness where the
+     other blues (c3, c5, c7) sit too close to c1 in lightness, hue, or both. */
+
+  /* ---- Chart series ramp — BRAND-ONLY, two hue families in a FIXED order ----
+     Every slot is Doorman's own navy/blue/gold. The predecessor ramp bought
+     eight slots by importing six hue families the brand does not own (teal,
+     rust, dusty rose, olive, violet, wine); it separated well but the charts
+     stopped looking like this product. This ramp gives that up on purpose.
+
+     STRUCTURE — five blue steps + three gold steps, ordered so that every
+     adjacent pair crosses a hue family:
+
+       blue  c1 c3 c5 c7 c8      gold  c2 c4 c6
+       order  B  G  B  G  B  G  B  B
+
+     The order IS the safety mechanism: the gates below test *adjacent* pairs,
+     and alternating families makes every one of them a blue-vs-gold contrast
+     rather than a lightness-only one. The single unavoidable same-family
+     adjacency (c7/c8, since five blues cannot alternate with three golds) is
+     placed last and given the widest lightness gap in the blue ladder
+     (L .437 vs .614) — it is the worst adjacent pair at 16.5, still 2x the gate.
+
+     Hue windows are deliberately narrow — blue 250-274deg, gold 64-78deg.
+     Outside them the solver happily produced better-separated sets that had
+     stopped being brand: violet at 279deg, burnt orange at 47deg.
+
+     Derived by solving in OKLCH, not by eye. Verified on both surfaces
+     (--paper #FAF5EC and --linen #F0E8D5):
+       lightness band  OKLCH L 0.43–0.77 ......... all 8 pass
+       chroma floor    OKLCH C >= 0.10 ........... all 8 pass
+       CVD separation  adjacent, protan/deutan ... worst 16.5 (target >= 8)
+       normal-vision   adjacent, unsimulated ..... worst 18.3 (floor >= 15)
+       contrast        WCAG vs both surfaces ..... all 8 >= 3:1 (min 3.09)
+     Adjacent CVD separation is better than the palette this replaces (16.5 vs
+     12.9) — alternating two families beats interleaving eight.
+
+     WHAT BRAND-ONLY COSTS. Two hue families cannot make eight mutually
+     distinct colors; they make eight distinct *neighbours*. Non-adjacent slots
+     bottom out around dE 5 (c3/c8 are both light blues). So:
+       - Stacked bars, lines, areas, donuts — fine at all 8. Marks meet their
+         neighbours, and neighbours always cross families.
+       - SERIES CAP: an all-pairs form (scatter, bubble, small multiples, the
+         team dots — anywhere any two marks can touch) is only safe to slot 3
+         deep, unchanged from the previous ramp. Fold the rest into "Other" or
+         facet.
+       - A legend is doing more work here than it would with eight hue
+         families. Keep direct labels on.
+     Do not add a c9 — see the fixed-order rule. */
+  --c1: #1A4FD6;  /* blue  — brand   L .487  6.17:1  H 264 */
+  --c2: #976700;  /* ochre — brand   L .550  4.54:1  H  77 */
+  --c3: #0E81E4;  /* azure           L .600  3.66:1  H 252 */
+  --c4: #B5760A;  /* gold            L .617  3.48:1  H  72 */
+  --c5: #576DAB;  /* slate blue      L .545  4.63:1  H 268 */
+  --c6: #7C4700;  /* umber           L .451  7.01:1  H  64 */
+  --c7: #17548A;  /* navy-steel      L .437  7.24:1  H 250 */
+  --c8: #717FC4;  /* periwinkle      L .614  3.49:1  H 274 */
+  /* Neutral for the "Other" fold past the last slot / past the all-pairs cap. */
+  --c-other: #8A8172;
+
+  /* Type */
+  --display: "ABC Diatype Extended", "Hanken Grotesk", system-ui, sans-serif;
+  --serif: "Hanken Grotesk", "ABC Diatype", system-ui, -apple-system, sans-serif;
+  --sans:  "Hanken Grotesk", "ABC Diatype", system-ui, -apple-system, sans-serif;
+  --mono:  "ABC Diatype Mono", "SFMono-Regular", ui-monospace, monospace;
+
+  /* ---- Type scale: one ratio, φ^(1/3) = 1.1746, base 15px ----
+     φ itself is a poster ratio — far too violent per step for a dense data
+     app. At the cube root every THIRD step is exactly φ, so adjacent steps stay
+     usable while the pairs that carry the hierarchy (eyebrow↔body, body↔h1) sit
+     in true golden relation. This replaces 26 hand-tuned sizes, six of which
+     lived inside a 2.5px band (13/13.5/14/14.5/15/15.5) that no reader can
+     distinguish but that guaranteed mismatched baselines between neighbouring
+     components. Snap to a rung; don't introduce a value between two. */
+  --t-3:  9.27px;   /* 15/φ    — micro caps: brand-sub, tile state */
+  --t-2: 10.88px;   /* 15/φ^⅔  — .eyebrow, .label-caps, column heads */
+  --t-1: 12.78px;   /* 15/φ^⅓  — table + dense UI text (the workhorse) */
+  --t-0:    15px;   /* body */
+  --t-1u: 17.61px;  /* h3 / card titles */
+  --t-2u: 20.67px;  /* h2 */
+  --t-3u: 24.27px;  /* 15φ  — h1 */
+  --t-4u: 28.49px;
+  --t-5u: 33.45px;
+  --t-6u: 39.27px;  /* 15φ² — hero figures */
+  --t-7u: 46.13px;
+  --t-8u: 54.19px;
+
+  /* ---- Spacing: the integer φ ladder (Fibonacci) ----
+     Chosen over an 8px grid for a property an 8px grid cannot have: φ ladders
+     are self-similar under ADDITION, so nested spacing composes into legal
+     values automatically (5+8=13, 8+13=21, 13+21=34). Padding plus gap always
+     lands on another rung instead of between two. */
+  --s1:  2px;  --s2:  3px;  --s3:  5px;  --s4:  8px;
+  --s5: 13px;  --s6: 21px;  --s7: 34px;  --s8: 55px;
+
+  /* Vertical rhythm: 15φ = 24.27 → body line-height 1.618. Leading therefore
+     equals the type step above body (--t-3u), so the baseline grid and the type
+     scale interlock instead of running parallel. Half-step 12px. */
+  --baseline: 24px;
+
+  /* Golden section for two-column splits. Replaces four near-φ splits that were
+     all doing the same job by eye (.62/1.38, .72/1.28, .8/1.2, 1.65/.82 —
+     ratios 2.23, 1.78, 1.50, 2.01, bracketing φ from both sides). */
+  --phi: 1.618;
+  /* Convention for a two-column split: minmax(<min>, 1fr) minmax(0, 1.618fr),
+     with the min-width on the minor column. Not a single token because each
+     split needs its own collapse floor. */
+
+  /* Geometry — the radius ladder was ALREADY a φ ladder before any of this
+     (4+7=11, ratios 1.75 → 1.571 → 1.636, converging on φ); it just stopped at
+     three rungs. Extended, not changed. For NESTED radii the concentric rule
+     beats the ladder: outer = inner + padding. */
+  --r-sm: 4px;
+  --r:    7px;
+  --r-lg: 11px;
+  --r-xl: 18px;
+  --shadow-sm: 0 1px 2px rgba(20,28,44,.07), 0 1px 1px rgba(20,28,44,.05);
+  --shadow:    0 2px 8px rgba(20,28,44,.09), 0 1px 2px rgba(20,28,44,.06);
+  --shadow-lg: 0 18px 48px rgba(10,24,48,.20), 0 4px 12px rgba(10,24,48,.12);
+  --sidebar-w: 232px;   /* deliberately NOT a golden section — see note below */
+
+  /* Tint depths as φ powers (1/φⁿ). The 31 hand-tuned color-mix percentages
+     this replaces already clustered here: 22/24/25/26 (16 uses) around 23.6,
+     60/62 (7 uses) around 61.8, 12/14 around 14.6. */
+  --mix-1: 61.8%;  --mix-2: 38.2%;  --mix-3: 23.6%;
+  --mix-4: 14.6%;  --mix-5:  9.0%;
+  /* Complements, for mixes written from the other side (a 76.4% mix of A into B
+     is a 23.6% mix of B into A), plus the one genuine non-φ depth: an equal
+     blend, which is a midpoint rather than a tint. */
+  --mix-3c: 76.4%; --mix-4c: 85.4%; --mix-5c: 91.0%; --mix-half: 50%;
+
+  /* Density (overridden by .density-* on root). Both row-pad values are already
+     ladder rungs (--s4, --s5), so density carries SPACING and the table type
+     stays put at --t-1 — a size change was never what "compact" meant. */
+  --row-pad-y: 13px;
+  --table-fs: 12.78px;
+}

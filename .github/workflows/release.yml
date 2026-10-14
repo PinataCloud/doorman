@@ -1,0 +1,286 @@
+# Release Doorman: test, build every platform, publish a GitHub release on
+# this repo, which the shipped apps poll for updates.
+#
+# Cutting a release:
+#   1. bump "version" in package.json (and package-lock.json: `npm version
+#      <x.y.z> --no-git-tag-version`), commit;
+#   2. push a matching tag: `git tag v<x.y.z> && git push origin v<x.y.z>`.
+# Run workflow (workflow_dispatch) rebuilds an existing tag — its release is
+# replaced file by file.
+#
+# Secrets (all optional; publishing uses the run's own GITHUB_TOKEN):
+#   APPLE_CERTIFICATE_P12 + APPLE_CERTIFICATE_PASSWORD (optional) — a
+#     base64-encoded Developer ID Application .p12. Without them the Mac build
+#     is ad-hoc signed (scripts/adhoc-sign.mjs): it runs after "Open Anyway",
+#     but macOS will not apply an auto-update to it.
+#   APPLE_API_KEY_P8 + APPLE_API_KEY_ID + APPLE_API_ISSUER (optional) — an App
+#     Store Connect API key for notarization; used only alongside the cert.
+# Windows builds are unsigned; Linux AppImages need no signing.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # A tag that disagrees with package.json would publish an app whose
+      # update check compares against the wrong number forever.
+      - name: Tag matches package.json
+        run: |
+          version="v$(node -p 'require("./package.json").version')"
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match package.json ($version)"; exit 1
+          fi
+      - run: npm run typecheck
+      - run: npm test
+
+  build-mac:
+    needs: test
+    runs-on: macos-14
+    timeout-minutes: 45
+    # The `secrets` context is not available in `if:`, so presence is read once here.
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
+      HAS_NOTARY_KEY: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run compile && npm run renderer:min
+      - name: Import the Developer ID certificate
+        if: env.HAS_SIGNING_CERT == 'true'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/build.keychain"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+      # Exported via GITHUB_ENV so an absent secret leaves the variables unset:
+      # an empty APPLE_API_KEY makes electron-builder try (and fail) to
+      # notarize instead of skipping. Notarizing an ad-hoc build always fails,
+      # hence the gate on both secrets.
+      - name: Materialize the notary API key
+        if: env.HAS_SIGNING_CERT == 'true' && env.HAS_NOTARY_KEY == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          key_file="$RUNNER_TEMP/notary-key.p8"
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$key_file"
+          {
+            echo "APPLE_API_KEY=$key_file"
+            echo "APPLE_API_KEY_ID=${{ secrets.APPLE_API_KEY_ID }}"
+            echo "APPLE_API_ISSUER=${{ secrets.APPLE_API_ISSUER }}"
+          } >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.HAS_SIGNING_CERT }}
+        run: npx electron-builder --mac --publish never
+      # Say plainly what kind of Mac build this is, on the run's summary page —
+      # a skipped signing step is otherwise silent.
+      - name: Report signing
+        run: |
+          if [ "$HAS_SIGNING_CERT" != "true" ]; then
+            msg="Mac build is ad-hoc signed and NOT notarized (no APPLE_CERTIFICATE_P12). macOS asks for Open Anyway on first launch and will not apply auto-updates."
+          elif [ "$HAS_NOTARY_KEY" != "true" ]; then
+            msg="Mac build is signed with the Developer ID but NOT notarized (no APPLE_API_KEY_P8). Gatekeeper will still warn on first launch."
+          else
+            msg="Mac build is signed with the Developer ID and notarized."
+          fi
+          echo "::warning::$msg"
+          echo "### macOS signing" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+      # With both secrets, prove it took: a valid Developer ID signature, a
+      # stapled notarization ticket, and Gatekeeper accepting the app.
+      - name: Verify signature and notarization
+        if: env.HAS_SIGNING_CERT == 'true' && env.HAS_NOTARY_KEY == 'true'
+        run: |
+          set -euo pipefail
+          for app in dist/mac/Doorman.app dist/mac-arm64/Doorman.app; do
+            [ -d "$app" ] || continue
+            echo "── $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dv "$app" 2>&1 | grep -E "^Authority=Developer ID Application"
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=2 "$app"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doorman-mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest-mac.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  build-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run compile && npm run renderer:min
+      - name: Build
+        run: npx electron-builder --linux --publish never
+      # Mount as an unprivileged user and launch under Xvfb until the window
+      # maps: catches a runtime that needs libfuse2 or a missing shared library.
+      - name: Launch the AppImage
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq fuse3 xvfb x11-utils
+          image=$(ls dist/*.AppImage | grep -v -- '-arm64' | head -1)
+          cp "$image" /tmp/doorman.AppImage && chmod +x /tmp/doorman.AppImage
+          Xvfb :99 -screen 0 1400x900x24 >/dev/null 2>&1 &
+          sleep 3
+          DISPLAY=:99 /tmp/doorman.AppImage >/tmp/launch.log 2>&1 &
+          app=$!
+          for i in $(seq 1 12); do
+            sleep 5
+            for w in $(DISPLAY=:99 xwininfo -root -children 2>/dev/null | grep -o '0x[0-9a-f]\+'); do
+              if DISPLAY=:99 xprop -id "$w" WM_CLASS 2>/dev/null | grep -qi doorman; then
+                echo "✓ window mapped after $((i * 5))s"
+                kill "$app" 2>/dev/null || true
+                exit 0
+              fi
+            done
+          done
+          echo "::error::no window mapped within 60s"; tail -30 /tmp/launch.log; exit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doorman-linux
+          path: |
+            dist/*.AppImage
+            dist/latest-linux*.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run compile && npm run renderer:min
+      - name: Build
+        run: npx electron-builder --win --publish never
+      - name: Launch the packaged app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = Get-ChildItem dist/win-unpacked/*.exe | Select-Object -First 1
+          if (-not $exe) { Write-Error "no unpacked executable to launch"; exit 1 }
+          $prefs = Join-Path $env:APPDATA "Doorman\prefs.json"
+          $app = Start-Process -FilePath $exe.FullName -PassThru
+          for ($i = 0; $i -lt 12; $i++) {
+            Start-Sleep -Seconds 5
+            if (Test-Path $prefs) {
+              Write-Host "✓ launched and wrote its own state"
+              Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+              exit 0
+            }
+            if ($app.HasExited) { Write-Error "the app exited (code $($app.ExitCode)) before writing its prefs"; exit 1 }
+          }
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Write-Error "the app never wrote its prefs"; exit 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: doorman-windows
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [build-mac, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # electron-builder names the Windows installer "Doorman Setup x.exe" but
+          # writes "Doorman-Setup-x.exe" into latest.yml; GitHub would store the
+          # upload as "Doorman.Setup.x.exe". Dashes make the file match its manifest.
+          for f in artifacts/*" "*; do mv "$f" "${f// /-}"; done
+          ls -la artifacts
+          # The manifests go up LAST: an app that reads latest-*.yml must find
+          # every file it names already there.
+          shopt -s nullglob
+          binaries=(artifacts/*.dmg artifacts/*.zip artifacts/*.AppImage artifacts/*.exe artifacts/*.blockmap)
+          manifests=(artifacts/latest*.yml)
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --title "Doorman ${TAG#v}" --notes "Doorman ${TAG#v}" --draft
+          fi
+          gh release upload "$TAG" --repo "$REPO" --clobber "${binaries[@]}"
+          gh release upload "$TAG" --repo "$REPO" --clobber "${manifests[@]}"
+          # Published (not draft) is what makes it the "latest" release the
+          # updater reads.
+          gh release edit "$TAG" --repo "$REPO" --draft=false --latest

@@ -1,0 +1,17 @@
+{
+  "_provenance": "derived from geminicli.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "session_id": "9f1c2b74-3f0a-4a51-9b1e-2c8d4a6e7f01",
+  "cwd": "/Users/dev/projects/api",
+  "hook_event_name": "BeforeTool",
+  "timestamp": "2026-09-05T10:20:47.229Z",
+  "tool_name": "mcp_github_create_issue",
+  "original_request_name": "create_issue",
+  "mcp_context": {
+    "server_name": "github"
+  },
+  "tool_input": {
+    "repo": "Doorman/doorman-app",
+    "title": "Rotate the leaked deploy key",
+    "body": "Found in the build log."
+  }
+}

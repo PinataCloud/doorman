@@ -1,0 +1,13 @@
+{
+  "_provenance": "docs-derived from https://docs.factory.ai/reference/hooks-reference on 2026-09-06; not a live recording",
+  "session_id": "droid-3f9a1c2e-7b4d-4a8e-9c1f-2e3d4a5b6c7d",
+  "transcript_path": "/Users/dev/.factory/sessions/3f9a1c2e.jsonl",
+  "cwd": "/Users/dev/projects/api",
+  "permission_mode": "auto-low",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Create",
+  "tool_input": {
+    "file_path": "/Users/dev/projects/api/.env",
+    "content": "STRIPE_SECRET=sk_live_37C2cbpXVGmfsWTYtwnEYUnbjKDBue\n"
+  }
+}

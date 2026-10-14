@@ -1,0 +1,14 @@
+{
+  "_provenance": "docs-derived from https://goose-docs.ai/docs/guides/context-engineering/hooks/ on 2026-09-06; not a live recording",
+  "event": "PreToolUse",
+  "session_id": "goose-20260906-101403",
+  "matcher_context": "developer__edit",
+  "tool_name": "developer__edit",
+  "tool_input": {
+    "path": "/Users/dev/projects/api/src/auth.ts",
+    "before": "verify(token)",
+    "after": "true"
+  },
+  "working_dir": "/Users/dev/projects/api",
+  "tool_call_id": "call_01"
+}

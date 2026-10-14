@@ -1,0 +1,8 @@
+{
+  "_provenance": "derived from docs.github.com hooks reference fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists. The MCP spelling of toolName is UNVERIFIED: the hooks reference does not document it, the CLI's permission flags use Server(tool), and community reports show both server:tool and a sanitized server-tool. Only the colon form is mapped.",
+  "sessionId": "0f3a9c2e-6b14-4a7d-9d21-8c5b1e77aa03",
+  "timestamp": 1788652805000,
+  "cwd": "/Users/dev/repos/example",
+  "toolName": "github-mcp:create_issue",
+  "toolArgs": "{\"repo\":\"Doorman/doorman-app\",\"title\":\"Guard coverage\",\"body\":\"AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/S5FRSUZ/tQjWbrCYPZPAKTFWYN\"}"
+}

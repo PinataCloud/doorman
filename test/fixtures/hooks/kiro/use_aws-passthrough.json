@@ -1,0 +1,11 @@
+{
+  "_provenance": "docs-derived from https://kiro.dev/docs/cli/hooks/ on 2026-09-06; not a live recording",
+  "hook_event_name": "preToolUse",
+  "cwd": "/Users/dev/projects/api",
+  "session_id": "abc123-def456-789",
+  "tool_name": "use_aws",
+  "tool_input": {
+    "service_name": "s3",
+    "operation_name": "list-buckets"
+  }
+}

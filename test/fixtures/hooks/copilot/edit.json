@@ -1,0 +1,8 @@
+{
+  "_provenance": "derived from docs.github.com hooks reference fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "sessionId": "0f3a9c2e-6b14-4a7d-9d21-8c5b1e77aa03",
+  "timestamp": 1788652803000,
+  "cwd": "/Users/dev/repos/example",
+  "toolName": "edit",
+  "toolArgs": "{\"path\":\"/Users/dev/repos/example/src/server.ts\",\"old_str\":\"const verifyTls = true;\",\"new_str\":\"const verifyTls = false;\"}"
+}

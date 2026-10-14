@@ -1,0 +1,20 @@
+{
+  "_provenance": "recorded live 2026-09-08 from Hermes Agent 0.21.1 (NousResearch/hermes-agent main, editable install), `hermes -z` driving anthropic/claude-haiku-4.5 through OpenRouter under a throwaway HERMES_HOME with the guard's shell hook installed by the app's own installer: this is the stdin Hermes wrote to the hook (tee'd in front of guard.js); the only edit is the working directory (a scratch path → /Users/dev/projects/api)",
+  "hook_event_name": "pre_tool_call",
+  "tool_name": "patch",
+  "tool_input": {
+    "path": "notes/e2e.txt",
+    "old_string": "hello",
+    "new_string": "goodbye"
+  },
+  "session_id": "20260908_144708_bc03e9",
+  "cwd": "/Users/dev/projects/api",
+  "extra": {
+    "task_id": "01964d0a-b27a-45d0-85c5-0a1b5c482541",
+    "tool_call_id": "toolu_bdrk_01QjTGXaRQhLd7W1sDHsNeDQ",
+    "turn_id": "20260908_144708_bc03e9:01964d0a-b27a-45d0-85c5-0a1b5c482541:c378f25b",
+    "api_request_id": "20260908_144708_bc03e9:01964d0a-b27a-45d0-85c5-0a1b5c482541:c378f25b:api:3",
+    "middleware_trace": [],
+    "telemetry_schema_version": "hermes.observer.v1"
+  }
+}

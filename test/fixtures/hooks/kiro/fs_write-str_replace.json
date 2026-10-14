@@ -1,0 +1,13 @@
+{
+  "_provenance": "docs-derived from https://kiro.dev/docs/cli/hooks/ on 2026-09-06; not a live recording",
+  "hook_event_name": "preToolUse",
+  "cwd": "/Users/dev/projects/api",
+  "session_id": "abc123-def456-789",
+  "tool_name": "fs_write",
+  "tool_input": {
+    "command": "str_replace",
+    "path": "/Users/dev/projects/api/src/auth.ts",
+    "old_str": "verify(token)",
+    "new_str": "true"
+  }
+}

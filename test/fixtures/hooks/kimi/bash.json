@@ -1,0 +1,12 @@
+{
+  "_provenance": "docs-derived from https://moonshotai.github.io/kimi-code/en/customization/hooks on 2026-09-06; not a live recording",
+  "hook_event_name": "PreToolUse",
+  "session_id": "session_abc",
+  "session_title": "Fix the login page",
+  "client_type": "kimi_code_cli",
+  "cwd": "/Users/dev/projects/api",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git push --force origin main"
+  }
+}

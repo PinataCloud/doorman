@@ -1,0 +1,2 @@
+{"type":"message","role":"user","content":"ping","timestamp":1770355970000}
+{"type":"message","role":"assistant","content":[{"type":"text","text":"pong"}],"api":"openclaw","provider":"minimax-portal","model":"MiniMax-M2.1-lightning","usage":{"input":12,"output":3,"cacheRead":0,"cacheWrite":0,"totalTokens":15},"stopReason":"stop","timestamp":1770355978327}

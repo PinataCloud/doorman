@@ -1,0 +1,13 @@
+{
+  "_provenance": "derived from VS Code 1.136.2 (workbench hook discovery) and its bundled Copilot Chat 0.64.1 (HookExecutor stdin: timestamp, hook_event_name, session_id, transcript_path, tool_name, tool_input, tool_use_id) inspected 2026-09-08; not a live recording \u2014 replace with a recorded payload when one exists",
+  "timestamp": "2026-09-08T14:06:12.000Z",
+  "hook_event_name": "PreToolUse",
+  "session_id": "4d1c7f2a-9b3e-4c8d-a5f6-0e2b1d9c8a77",
+  "transcript_path": "/Users/dev/.copilot/session-state/4d1c7f2a-9b3e-4c8d-a5f6-0e2b1d9c8a77/events.jsonl",
+  "tool_name": "create_file",
+  "tool_input": {
+    "filePath": "/Users/dev/repos/example/src/config.ts",
+    "content": "export const token = \"ghp_9747444363esztrbftaqcdztcqaekxuxfd\";\n"
+  },
+  "tool_use_id": "call_vscode_0002"
+}

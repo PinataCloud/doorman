@@ -1,0 +1,11 @@
+{
+  "_provenance": "derived from opencode.ai/docs/plugins + sst/opencode packages/{plugin,opencode}/src (tool/*.ts, mcp/catalog.ts) fetched 2026-09-10; the envelope is what our own plugin builds from tool.execute.before(input, output) + ctx; not a live recording \u2014 replace with a recorded payload when one exists",
+  "hook_event_name": "tool.execute.before",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "patchText": "*** Begin Patch\n*** Update File: deploy/secrets.yaml\n@@\n-aws_secret: REPLACE_ME\n+aws_secret: wJalrXUtnFEMI/S5FRSUZ/tQjWbrCYPZPAKTFWYN\n*** Add File: deploy/.env\n+K=v\n*** End Patch\n"
+  },
+  "session_id": "ses_01JOPENCODEDEMO0001",
+  "tool_call_id": "call_01JOPENCODEDEMO0006",
+  "cwd": "/Users/dev/projects/api"
+}

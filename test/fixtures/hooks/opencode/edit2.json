@@ -1,0 +1,14 @@
+{
+  "_provenance": "derived from opencode.ai/docs/plugins + sst/opencode packages/{plugin,opencode}/src (tool/*.ts, mcp/catalog.ts) fetched 2026-09-10; the envelope is what our own plugin builds from tool.execute.before(input, output) + ctx; not a live recording \u2014 replace with a recorded payload when one exists",
+  "hook_event_name": "tool.execute.before",
+  "tool_name": "edit",
+  "tool_input": {
+    "filePath": "/Users/dev/projects/api/src/config.ts",
+    "oldString": "const HOST = \"api.example.com\";",
+    "newString": "const HOST = \"staging.example.com\";",
+    "replaceAll": false
+  },
+  "session_id": "ses_01JOPENCODEDEMO0001",
+  "tool_call_id": "call_01JOPENCODEDEMO0002",
+  "cwd": "/Users/dev/projects/api"
+}

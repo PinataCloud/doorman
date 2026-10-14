@@ -1,0 +1,10 @@
+build/
+dist/
+build-resources/icon.icns
+build-resources/icon.iconset/
+build-resources/icon-master.png
+build-resources/icon.png
+
+# scripts/dev-sandbox.mjs throwaway home + profile
+.dev-sandbox/
+node_modules/

@@ -1,0 +1,233 @@
+{
+  "_provenance": "SYNTHETIC — not a live recording. See _provenance.json in this directory. Record shapes modelled on Cursor 3.15.19 (macOS), observed 2026-09-06; all ids, paths and text invented.",
+  "cursorDiskKV": {
+    "composerData:11111111-1111-4111-8111-111111111111": {
+      "_v": 16,
+      "composerId": "11111111-1111-4111-8111-111111111111",
+      "name": "Retry the fetch helper",
+      "status": "completed",
+      "unifiedMode": "agent",
+      "forceMode": "edit",
+      "isAgentic": true,
+      "createdAt": 1788000000000,
+      "lastUpdatedAt": 1788000030000,
+      "usageData": {},
+      "fullConversationHeadersOnly": [
+        { "bubbleId": "aaaa0001-0000-4000-8000-000000000001", "type": 1 },
+        { "bubbleId": "aaaa0002-0000-4000-8000-000000000002", "type": 2 },
+        { "bubbleId": "aaaa0003-0000-4000-8000-000000000003", "type": 2 },
+        { "bubbleId": "aaaa0004-0000-4000-8000-000000000004", "type": 2 }
+      ]
+    },
+    "bubbleId:11111111-1111-4111-8111-111111111111:aaaa0001-0000-4000-8000-000000000001": {
+      "_v": 3,
+      "type": 1,
+      "bubbleId": "aaaa0001-0000-4000-8000-000000000001",
+      "text": "add a retry to the fetch helper in src/net.ts",
+      "richText": "{\"root\":{\"children\":[]}}",
+      "tokenCount": { "inputTokens": 0, "outputTokens": 0 }
+    },
+    "bubbleId:11111111-1111-4111-8111-111111111111:aaaa0002-0000-4000-8000-000000000002": {
+      "_v": 3,
+      "type": 2,
+      "bubbleId": "aaaa0002-0000-4000-8000-000000000002",
+      "text": "",
+      "isThought": false,
+      "capabilityType": 15,
+      "tokenCount": { "inputTokens": 0, "outputTokens": 0 },
+      "timingInfo": {
+        "clientStartTime": 8943827.3,
+        "clientRpcSendTime": 1788000010000,
+        "clientSettleTime": 1788000012000,
+        "clientEndTime": 1788000012000
+      },
+      "toolFormerData": {
+        "tool": 5,
+        "toolIndex": 1,
+        "modelCallId": "call-0001",
+        "toolCallId": "toolu_synthetic_0001",
+        "status": "completed",
+        "name": "read_file",
+        "rawArgs": "{\"target_file\":\"src/net.ts\",\"should_read_entire_file\":true,\"explanation\":\"inspect the fetch helper\"}",
+        "params": "{\"relativeWorkspacePath\":\"src/net.ts\",\"readEntireFile\":true}",
+        "result": "{\"contents\":\"export async function fetchJson(url) { return (await fetch(url)).json(); }\"}",
+        "additionalData": {}
+      }
+    },
+    "bubbleId:11111111-1111-4111-8111-111111111111:aaaa0003-0000-4000-8000-000000000003": {
+      "_v": 3,
+      "type": 2,
+      "bubbleId": "aaaa0003-0000-4000-8000-000000000003",
+      "text": "",
+      "isThought": false,
+      "capabilityType": 15,
+      "tokenCount": { "inputTokens": 0, "outputTokens": 0 },
+      "toolFormerData": {
+        "tool": 15,
+        "toolIndex": 2,
+        "modelCallId": "call-0002",
+        "toolCallId": "toolu_synthetic_0002",
+        "status": "completed",
+        "name": "run_terminal_cmd",
+        "rawArgs": "{\"command\":\"npm test -- --run\",\"is_background\":false,\"explanation\":\"check the suite still passes\"}",
+        "params": "{\"command\":\"npm test -- --run\"}",
+        "result": "{\"output\":\"12 passed, 0 failed\",\"exitCode\":0}",
+        "additionalData": {}
+      }
+    },
+    "bubbleId:11111111-1111-4111-8111-111111111111:aaaa0004-0000-4000-8000-000000000004": {
+      "_v": 3,
+      "type": 2,
+      "bubbleId": "aaaa0004-0000-4000-8000-000000000004",
+      "text": "Added a bounded retry with backoff around the fetch, and the suite still passes.",
+      "tokenCount": { "inputTokens": 14581, "outputTokens": 632 },
+      "modelInfo": { "modelName": "gpt-5" },
+      "timingInfo": {
+        "clientStartTime": 8943900.1,
+        "clientRpcSendTime": 1788000028000,
+        "clientSettleTime": 1788000030000,
+        "clientEndTime": 1788000030000
+      }
+    },
+
+    "composerData:22222222-2222-4222-8222-222222222222": {
+      "_v": 16,
+      "composerId": "22222222-2222-4222-8222-222222222222",
+      "name": "Explain the release script",
+      "status": "completed",
+      "unifiedMode": "agent",
+      "forceMode": "edit",
+      "isAgentic": true,
+      "isNAL": true,
+      "agentBackend": "cursor-agent",
+      "createdAt": 1788003000000,
+      "lastUpdatedAt": 1788003060000,
+      "usageData": {},
+      "contextTokensUsed": 15864,
+      "contextTokenLimit": 200000,
+      "contextUsagePercent": 7.932,
+      "modelConfig": {
+        "modelName": "composer-2.5",
+        "selectedModels": [{ "modelId": "composer-2.5", "parameters": [{ "id": "fast", "value": "true" }] }]
+      },
+      "workspaceIdentifier": { "id": "empty-window" },
+      "fullConversationHeadersOnly": [
+        {
+          "bubbleId": "bbbb0001-0000-4000-8000-000000000001",
+          "type": 1,
+          "createdAt": "2026-08-29T11:30:00.000Z",
+          "grouping": { "isRenderable": true, "hasText": true, "isShortPlainText": true }
+        },
+        {
+          "bubbleId": "bbbb0002-0000-4000-8000-000000000002",
+          "type": 2,
+          "createdAt": "2026-08-29T11:30:04.000Z",
+          "grouping": { "isRenderable": true, "hasText": true, "turnDurationMs": 1992 }
+        }
+      ]
+    },
+    "bubbleId:22222222-2222-4222-8222-222222222222:bbbb0001-0000-4000-8000-000000000001": {
+      "_v": 3,
+      "type": 1,
+      "bubbleId": "bbbb0001-0000-4000-8000-000000000001",
+      "requestId": "req-synthetic-0001",
+      "createdAt": "2026-08-29T11:30:00.000Z",
+      "conversationState": "~",
+      "text": "what does scripts/release.sh actually do",
+      "tokenCount": { "inputTokens": 0, "outputTokens": 0 },
+      "modelInfo": { "modelName": "composer-2.5" },
+      "contextWindowStatusAtCreation": {
+        "percentageRemaining": 92,
+        "percentageRemainingFloat": 92.108,
+        "tokensUsed": 15784,
+        "tokenLimit": 200000
+      }
+    },
+    "bubbleId:22222222-2222-4222-8222-222222222222:bbbb0002-0000-4000-8000-000000000002": {
+      "_v": 3,
+      "type": 2,
+      "bubbleId": "bbbb0002-0000-4000-8000-000000000002",
+      "requestId": "",
+      "createdAt": "2026-08-29T11:30:04.000Z",
+      "conversationState": "~",
+      "text": "It tags the commit, builds the artifacts and uploads them to the release bucket.",
+      "turnDurationMs": 1992,
+      "tokenCount": { "inputTokens": 0, "outputTokens": 0 }
+    },
+
+    "composerData:33333333-3333-4333-8333-333333333333": {
+      "_v": 16,
+      "composerId": "33333333-3333-4333-8333-333333333333",
+      "name": "Half-written session",
+      "status": "generating",
+      "unifiedMode": "agent",
+      "createdAt": 1788004000000,
+      "usageData": {},
+      "fullConversationHeadersOnly": [
+        { "bubbleId": "cccc0001-0000-4000-8000-000000000001", "type": 1 },
+        { "bubbleId": "cccc0002-0000-4000-8000-000000000002", "type": 2 },
+        { "bubbleId": "cccc0003-0000-4000-8000-000000000003", "type": 2 },
+        { "bubbleId": "cccc0009-0000-4000-8000-000000000009", "type": 2 }
+      ]
+    },
+    "bubbleId:33333333-3333-4333-8333-333333333333:cccc0001-0000-4000-8000-000000000001": {
+      "_v": 3,
+      "type": 1,
+      "bubbleId": "cccc0001-0000-4000-8000-000000000001",
+      "text": "grep for the old feature flag",
+      "tokenCount": { "inputTokens": 0, "outputTokens": 0 }
+    },
+    "bubbleId:33333333-3333-4333-8333-333333333333:cccc0002-0000-4000-8000-000000000002": "{\"_v\":3,\"type\":2,\"bubbleId\":\"cccc0002",
+    "bubbleId:33333333-3333-4333-8333-333333333333:cccc0003-0000-4000-8000-000000000003": {
+      "_v": 3,
+      "type": 2,
+      "bubbleId": "cccc0003-0000-4000-8000-000000000003",
+      "text": "",
+      "isThought": false,
+      "capabilityType": 15,
+      "tokenCount": { "inputTokens": 0, "outputTokens": 0 },
+      "toolFormerData": {
+        "tool": 3,
+        "toolIndex": 1,
+        "modelCallId": "call-0003",
+        "toolCallId": "toolu_synthetic_0003",
+        "status": "error",
+        "name": "grep_search",
+        "rawArgs": "{\"query\":\"ENABLE_LEGACY_UPLOAD\",\"case_sensitive\":true}",
+        "params": "{\"query\":\"ENABLE_LEGACY_UPLOAD\"}",
+        "error": "ripgrep exited with status 2: unrecognized flag",
+        "additionalData": {}
+      }
+    },
+
+    "composerData:44444444-4444-4444-8444-444444444444": "{\"_v\":16,\"composerId\":\"4444",
+    "composerData:55555555-5555-4555-8555-555555555555": {
+      "_v": 16,
+      "composerId": "55555555-5555-4555-8555-555555555555",
+      "unifiedMode": "chat",
+      "forceMode": "chat",
+      "status": "none",
+      "createdAt": 1788004000000,
+      "usageData": {},
+      "fullConversationHeadersOnly": []
+    }
+  },
+  "composerHeaders": [
+    {
+      "composerId": "22222222-2222-4222-8222-222222222222",
+      "workspaceId": "ws-beta",
+      "createdAt": 1788003000000,
+      "lastUpdatedAt": 1788003060000,
+      "isArchived": 0,
+      "isSubagent": 0
+    },
+    {
+      "composerId": "empty-state-draft",
+      "workspaceId": "ws-beta",
+      "createdAt": 1788003000000,
+      "lastUpdatedAt": 1788003000000,
+      "isArchived": 0,
+      "isSubagent": 0
+    }
+  ]
+}

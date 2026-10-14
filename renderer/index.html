@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- The loader contract: bundled React +
+     Babel over the doorman:// scheme's _asset/ prefix, raw JSX screens fetched and
+     compiled in-page, ONE indirect eval of the concatenation (per-file eval
+     would drop every top-level const), no bundler, no CDN. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self';">
+<title>Doorman</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="doorman-app">
+<script>if (new URLSearchParams(location.search).get("panel") === "1") document.body.className = "doorman-app doorman-panel";</script>
+<div id="root">
+  <div class="boot">
+    <div class="boot-mark">Doorman</div>
+    <div class="boot-sub">Loading…</div>
+  </div>
+</div>
+<script src="_asset/vendor/react.js"></script>
+<script src="_asset/vendor/react-dom.js"></script>
+<script src="_asset/vendor/babel.js"></script>
+<script>
+(function () {
+  var SCREENS = [
+    "components.jsx",
+    "charts.jsx",
+    "screens/graphs.jsx",
+    "screens/ledger.jsx",
+    "screens/radar-trace.jsx",
+    "screens/radar.jsx",
+    "screens/overview.jsx",
+    "screens/analytics.jsx",
+    "screens/rules.jsx",
+    "screens/integrations.jsx",
+    "screens/settings.jsx",
+    "screens/onboarding.jsx",
+    "approvals.jsx",
+    "ai.jsx",
+    "app.jsx",
+  ];
+  function fail(file, err) {
+    document.getElementById("root").innerHTML =
+      '<div class="boot"><div class="boot-mark">Doorman</div><div class="boot-sub">' +
+      "Couldn't load " + file + ": " + String(err && err.message ? err.message : err) +
+      "</div></div>";
+    console.error("[doorman] app failed to load", file, err);
+  }
+  Promise.all(
+    SCREENS.map(function (file) {
+      return fetch(file)
+        .then(function (res) {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.text();
+        })
+        .then(function (source) {
+          try {
+            return Babel.transform(source, { presets: ["react"], filename: file }).code;
+          } catch (err) {
+            fail(file, err);
+            throw err;
+          }
+        })
+        .catch(function (err) {
+          fail(file, err);
+          throw err;
+        });
+    }),
+  ).then(function (compiled) {
+    try {
+      (0, eval)(compiled.join("\n;\n"));
+    } catch (err) {
+      fail("the app", err);
+    }
+  }).catch(function () {
+    // Already reported by fail() above.
+  });
+})();
+</script>
+</body>
+</html>

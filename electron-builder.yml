@@ -1,0 +1,162 @@
+# Doorman — the local-first Mac app. See scripts/adhoc-sign.mjs for the
+# reasoning behind the signing setup.
+appId: cloud.pinata.doorman
+productName: Doorman
+copyright: Pinata
+afterPack: scripts/adhoc-sign.mjs
+directories:
+  output: dist
+  buildResources: build-resources
+files:
+  # build/renderer is packed separately below AS renderer/ — the precompiled,
+  # comment-free replacement for the raw JSX tree the dev loop serves
+  # (scripts/build-renderer.mjs). rendererRoot() in main/index.ts
+  # resolves the same asar path either way.
+  - build/**/*
+  - "!build/renderer/**/*"
+  # The WASM runtime ships ONCE, as Resources/runtime (extraResources below) —
+  # not a second time inside the asar. Without this line the 14 MB rode in
+  # both places.
+  - "!build/runtime/**/*"
+  # Same rule for the packaged VS Code extension: it ships ONCE, as
+  # Resources/vscode (extraResources below), because the editor's CLI is handed
+  # a real filesystem path and cannot read one out of the asar.
+  - "!build/vscode/**/*"
+  - package.json
+  - "!**/*.map"
+  - from: build/renderer
+    to: renderer
+extraResources:
+  # The ONNX Runtime WASM build the injection classifier runs on — three files
+  # staged by scripts/stage-runtime.mjs (~13 MB, arch-neutral). Code ships
+  # signed here; the model it runs is DATA the app downloads on enable
+  # (main/lib/model-assets.ts), never part of the bundle.
+  - from: build/runtime
+    to: runtime
+  # The Doorman VS Code extension (vscode-extension, packaged by
+  # scripts/build-vsix.mjs). ~18 KB. It has to be a real file on disk rather
+  # than an asar entry: main/vscode-ext-install.ts hands its path to the
+  # editor's own `code --install-extension`, which opens it itself.
+  - from: build/vscode
+    to: vscode
+  # The brand assets the doorman:// scheme serves under _asset/ — the mark,
+  # the fonts and the bundled React. Only what the app renders ships: the
+  # logo master and the app-icon source stay in the repo.
+  - from: assets
+    to: assets
+    filter:
+      - doorman-mark-512.png
+      - "fonts/**/*"
+      - "vendor/**/*"
+      # The packaged renderer is precompiled (build-renderer.mjs), so the
+      # in-page compiler never loads — only dev runs, which read assets/
+      # directly, still use it.
+      - "!vendor/babel.js"
+mac:
+  category: public.app-category.developer-tools
+  icon: build-resources/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  extendInfo:
+    # The one-time Automation consent prompt macOS shows the first time the
+    # ledger's Open terminal / Continue in Terminal addresses Terminal or
+    # iTerm2 (com.apple.security.automation.apple-events in the entitlements).
+    NSAppleEventsUsageDescription: Doorman brings a running agent's terminal tab forward, or opens a new window to continue a finished session. It never reads or types anything else.
+dmg:
+  title: Doorman ${version}
+win:
+  # The SAME full-bleed 512×512 PNG the Linux target uses, not the Apple-grid
+  # master — Windows draws its icons close to full-bleed too, so the padded
+  # variant would read small in the taskbar. electron-builder converts it to a
+  # multi-size .ico itself (app-builder-lib's iconConverter), so there is no
+  # .ico to generate or commit and no ImageMagick on the runner.
+  icon: build-resources/icon.png
+  # UNSIGNED, deliberately and visibly: there is no Authenticode credential in
+  # this repo, so electron-builder logs that it skipped signing and SmartScreen
+  # shows "Windows protected your PC" on first run until the binary accrues
+  # reputation. Adding `signtoolOptions` (a cert) or Azure Trusted Signing later
+  # is a config+secrets change that needs nothing here to move.
+  target:
+    # ONE installer covering both architectures, which is what electron-builder
+    # produces when an nsis target names several arches.
+    - target: nsis
+      arch: [x64, arm64]
+nsis:
+  # A wizard, not electron-builder's default silent one-click install. An
+  # unsigned download already makes a person look twice; an installer that
+  # finishes and launches the app before they have agreed to anything makes that
+  # worse, not better.
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  # PER-USER (the default, stated because it is load-bearing): a per-machine
+  # install triggers UAC, and a UAC prompt for an unsigned binary is the
+  # "unknown publisher" dialog with no publisher name at all. Per-user also
+  # means electron-updater can replace the app without elevating.
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Doorman
+linux:
+  # `Development` is the freedesktop main category; `Utility` keeps it visible
+  # in launchers that only surface the short list.
+  category: Development;Utility
+  icon: build-resources/icon.png
+  # FULL-BLEED 512×512 (scripts/make-icons.mjs), not the Apple-grid master the
+  # .icns slices from — see that script for why the two differ.
+  synopsis: Local-first AI spend graphs, Security Guard and event ledger
+  description: >-
+    Doorman watches the AI coding agents on this machine — what they spend,
+    what they touch and what they send — and keeps every bit of it local.
+  # Lowercase, because this becomes an executable on $PATH-shaped layouts and
+  # the .desktop file's Exec line. The default would be the product name
+  # verbatim ("Doorman"), which is shouting for a binary.
+  executableName: doorman
+  # Names the installed .desktop file after `desktopName` in package.json and
+  # writes the matching StartupWMClass. Electron derives its GTK app_id from
+  # the same field, so this is what makes a desktop environment link the
+  # running window to its launcher entry (correct icon in the dock / alt-tab,
+  # no phantom second entry) instead of showing a generic one.
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+toolsets:
+  # THE reason this build runs on Arch. electron-builder's DEFAULT AppImage
+  # toolset ("0.0.0") embeds the 2019 AppImageKit runtime, which `dlopen`s
+  # `libfuse.so.2` at startup — and Arch has shipped only fuse3 for years, with
+  # `fuse2` a separate, deprecated package almost nobody has installed. On a
+  # stock Arch box that runtime dies before Electron is ever reached:
+  #
+  #     dlopen(): error loading libfuse.so.2
+  #     AppImages require FUSE to run.
+  #
+  # (Reproduced against `archlinux:latest`; the full account is in
+  # docs/shipped-surface.md → "Linux AppImage (2026-09-11)".)
+  # Toolset 1.0.3 uses the AppImage project's 20251108 static runtime instead,
+  # which links squashfuse and libfuse3 statically and needs nothing from the
+  # host but `/dev/fuse`. Same artifact, no packages to install first.
+  #
+  # Two knock-on effects of the newer toolset, both deliberate: squashfs
+  # compression becomes zstd (the static runtime has no xz), and the legacy
+  # toolset's implicit `--no-sandbox` in the .desktop Exec line goes away, so
+  # the app runs WITH Chromium's sandbox via unprivileged user namespaces —
+  # which is the default on Arch and every current distro.
+  appimage: "1.0.3"
+# The update feed: GitHub Releases on this (public) repo, published by
+# .github/workflows/release.yml. An installed app has no token, so the repo
+# must stay public for updates to work. This block is what electron-builder
+# bakes into the app's app-update.yml. Changing it changes where SHIPPED apps
+# look for updates, so a move to another host needs one release on the old
+# feed that already points at the new one.
+publish:
+  - provider: github
+    owner: PinataCloud
+    repo: doorman
+    releaseType: release

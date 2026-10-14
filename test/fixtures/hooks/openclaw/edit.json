@@ -1,0 +1,14 @@
+{
+  "_provenance": "recorded live 2026-09-08 from OpenClaw 2026.3.8 (3caab92), `openclaw agent --local` driving Claude Opus 4.6 under a throwaway OPENCLAW_STATE_DIR: this is the byte-for-byte stdin the doorman-guard plugin's envelope handed the guard (tee'd in front of guard.js); nothing edited",
+  "hook_event_name": "before_tool_call",
+  "tool_name": "edit",
+  "tool_input": {
+    "file_path": "notes/e2e.txt",
+    "old_string": "hello",
+    "new_string": "goodbye"
+  },
+  "tool_call_id": "toolu_01JpgeBSsHXkdL6B5SAsNTtB",
+  "run_id": "doorman-e2e-2",
+  "session_id": "doorman-e2e-2",
+  "agent_id": "main"
+}

@@ -1,0 +1,15 @@
+{
+  "_provenance": "derived from geminicli.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "session_id": "9f1c2b74-3f0a-4a51-9b1e-2c8d4a6e7f01",
+  "transcript_path": "/Users/dev/.gemini/tmp/9f1c2b74/logs.json",
+  "cwd": "/Users/dev/projects/api",
+  "hook_event_name": "BeforeTool",
+  "timestamp": "2026-09-05T10:14:02.311Z",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "aws s3 rm s3://prod-backups --recursive",
+    "description": "Remove the stale backup bucket contents",
+    "dir_path": "/Users/dev/projects/api",
+    "is_background": false
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "_provenance": "derived from geminicli.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "session_id": "9f1c2b74-3f0a-4a51-9b1e-2c8d4a6e7f01",
+  "transcript_path": "/Users/dev/.gemini/tmp/9f1c2b74/logs.json",
+  "cwd": "/Users/dev/projects/api",
+  "hook_event_name": "BeforeTool",
+  "timestamp": "2026-09-05T10:15:44.902Z",
+  "tool_name": "write_file",
+  "tool_input": {
+    "file_path": "/Users/dev/projects/api/.env",
+    "content": "OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012mno345pqr678\n"
+  }
+}

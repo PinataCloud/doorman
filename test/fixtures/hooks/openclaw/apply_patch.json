@@ -1,0 +1,12 @@
+{
+  "_provenance": "derived from the OpenClaw before_tool_call event (docs.openclaw.ai/plugins/hooks + the 2026.3.8 pi-embedded runner and pi-coding-agent tool schemas, read 2026-09-06) as wrapped by the doorman-guard plugin's envelope; not a live recording — replace with a recorded payload when one exists",
+  "hook_event_name": "before_tool_call",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "input": "*** Begin Patch\n*** Update File: deploy/secrets.yaml\n@@\n-aws_secret: REPLACE_ME\n+aws_secret: wJalrXUtnFEMI/S5FRSUZ/tQjWbrCYPZPAKTFWYN\n*** End Patch\n"
+  },
+  "derived_paths": ["deploy/secrets.yaml"],
+  "tool_call_id": "toolu_01P4tch",
+  "session_id": "3f7a9c12-5b4e-4d8a-9c1e-7b2d4f6a8e01",
+  "agent_id": "main"
+}

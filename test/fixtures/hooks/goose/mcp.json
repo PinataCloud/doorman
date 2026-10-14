@@ -1,0 +1,14 @@
+{
+  "_provenance": "docs-derived from https://goose-docs.ai/docs/guides/context-engineering/hooks/ on 2026-09-06; not a live recording",
+  "event": "PreToolUse",
+  "session_id": "goose-20260906-101403",
+  "matcher_context": "github__create_issue",
+  "tool_name": "github__create_issue",
+  "tool_input": {
+    "owner": "acme",
+    "repo": "api",
+    "title": "x"
+  },
+  "working_dir": "/Users/dev/projects/api",
+  "tool_call_id": "call_01"
+}

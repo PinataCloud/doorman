@@ -1,0 +1,22 @@
+{
+  // Electron's main process is CommonJS, and the compiled output lands in build/.
+  "compilerOptions": {
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "outDir": "build",
+    "rootDir": ".",
+    "sourceMap": true,
+    // The emitted JS ships verbatim inside app.asar (and the guard bundle is
+    // copied to userData), so comments would hand every download the repo's
+    // internal commentary.
+    "removeComments": true,
+    "types": ["node"]
+  },
+  "include": ["main/**/*.ts"]
+}

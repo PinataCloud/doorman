@@ -1,0 +1,12 @@
+{
+  "_provenance": "derived from cursor.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "conversation_id": "conv_01JCURSORDEMO0005",
+  "generation_id": "gen_01JCURSORDEMO0005",
+  "hook_event_name": "preToolUse",
+  "workspace_roots": ["/Users/dev/projects/acme-api"],
+  "tool_name": "Shell",
+  "tool_use_id": "toolu_01JCURSORDEMO0005",
+  "tool_input": { "command": "npm install", "working_directory": "/Users/dev/projects/acme-api" },
+  "cwd": "/Users/dev/projects/acme-api",
+  "agent_message": "Installing dependencies."
+}

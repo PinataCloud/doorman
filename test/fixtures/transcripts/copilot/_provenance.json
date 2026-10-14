@@ -1,0 +1,25 @@
+{
+  "host": "GitHub Copilot CLI",
+  "captured": false,
+  "why": "The Mac this reader was written on had ~/.copilot with config.json, logs/, ide/ and hooks/ but NO session-state directory — the CLI had only ever been launched once in stdio server mode (logs/process-*.log, 'Starting CLI in server mode (stdio)'), and a session directory is written per interactive session. These documents are SYNTHETIC: every field name, event type and nesting below is taken from the published schema; every prompt, response, path and token count is invented.",
+  "shaped_from": {
+    "package": "@github/copilot 1.0.83 (npm, published tarball read on 2026-09-06; the CLI itself was never run)",
+    "platform_package": "@github/copilot-darwin-arm64 1.0.83",
+    "files_read": [
+      "schemas/session-events.schema.json — the JSON Schema for session events emitted by the Copilot CLI runtime: 139 event types under SessionEvent, envelope {id, timestamp, parentId, ephemeral?, agentId?, type, data}",
+      "app.js — $A = \"session-state\"; the copilot-home resolution [settings.configDir, process.env.COPILOT_HOME, os.homedir()/.copilot]; workspace.yaml per session directory; the reducer computing inputTokensUncached = max(0, inputTokens - cacheReadTokens - cacheWriteTokens)",
+      "copilot-sdk/docs/examples.md — 'const workspace = session.workspacePath; // e.g. ~/.copilot/session-state/<id>' and the tool-argument shapes (arguments.path for edit/create)"
+    ],
+    "docs": [
+      "https://docs.github.com/en/copilot/concepts/agents/copilot-cli/chronicle (fetched 2026-09-06) — sessions persisted as files under ~/.copilot/session-state/, plus the derived ~/.copilot/session-store.db",
+      "https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/chronicle (fetched 2026-09-06) — /session, copilot --resume/--continue, /chronicle reindex rebuilds the store from the session history",
+      "https://docs.github.com/en/copilot/reference/hooks-reference (fetched 2026-09-06) — sessionStart/sessionEnd/agentStop payloads; agentStop carries transcriptPath, which is this events.jsonl"
+    ]
+  },
+  "layout": "<copilot-home>/session-state/<sessionId>/events.jsonl (+ workspace.yaml, not read by this reader)",
+  "documents": {
+    "priced-session/events.jsonl": "A full session: start with git context, a human prompt, an assistant message with tool requests, tool execution start/complete, a per-call assistant.usage with a quota snapshot, a model change, a second call, a title, and shutdown.",
+    "unmetered-session/events.jsonl": "The same shape with every assistant.usage removed — the case where a build does not persist the per-call usage event; the session's own session.shutdown modelMetrics are the only spend signal.",
+    "malformed-session/events.jsonl": "Half-written trailing line, a non-object line, an unknown event type, an event with no timestamp, and a tool call before any assistant message."
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "doorman",
+  "displayName": "Doorman",
+  "publisher": "pinata",
+  "version": "0.0.0",
+  "description": "Agent token usage, Security Guard state and held tool calls from the Doorman desktop app, in the editor.",
+  "license": "UNLICENSED",
+  "private": true,
+  "icon": "icon.png",
+  "galleryBanner": { "color": "#0D1F4E", "theme": "dark" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "keywords": ["doorman", "security", "agents", "copilot", "usage"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "Reads the Doorman app's own files in your user directory; nothing from the workspace."
+    }
+  },
+  "contributes": {
+    "icons": {
+      "doorman-mark": {
+        "description": "The Doorman mark, for the status bar.",
+        "default": { "fontPath": "./doorman-icons.woff", "fontCharacter": "\\E001" }
+      }
+    },
+    "commands": [
+      { "command": "doorman.open", "title": "Doorman: Open the app" },
+      { "command": "doorman.review", "title": "Doorman: Review — held calls here, or the app on its Radar" },
+      { "command": "doorman.status", "title": "Doorman: Show status" },
+      { "command": "doorman.pending", "title": "Doorman: Review held tool calls" }
+    ],
+    "configuration": {
+      "title": "Doorman",
+      "properties": {
+        "doorman.userDataPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Where the Doorman app keeps its data. Leave empty for the platform default: `~/Library/Application Support/Doorman` (macOS), `%APPDATA%\\Doorman` (Windows), `~/.config/Doorman` (Linux)."
+        },
+        "doorman.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show today's agent token usage and the guard's state in the status bar."
+        },
+        "doorman.askInEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask here when the guard holds an agent's tool call, instead of only in the Doorman app's own window."
+        }
+      }
+    }
+  }
+}

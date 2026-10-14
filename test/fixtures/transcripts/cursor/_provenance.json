@@ -1,0 +1,33 @@
+{
+  "_provenance": "SYNTHETIC. Not a live recording. Every id, path, prompt, file name and tool result in this directory was invented for the test suite; no Cursor conversation was copied into the repo. The RECORD SHAPES — table and key names, field names, value types, the 1=user/2=assistant bubble type, the header-array ordering, which fields are present on which generation of record — are modelled on Cursor 3.15.19 on macOS, whose ~/Library/Application Support/Cursor/User/{globalStorage,workspaceStorage}/state.vscdb databases were inspected read-only on 2026-09-06. Cursor documents none of this, so a later Cursor may write something else; re-inspect before trusting these shapes as current.",
+  "observed": {
+    "cursor_version": "3.15.19",
+    "observed_on": "2026-09-06",
+    "platform": "darwin",
+    "databases": [
+      "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb",
+      "~/Library/Application Support/Cursor/User/workspaceStorage/<hash>/state.vscdb"
+    ],
+    "counts_in_the_inspected_database": {
+      "composerData_records": 30,
+      "bubbleId_records": 176,
+      "bubbles_with_a_non_zero_tokenCount": 26,
+      "bubbles_with_their_own_createdAt": 6,
+      "composers_with_a_usageData_payload": 0
+    },
+    "tool_names_seen": [
+      "codebase_search",
+      "grep_search",
+      "read_file",
+      "list_dir",
+      "file_search",
+      "edit_file",
+      "search_replace"
+    ]
+  },
+  "files": {
+    "global-state.json": "stands in for globalStorage/state.vscdb: cursorDiskKV rows keyed composerData:<id> and bubbleId:<composerId>:<bubbleId>, plus the newer composerHeaders table.",
+    "workspaces.json": "stands in for workspaceStorage/<hash>/: workspace.json's folder URI and ItemTable['composer.composerData'].",
+    "empty-state.json": "a database with the tables but no conversations in them."
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "_provenance": "derived from cursor.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "conversation_id": "conv_01JCURSORDEMO0007",
+  "generation_id": "gen_01JCURSORDEMO0007",
+  "hook_event_name": "preToolUse",
+  "workspace_roots": ["/Users/dev/projects/acme-api"],
+  "tool_name": "Write",
+  "tool_use_id": "toolu_01JCURSORDEMO0007",
+  "tool_input": {
+    "file_path": "/Users/dev/projects/acme-api/src/config.ts",
+    "contents": "export const token = \"ghp_vdrnycdbpaevbmujgtve782749563628289\";\n"
+  }
+}

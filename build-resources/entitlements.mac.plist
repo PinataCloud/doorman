@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Entitlements for a hardened-runtime build. Present now (unsigned builds
+    ignore them) so that turning signing on needs no further changes here.
+
+    allow-jit / allow-unsigned-executable-memory / allow-dyld-environment-variables
+    are Electron's baseline requirements: V8 JITs, and hooks may spawn the app's
+    binary in Node mode (ELECTRON_RUN_AS_NODE).
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <!--
+    The only outbound network use in this app is the injection classifier's
+    one-time model download and, when a build carries an update feed, the
+    update check. Everything else — capture, detection, search, cost — is
+    local by design; there is deliberately no network.server entitlement.
+  -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <!--
+    Apple Events (2026-09-07, live sessions): the ledger's "Open terminal" /
+    "Continue in Terminal" run osascript against Terminal or iTerm2 to select
+    the tab owning a session's tty, or to open a new window running the
+    host's resume command. Hardened-runtime apps cannot send Apple events
+    without this entitlement; macOS still asks the person once per target app
+    (NSAppleEventsUsageDescription in electron-builder.yml is that prompt's
+    text). Nothing else uses it.
+  -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>

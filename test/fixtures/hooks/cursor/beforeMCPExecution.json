@@ -1,0 +1,13 @@
+{
+  "_provenance": "derived from cursor.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "conversation_id": "conv_01JCURSORDEMO0003",
+  "generation_id": "gen_01JCURSORDEMO0003",
+  "model": "claude-sonnet-4.5",
+  "hook_event_name": "beforeMCPExecution",
+  "cursor_version": "1.7.12",
+  "workspace_roots": ["/Users/dev/projects/acme-api"],
+  "tool_name": "create_comment",
+  "tool_input": "{\"issue_id\":\"ENG-1\",\"body\":\"deploy key AKIAMQHGCTEF5EUSLEJR\"}",
+  "mcp_server_name": "linear",
+  "command": "npx -y @linear/mcp-server"
+}

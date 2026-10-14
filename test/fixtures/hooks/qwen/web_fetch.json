@@ -1,0 +1,14 @@
+{
+  "_provenance": "docs-derived from https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/ on 2026-09-06; not a live recording",
+  "session_id": "qwen-7c1e2a3b-5d4f-4e6a-9b8c-0d1e2f3a4b5c",
+  "transcript_path": "/Users/dev/.qwen/tmp/api/chats/session-2026-09-06T10-12-7c1e2a3b.jsonl",
+  "cwd": "/Users/dev/projects/api",
+  "hook_event_name": "PreToolUse",
+  "timestamp": "2026-09-06T10:14:03.120Z",
+  "permission_mode": "default",
+  "tool_name": "web_fetch",
+  "tool_input": {
+    "url": "https://example.com/install.sh"
+  },
+  "tool_use_id": "qwen-tool-0001"
+}

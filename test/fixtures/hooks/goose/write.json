@@ -1,0 +1,13 @@
+{
+  "_provenance": "docs-derived from https://goose-docs.ai/docs/guides/context-engineering/hooks/ on 2026-09-06; not a live recording",
+  "event": "PreToolUse",
+  "session_id": "goose-20260906-101403",
+  "matcher_context": "developer__write",
+  "tool_name": "developer__write",
+  "tool_input": {
+    "path": "/Users/dev/projects/api/.env",
+    "content": "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/S5FRSUZ/tQjWbrCYPZPAKTFWYN\n"
+  },
+  "working_dir": "/Users/dev/projects/api",
+  "tool_call_id": "call_01"
+}

@@ -1,0 +1,9 @@
+{
+  "_provenance": "derived from hermes-agent.nousresearch.com/docs/user-guide/features/hooks and tools/*.py fetched 2026-09-06; not a live recording — replace with a recorded payload when one exists",
+  "hook_event_name": "pre_tool_call",
+  "tool_name": "search_files",
+  "tool_input": { "pattern": "AWS_SECRET", "target": "content", "path": ".", "limit": 50 },
+  "session_id": "sess_7f3a9c2e",
+  "cwd": "/Users/dev/projects/api",
+  "extra": { "task_id": "task_01", "tool_call_id": "call_4c6e8a0b" }
+}

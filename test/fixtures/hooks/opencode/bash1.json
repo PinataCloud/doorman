@@ -1,0 +1,13 @@
+{
+  "_provenance": "derived from opencode.ai/docs/plugins + sst/opencode packages/{plugin,opencode}/src (tool/*.ts, mcp/catalog.ts) fetched 2026-09-10; the envelope is what our own plugin builds from tool.execute.before(input, output) + ctx; not a live recording \u2014 replace with a recorded payload when one exists",
+  "hook_event_name": "tool.execute.before",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "aws s3 rm s3://prod-backups --recursive",
+    "timeout": 120000,
+    "workdir": "/Users/dev/projects/api/infra"
+  },
+  "session_id": "ses_01JOPENCODEDEMO0001",
+  "tool_call_id": "call_01JOPENCODEDEMO0001",
+  "cwd": "/Users/dev/projects/api"
+}

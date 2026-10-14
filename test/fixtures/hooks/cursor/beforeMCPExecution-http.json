@@ -1,0 +1,12 @@
+{
+  "_provenance": "derived from cursor.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "conversation_id": "conv_01JCURSORDEMO0004",
+  "generation_id": "gen_01JCURSORDEMO0004",
+  "hook_event_name": "beforeMCPExecution",
+  "workspace_roots": ["/Users/dev/projects/acme-api"],
+  "tool_name": "search",
+  "tool_input": "not json at all",
+  "mcp_server_name": "docs_search",
+  "mcp_server_url": "https://mcp.example.com/sse",
+  "url": "https://mcp.example.com/sse"
+}

@@ -1,0 +1,10 @@
+{
+  "_provenance": "derived from cursor.com/docs/hooks fetched 2026-09-05; not a live recording — replace with a recorded payload when one exists",
+  "conversation_id": "conv_01JCURSORDEMO0009",
+  "generation_id": "gen_01JCURSORDEMO0009",
+  "hook_event_name": "preToolUse",
+  "workspace_roots": ["/Users/dev/projects/acme-api"],
+  "tool_name": "Grep",
+  "tool_use_id": "toolu_01JCURSORDEMO0009",
+  "tool_input": { "pattern": "TODO", "path": "src" }
+}
