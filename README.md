@@ -213,6 +213,12 @@ signing and notary ones listed at the top of the file.
 Unsigned Mac builds install with a one-time "Open Anyway", but macOS will not
 apply an auto-update to them, so Mac auto-update needs the Developer ID.
 
+Those secrets are set (2026-10-14): Mac releases are signed with the
+**Developer ID Application: Pinata Technologies Inc (`GUFNBHK267`)** identity
+and notarized through that team's App Store Connect API key (`W5X5576RG4`).
+v0.1.0 predates them and is ad-hoc signed, so its installs cannot auto-update
+and need one manual download of a signed release.
+
 ## Brand assets
 
 Every brand asset derives from one master, `assets/doorman-logo.png`.
