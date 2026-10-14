@@ -141,7 +141,8 @@ jobs:
             [ -d "$app" ] || continue
             echo "── $app"
             codesign --verify --deep --strict --verbose=2 "$app"
-            codesign -dv "$app" 2>&1 | grep -E "^Authority=Developer ID Application"
+            # -dvv, not -dv: a single -v prints no Authority= lines at all.
+            codesign -dvv "$app" 2>&1 | grep -E "^Authority=Developer ID Application"
             xcrun stapler validate "$app"
             spctl --assess --type execute --verbose=2 "$app"
           done
