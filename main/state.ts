@@ -33,7 +33,9 @@ import {
   type SecurityLevel,
   normalizeSecondOpinion,
   normalizeInjectionClassifierConfig,
+  type InjectionModelId,
 } from "./guard/policy.js";
+import type { InjectionModelFallback } from "./lib/injection-model-choice.js";
 import type { SecurityDetectorId } from "./guard/security-detect.js";
 import { DETECTOR_GUIDANCE } from "./lib/ai-guidance.js";
 import type { ApprovalRequest } from "./guard/handshake.js";
@@ -561,17 +563,30 @@ export interface ModelAssistState {
     enabled: boolean;
     ready: boolean;
     model: string;
-    /** The pinned model build (model-assets.ts `version`) — "installed and up
-     * to date" means every pinned file is present at this build's pins. */
+    /** The pinned build of the model that RUNS (model-assets.ts `version`). */
     version: string;
-    /** Every pinned file is on disk at its pinned size. */
+    /** Every pinned file of the model that runs is on disk and recorded as
+     * verified against its sha256 pin (lib/model-assets.ts modelStatus). */
     installed: boolean;
     /** The WASM runtime shipped with this build is present. */
     runtime_present: boolean;
     /** A download is in flight — bytes so far and the total. */
     downloading?: { bytes_done: number; bytes_total: number };
-    /** The last download attempt failed with this message. */
+    /** The last download attempt of the model that runs failed with this message. */
     download_error?: string;
+    /** Which model was selected, which one runs (lib/injection-model-choice.ts). */
+    model_choice?: {
+      selected: InjectionModelId;
+      effective: InjectionModelId;
+      /** Why `effective` is not `selected`. */
+      fallback?: InjectionModelFallback;
+      /** The selected model's last download failure (fallback `download_failed`). */
+      selected_error?: string;
+      /** DOORMAN_INJECTION_CLASSIFIER_MODEL pins the choice — the control is read-only. */
+      env?: boolean;
+      /** The selected model is downloading right now. */
+      selected_downloading?: boolean;
+    };
   };
   second_opinion: { enabled: boolean; model: string };
   /** One of the DOORMAN_INJECTION_CLASSIFIER* / DOORMAN_SECOND_OPINION* variables is set. */

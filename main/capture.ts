@@ -60,7 +60,7 @@ import { validateDetection } from "./lib/detection-schema.js";
 import { maskText, maskTurnText } from "./lib/masking.js";
 import type { EvidenceVault } from "./lib/evidence-vault.js";
 import type { FlowOptions } from "./lib/flow-rules.js";
-import { applicableIgnoreRules, defaultInjectionClassifierConfig, type GuardPolicy } from "./guard/policy.js";
+import { applicableIgnoreRules, defaultInjectionClassifierConfig, selectedInjectionModel, type GuardPolicy, type InjectionModelId } from "./guard/policy.js";
 import { injectionAssist, injectionMarkerStands, markerIsClassifiable, type InjectionVerdict } from "./lib/injection-classifier.js";
 import type { DecidedVia } from "./lib/findings.js";
 import { MCP_POISON_PATTERNS, scanMcpConfigText, scanMcpToolOutput } from "./guard/mcp-poison.js";
@@ -155,6 +155,10 @@ export interface EngineDeps {
    * detectors' finding exactly as it was. Optional: tests and headless runs
    * have none, which is the same as `null` every time. */
   classifyInjection?(text: string): Promise<InjectionVerdict | null>;
+  /** The model `classifyInjection` actually runs right now (the EFFECTIVE
+   * one: stock while the selected fine-tuned model is not installed) — what
+   * the verdict cache is keyed by. Absent: the policy's selection. */
+  injectionModelInUse?(): InjectionModelId;
   log(message: string): void;
 }
 
@@ -320,6 +324,9 @@ export class CaptureEngine {
    * marker the model may overrule are ever asked; a `null` (no answer) is not
    * cached so a transient failure is re-asked next scan. */
   private injectionVerdictCache = new Map<string, InjectionVerdict>();
+  /** The model whose verdicts the cache holds (the effective one — see
+   * EngineDeps.injectionModelInUse); a change re-asks every line. */
+  private injectionVerdictModel: string | undefined;
   /** Line ids whose `injected_instruction` marker the classifier stood down —
    * what the sync scans read (reconcileInjectionMarkers refreshes it). */
   private injectionSuppressed = new Set<string>();
@@ -1847,6 +1854,11 @@ export class CaptureEngine {
     if (!cfg.enabled || !classify) {
       if (this.injectionSuppressed.size > 0) this.injectionSuppressed.clear();
       return;
+    }
+    const model = this.deps.injectionModelInUse?.() ?? selectedInjectionModel(cfg);
+    if (model !== this.injectionVerdictModel) {
+      this.injectionVerdictCache.clear();
+      this.injectionVerdictModel = model;
     }
     for (const unit of detect) {
       if (unit.kind !== "tool_output") continue;

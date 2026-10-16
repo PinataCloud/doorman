@@ -13,7 +13,8 @@ Update it in the same change whenever you:
 2. change what packaging strips — `removeComments` in `tsconfig.json`,
    `scripts/build-renderer.mjs`, or the `files` / `extraResources` globs in
    `electron-builder.yml`;
-3. add an IPC channel, an entitlement, or any network call;
+3. add an IPC channel, an entitlement, or any network call (including a
+   change of a model's download URL, e.g. `main/lib/model-sources.ts`);
 4. move something between *deliberately shipped* and *must not ship*.
 
 Audit the **built** app, never the source tree — packaging decides what ships,
@@ -57,9 +58,17 @@ from the source cannot linger in a build.
 
 The app makes no request on its own except:
 
-- **The injection-classifier model** (Llama Prompt Guard 2, 22M), downloaded
-  from huggingface.co only when the classifier needs it, pinned to one commit
-  and verified by size and sha256 (`main/lib/model-assets.ts`).
+- **The injection-classifier model**, downloaded only when the classifier
+  needs it and verified by size and sha256 against pins in
+  `main/lib/model-assets.ts`. The default selection is Doorman's fine-tuned
+  model (`doorman-1`), fetched from `DOORMAN_MODEL_BASE_URL`
+  (`main/lib/model-sources.ts`), which is **empty in this build**: no host is
+  contacted for it until that constant is set to a pinned-revision Hugging
+  Face URL (or an operator sets `DOORMAN_INJECTION_CLASSIFIER_SOURCE`). Until
+  then, and whenever its download or verification fails, the app fetches and
+  runs stock Llama Prompt Guard 2 22M from huggingface.co (pinned to one
+  commit) in its place. Each model directory gets a `.verified.json` (file
+  name to the sha256 it was verified against; hashes of public files only).
 - **The second opinion**, off by default: a loopback-only call to a local
   OpenAI-compatible model server the person configures (`DOORMAN_SECOND_OPINION*`).
 - **Auto-update**: `Resources/app-update.yml` (from the `publish` block in
@@ -117,8 +126,13 @@ file it changes.
 | **ABC Diatype, ABC Diatype Mono, ABC Diatype Extended** | **Commercial (Dinamo). Redistribution in an app needs a licence that covers it — confirm before any build is distributed, or replace the family.** |
 | The Doorman mark and app icon | Pinata's own |
 
-The classifier model is data the app downloads on demand, never part of the
-bundle.
+The classifier models are data the app downloads on demand, never part of the
+bundle. Both (stock, and Doorman's fine-tune of it) are Llama derivatives under
+the **Llama 4 Community License**: the pinned `LICENSE` and `NOTICE` files are
+downloaded with the weights and kept beside them, the fine-tune's directory name
+starts with "Llama", and the notice "Built with Llama" travels in each manifest.
+When `DOORMAN_MODEL_BASE_URL` is set, the fine-tuned weights are redistributed
+from that host under the same terms.
 
 ## Keeping this doc honest
 

@@ -2519,6 +2519,52 @@ function detectHiddenHtmlInstruction(text: string, raise: Raise): void {
 }
 
 /**
+ * WHERE the injection regexes fire, for the classifier's focus windows
+ * (lib/injection-focus.ts) — the same three ways in as
+ * detectInjectedInstruction, as positions instead of findings: the first
+ * match of every unambiguous phrase; the first match of every supporting
+ * category when at least two distinct ones fire; and, inside every hidden
+ * HTML carrier, the first signal (unambiguous before supporting).
+ *
+ * Offsets are UTF-16 indices into `folded` (foldForMatching of the input),
+ * sorted and de-duplicated. Pure; reads the text as given — no redaction, no
+ * scan cap — exactly like the reference the doorman-1 model was trained on.
+ */
+export function injectionHitOffsets(rawText: string): { folded: string; offsets: number[] } {
+  const text = foldForMatching(rawText);
+  const offsets: number[] = [];
+  for (const [, pattern] of INJECTION_UNAMBIGUOUS) {
+    const match = pattern.exec(text);
+    if (match) offsets.push(match.index);
+  }
+  const supporting: number[] = [];
+  for (const [, pattern] of INJECTION_SUPPORTING) {
+    const match = pattern.exec(text);
+    if (match) supporting.push(match.index);
+  }
+  if (supporting.length >= 2) offsets.push(...supporting);
+  for (const [, re] of HIDDEN_HTML_CARRIERS) {
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    let scanned = 0;
+    while ((match = re.exec(text)) !== null && scanned < 64) {
+      scanned += 1;
+      const hidden = match[1] ?? "";
+      if (hidden === "") continue;
+      const offset = match.index + match[0].indexOf(hidden);
+      for (const [, pattern] of [...INJECTION_UNAMBIGUOUS, ...INJECTION_SUPPORTING]) {
+        const hit = pattern.exec(hidden);
+        if (hit) {
+          offsets.push(offset + hit.index);
+          break;
+        }
+      }
+    }
+  }
+  return { folded: text, offsets: [...new Set(offsets)].sort((a, b) => a - b) };
+}
+
+/**
  * Terraform/AWS/kubectl/etc — see the doc block above INFRA_MUTATION_PATTERNS
  * for the detector's rationale and its two narrow local exemptions.
  */

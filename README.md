@@ -57,12 +57,29 @@ under [Network](#network).
 ## Network
 
 - **Injection-classifier model** (optional, on by default). When the
-  classifier is on, the app downloads Llama Prompt Guard 2 22M (ONNX, about
-  82 MB) from Hugging Face (`gravitee-io/Llama-Prompt-Guard-2-22M-onnx`,
-  pinned to one commit) into `<userData>/models/`. Every file is pinned by
-  exact size and sha256 (`main/lib/model-assets.ts`). The weights are under
-  the Llama 4 Community License. The ONNX Runtime WASM build that runs them
-  ships inside the app (`scripts/stage-runtime.mjs`).
+  classifier is on, the app downloads the model it needs into
+  `<userData>/models/`, every file pinned by exact size and sha256
+  (`main/lib/model-assets.ts`) and written only after it verifies. Two models
+  can be selected in Settings → AI-delivered protection:
+  - **Doorman (fine-tuned, recommended)**, the default: Llama Prompt Guard 2
+    22M fine-tuned for tool output (int8 ONNX, about 96 MB with its
+    tokenizer). It downloads from `DOORMAN_MODEL_BASE_URL` in
+    `main/lib/model-sources.ts`, a pinned-revision Hugging Face URL that is
+    **empty until the model is published**, or from
+    `DOORMAN_INJECTION_CLASSIFIER_SOURCE` when that is set.
+  - **Prompt Guard 2 (stock)**: Llama Prompt Guard 2 22M (ONNX, about 82 MB)
+    from Hugging Face (`gravitee-io/Llama-Prompt-Guard-2-22M-onnx`, pinned to
+    one commit).
+
+  While the fine-tuned model has no download location, or its download or
+  verification fails, the app downloads and runs the **stock** model in its
+  place (never no model) and says so in Settings; it switches to the
+  fine-tuned model by itself once that installs. So today the one download
+  is the stock model from Hugging Face; once `DOORMAN_MODEL_BASE_URL` is set,
+  the default download becomes the fine-tuned model from that URL. Both sets
+  of weights are under the Llama 4 Community License, whose `LICENSE` and
+  `NOTICE` files are downloaded and kept beside them. The ONNX Runtime WASM
+  build that runs them ships inside the app (`scripts/stage-runtime.mjs`).
 - **Second opinion** (optional, off by default). This is a local model the
   guard can ask before a credential hold. Its endpoint must be loopback.
 - **Updates.** At start and hourly, `electron-updater` reads the latest
@@ -124,7 +141,9 @@ turn a feature on, and every write keeps a `.bak` beside the file:
 Data lives under `~/Library/Application Support/Doorman/` (`%APPDATA%\Doorman`
 on Windows, `~/.config/Doorman` on Linux): `store/` (the turn store,
 findings, titles, cursors and the Keychain-encrypted evidence vault),
-`prefs.json`, `models/` and `doorman/` (the guard and MCP bundles).
+`prefs.json`, `models/` (one directory per downloaded model, each with a
+`.verified.json` recording the sha256 every file was checked against) and
+`doorman/` (the guard and MCP bundles).
 
 ## Develop
 
@@ -152,21 +171,39 @@ compile.
 `DOORMAN_APPDATA_DIR=<dir>` redirects the profile into a sandbox. A sandboxed
 run refuses to write hook documents in the real home.
 
-### Environment-only settings
+### Environment settings
 
-The injection classifier and the guard's credential second opinion have no
-Settings screen. Set them in the environment the app is launched from
-(`main/lib/policy-env.ts`). Values are laid over the stored prefs through the
-same clamps, and an unset or unparseable value means "no opinion":
+The injection classifier has one row in Settings → AI-delivered protection:
+an on/off switch and a model dropdown (Doorman's fine-tuned model, the
+default, or stock Prompt Guard 2). The stored choice is written only when it
+is stock (`injection_classifier.model` in the policy); no value means the
+fine-tuned model, so an install from before the dropdown existed moves to it.
+The guard's credential second opinion has no Settings screen. Both can be set
+in the environment the app is launched from (`main/lib/policy-env.ts`); an
+environment value wins over Settings, and the control it pins shows read-only.
+Values are laid over the stored prefs through the same clamps, and an unset or
+unparseable value means "no opinion":
 
 ```
 DOORMAN_INJECTION_CLASSIFIER=off                  # on | off (default on)
 DOORMAN_INJECTION_CLASSIFIER_SUPPRESS_BELOW=0.35  # overrule threshold, clamped
+DOORMAN_INJECTION_CLASSIFIER_MODEL=stock          # doorman-1 | stock (default doorman-1)
+DOORMAN_INJECTION_CLASSIFIER_SOURCE=/path/to/package   # or https://host/prefix/; where doorman-1 comes from
 DOORMAN_SECOND_OPINION=on                         # on | off (default off)
 DOORMAN_SECOND_OPINION_ENDPOINT=http://127.0.0.1:11434/v1/chat/completions   # loopback only
 DOORMAN_SECOND_OPINION_MODEL=qwen2.5:1.5b
 DOORMAN_SECOND_OPINION_TIMEOUT_MS=3000
 ```
+
+`DOORMAN_INJECTION_CLASSIFIER_SOURCE` overrides `DOORMAN_MODEL_BASE_URL`
+(`main/lib/model-sources.ts`) for the fine-tuned model: an http(s) prefix the
+file names are appended to, or a local directory holding the package. Either
+way every file is verified against the pins in `main/lib/model-assets.ts`.
+
+**Publishing the fine-tuned model** means setting that one constant,
+`DOORMAN_MODEL_BASE_URL`, to its pinned-revision Hugging Face URL
+(`https://huggingface.co/<org>/<repo>/resolve/<commit>/`). The pins do not
+change. Installed apps then fetch it at their next launch and switch over.
 
 A Finder launch inherits nothing from a shell. For a packaged app, use
 `launchctl setenv …` and relaunch, or start it with `open -a Doorman --env …`.

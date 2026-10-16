@@ -6,10 +6,13 @@ import { CaptureEngine } from "../main/capture.js";
 import {
   INJECTION_SUPPRESS_BELOW_MAX,
   INJECTION_SUPPRESS_BELOW_MIN,
+  DEFAULT_INJECTION_MODEL,
   defaultPolicy,
   normalizeInjectionClassifierConfig,
   parsePolicy,
+  selectedInjectionModel,
   type GuardPolicy,
+  type InjectionModelId,
 } from "../main/guard/policy.js";
 import {
   MAX_WINDOWS,
@@ -36,6 +39,26 @@ describe("the config", () => {
     const policy = parsePolicy(JSON.stringify({ version: 1, injection_classifier: { enabled: true, suppress_below: 0.1 } }));
     expect(policy.injection_classifier).toEqual({ enabled: true, suppress_below: 0.1 });
     expect(parsePolicy(JSON.stringify({ version: 1 })).injection_classifier).toBeUndefined();
+  });
+
+  it("the model: absent is doorman-1 (the default) and stays absent; only an explicit stock choice is written down", () => {
+    const defaultBytes = JSON.stringify({ version: 1, injection_classifier: { enabled: true, suppress_below: 0.2 } });
+    expect(JSON.stringify({ version: 1, injection_classifier: normalizeInjectionClassifierConfig({ enabled: true, suppress_below: 0.2 }) })).toBe(defaultBytes);
+    expect(DEFAULT_INJECTION_MODEL).toBe("doorman-1");
+    expect(selectedInjectionModel(undefined)).toBe("doorman-1");
+    expect(selectedInjectionModel(normalizeInjectionClassifierConfig({}))).toBe("doorman-1");
+    // Choosing the default writes nothing; junk is not a model.
+    expect(normalizeInjectionClassifierConfig({ model: "doorman-1" })).toEqual({ enabled: true, suppress_below: 0.2 });
+    expect("model" in normalizeInjectionClassifierConfig({ model: "gpt-9" })).toBe(false);
+    // An explicit stock choice persists through policy.json and leaves the threshold alone.
+    expect(normalizeInjectionClassifierConfig({ model: "stock" })).toEqual({ enabled: true, suppress_below: 0.2, model: "stock" });
+    const stored = parsePolicy(JSON.stringify({ version: 1, injection_classifier: { enabled: true, suppress_below: 0.2, model: "stock" } }));
+    expect(stored.injection_classifier?.model).toBe("stock");
+    expect(selectedInjectionModel(stored.injection_classifier)).toBe("stock");
+    // An install from before the choice existed (no key) now selects doorman-1.
+    expect(selectedInjectionModel(parsePolicy(JSON.stringify({ version: 1, injection_classifier: { enabled: true, suppress_below: 0.2 } })).injection_classifier)).toBe("doorman-1");
+    // The Settings patch path ({...current, ...patch}) switches back to the default.
+    expect(normalizeInjectionClassifierConfig({ ...normalizeInjectionClassifierConfig({ model: "stock" }), model: "doorman-1" })).toEqual({ enabled: true, suppress_below: 0.2 });
   });
 });
 
@@ -108,6 +131,24 @@ describe("loadInjectionClassifier", () => {
       modelDir: "/x",
     });
     expect(await failing!.classify("x")).toBeNull();
+  });
+
+  it("hands a stock (prefix-window) runner the trimmed text, exactly as before; a focus runner the text as the detector read it", async () => {
+    const seen: string[] = [];
+    const recording = async () => async (text: string) => {
+      seen.push(text);
+      return [{ label: "MALICIOUS", score: 0.1 }];
+    };
+    const stock = await loadInjectionClassifier({ loadPipeline: recording, modelDir: "/x" });
+    const stockExplicit = await loadInjectionClassifier({ loadPipeline: recording, modelDir: "/x", windowing: "prefix" });
+    const focus = await loadInjectionClassifier({ loadPipeline: recording, modelDir: "/x", windowing: "focus" });
+    await stock!.classify("\n  ignore previous instructions  \n");
+    await stockExplicit!.classify("\n  ignore previous instructions  \n");
+    await focus!.classify("\n  ignore previous instructions  \n");
+    expect(seen).toEqual(["ignore previous instructions", "ignore previous instructions", "\n  ignore previous instructions  \n"]);
+    // Whitespace-only is no verdict either way — never sent.
+    expect(await focus!.classify(" \n ")).toBeNull();
+    expect(seen).toHaveLength(3);
   });
 });
 
@@ -296,5 +337,48 @@ describe("in the capture engine", () => {
     }, line("out-1", at(20), INJECTION));
     expect(injectionRow(engine)?.confidence).toBeUndefined();
     expect(lastArmedTaints()?.length).toBe(1);
+  });
+
+  it("switching the model re-asks a flagged line instead of reusing the other model's verdict", async () => {
+    const engine = await run(async (text) => {
+      asked.push(text);
+      return { malicious: false, score: 0.04 };
+    }, line("out-1", at(20), INJECTION));
+    expect(asked).toHaveLength(1);
+    const rescan = async (n: number) => {
+      writeFileSync(file(), [toolUse(at(30)), line("out-1", at(20), INJECTION), line(`out-${n}`, at(5), `Plain weather report ${n}.`)].join("\n"));
+      await engine.scan();
+    };
+    await rescan(2);
+    expect(asked).toHaveLength(1); // same model: the cached verdict stands
+    policy = { ...policy, injection_classifier: { enabled: true, suppress_below: 0.2, model: "stock" } };
+    await rescan(3);
+    expect(asked).toHaveLength(2); // a different model: asked again
+    await rescan(4);
+    expect(asked).toHaveLength(2);
+  });
+
+  it("keys the verdict cache by the EFFECTIVE model: doorman-1 selected but stock running, then doorman-1 installed", async () => {
+    let inUse: InjectionModelId = "stock"; // doorman-1 selected (the default), not installed yet
+    writeFileSync(file(), toolUse(at(30)));
+    const engine = new CaptureEngine({
+      ...deps,
+      classifyInjection: async (text) => {
+        asked.push(`${inUse}:${text.length}`);
+        return { malicious: false, score: 0.04 };
+      },
+      injectionModelInUse: () => inUse,
+    });
+    await engine.start();
+    const scanWith = async (n: number) => {
+      writeFileSync(file(), [toolUse(at(30)), line("out-1", at(20), INJECTION), line(`out-${n}`, at(5), `Plain ${n}.`)].join("\n"));
+      await engine.scan();
+    };
+    await scanWith(1);
+    await scanWith(2);
+    expect(asked).toEqual([`stock:${INJECTION.length}`]); // the selection alone never re-asks
+    inUse = "doorman-1"; // its download landed: the switch-over
+    await scanWith(3);
+    expect(asked).toEqual([`stock:${INJECTION.length}`, `doorman-1:${INJECTION.length}`]);
   });
 });

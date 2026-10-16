@@ -3223,6 +3223,66 @@ describe("the AI-delivered protection row downloads its model without being aske
     const noRuntime = row({ enabled: true, runtime_present: false, installed: false });
     expect(noRuntime.text).toContain("runtime is missing from this build");
   });
+
+  /** The row's model <select> and its note, for one injection_classifier shape. */
+  const modelControl = (ic: Record<string, unknown>) => {
+    ctx.__state = { ...blankState(), model_assist: { injection_classifier: ic, second_opinion: {}, env: false } };
+    ctx.__patches = [];
+    return runInContext(
+      `(function () {
+         window.doorman = { setInjectionClassifier: function (p) { __patches.push(p); return Promise.resolve({ ok: true }); } };
+         var tree = SettingsScreen({ state: __state, onGoRules: function () {} });
+         var select = __nodes(tree, "select", [], 0).filter(function (n) { return n.props["aria-label"] === "Injection model"; })[0];
+         if (select) select.props.onChange({ target: { value: "stock" } });
+         var options = select ? __nodes(select, "option", [], 0).map(function (o) { return [o.props.value, o.kids.join("")]; }) : [];
+         var note = __nodes(tree, "div", [], 0).filter(function (n) {
+           return n.props && String(n.props.className || "").indexOf("injection-model-note") >= 0;
+         }).map(function (n) { return n.kids.join(""); });
+         return { found: !!select, value: select && select.props.value, disabled: select && select.props.disabled, options: options, note: note.join(" "), patches: __patches };
+       })()`,
+      ctx as object,
+      { filename: "injection-model-control" },
+    ) as { found: boolean; value: string; disabled: boolean; options: string[][]; note: string; patches: unknown[] };
+  };
+
+  it("offers the two models, the fine-tuned one first and selected by default, and persists a choice through the IPC patch", () => {
+    const fresh = modelControl({ enabled: true, runtime_present: true, installed: true, model_choice: { selected: "doorman-1", effective: "doorman-1" } });
+    expect(fresh.found).toBe(true);
+    expect(fresh.options).toEqual([
+      ["doorman-1", "Doorman (fine-tuned, recommended)"],
+      ["stock", "Prompt Guard 2 (stock)"],
+    ]);
+    expect(fresh.value).toBe("doorman-1");
+    expect(fresh.disabled).toBe(false);
+    expect(fresh.note).toBe(""); // installed and running: nothing to explain
+    expect(fresh.patches).toEqual([{ model: "stock" }]);
+    // No model_choice at all (an older snapshot) still shows the default.
+    expect(modelControl({ enabled: true, runtime_present: true, installed: false }).value).toBe("doorman-1");
+    // A stored stock choice shows as stock.
+    expect(modelControl({ enabled: true, runtime_present: true, installed: true, model_choice: { selected: "stock", effective: "stock" } }).value).toBe("stock");
+  });
+
+  it("says the truth while the fine-tuned model is not published, or failed: Prompt Guard 2 runs in its place", () => {
+    const unpublished = modelControl({ enabled: true, runtime_present: true, installed: true, model_choice: { selected: "doorman-1", effective: "stock", fallback: "unpublished" } });
+    expect(unpublished.value).toBe("doorman-1");
+    expect(unpublished.note).toBe("Doorman model · not published yet — using Prompt Guard 2 for now.");
+    const failed = modelControl({
+      enabled: true,
+      runtime_present: true,
+      installed: true,
+      model_choice: { selected: "doorman-1", effective: "stock", fallback: "download_failed", selected_error: "model.quant.onnx: sha256 mismatch" },
+    });
+    expect(failed.note).toBe("Doorman model · download failed (model.quant.onnx: sha256 mismatch) — using Prompt Guard 2 until it succeeds.");
+    const coming = modelControl({ enabled: true, runtime_present: true, installed: true, model_choice: { selected: "doorman-1", effective: "stock", fallback: "not_installed", selected_downloading: true } });
+    expect(coming.note).toContain("downloading — using Prompt Guard 2 until it is installed");
+  });
+
+  it("is read-only, and says why, when the environment pins the model", () => {
+    const pinned = modelControl({ enabled: true, runtime_present: true, installed: true, model_choice: { selected: "stock", effective: "stock", env: true } });
+    expect(pinned.disabled).toBe(true);
+    expect(pinned.value).toBe("stock");
+    expect(pinned.note).toContain("set by the environment (DOORMAN_INJECTION_CLASSIFIER_MODEL)");
+  });
 });
 
 describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {

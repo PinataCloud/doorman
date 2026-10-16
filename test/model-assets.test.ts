@@ -1,14 +1,20 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DOORMAN_MODEL_BASE_URL } from "../main/lib/model-sources.js";
+import { doormanModelSource, planInjectionModel } from "../main/lib/injection-model-choice.js";
 import {
   PROMPT_GUARD_2_22M,
+  PROMPT_GUARD_2_22M_DOORMAN_1,
+  VERIFIED_FILE,
   downloadModel,
+  injectionModelManifest,
   manifestBytes,
   modelDir,
   modelStatus,
+  parseModelSource,
   removeModel,
   type FetchLike,
   type ModelManifest,
@@ -46,6 +52,7 @@ const manifest = (files: Record<string, string>, tamper: Partial<Record<string, 
   base_url: "https://example.test/repo/resolve/abc123/",
   files: Object.entries(files).map(([name, text]) => ({ name, size: Buffer.byteLength(text), sha256: tamper[name] ?? sha(text) })),
   notice: "Built with Tiny.",
+  windowing: "prefix",
 });
 
 describe("model assets", () => {
@@ -74,7 +81,7 @@ describe("model assets", () => {
     const progress: number[] = [];
     const status = await downloadModel(root, m, { fetchImpl: serving(files), onProgress: (p) => progress.push(p.bytes_done) });
     expect(status.present).toBe(true);
-    expect(readdirSync(modelDir(root, m)).sort()).toEqual(["config.json", "model.onnx"]);
+    expect(readdirSync(modelDir(root, m)).sort()).toEqual([VERIFIED_FILE, "config.json", "model.onnx"]);
     expect(progress[progress.length - 1]).toBe(manifestBytes(m));
     expect(modelStatus(root, m)).toEqual({ present: true, missing: [], bytes_total: manifestBytes(m) });
   });
@@ -110,17 +117,19 @@ describe("model assets", () => {
     expect(fetchImpl.hits).toEqual(["model.onnx"]);
   });
 
-  it("a build that pins a newer revision calls the old model absent and fetches only what changed", async () => {
+  it("a build that pins a newer revision calls the old model absent and fetches only what changed — even at the same byte size", async () => {
     // This IS the auto-update path, and there is no other machinery behind it:
-    // `present` means every file pinned by THIS build is on disk at its pinned
-    // size, so a newer pin makes the old weights fail and `ensureInjectionModel`
-    // downloads over them at the next boot — nobody presses anything.
+    // `present` means every file pinned by THIS build is on disk and recorded
+    // as verified against THIS pin, so a newer pin makes the old weights fail
+    // and `ensureInjectionModel` downloads over them at the next boot. A
+    // retrained model of the same architecture has weights of the SAME size
+    //, so size alone must not pass.
     const v1 = { "config.json": "{}", "model.onnx": "old".repeat(100) };
     const m1 = manifest(v1);
     await downloadModel(root, m1, { fetchImpl: serving(v1) });
     expect(modelStatus(root, m1).present).toBe(true);
 
-    const v2 = { "config.json": "{}", "model.onnx": "new".repeat(140) };
+    const v2 = { "config.json": "{}", "model.onnx": "new".repeat(100) }; // same size
     const m2 = manifest(v2);
     m2.version = "next";
     // The app sees the model it pins as NOT installed, which is what starts it.
@@ -129,10 +138,28 @@ describe("model assets", () => {
 
     const fetchImpl = serving(v2);
     await downloadModel(root, m2, { fetchImpl });
-    // Only the file that moved is re-fetched; the tokenizer-shaped small files
-    // that didn't change cost nothing.
+    // Only the file that moved is re-fetched — and REPLACED in place, never
+    // left beside the old one; the unchanged small files cost nothing.
     expect(fetchImpl.hits).toEqual(["model.onnx"]);
     expect(modelStatus(root, m2).present).toBe(true);
+    expect(readFileSync(join(modelDir(root, m2), "model.onnx"), "utf8")).toBe(v2["model.onnx"]);
+    // …and the old pin no longer passes either.
+    expect(modelStatus(root, m1).present).toBe(false);
+  });
+
+  it("adopts an install written before the verified record existed by hashing it once — no download when it matches", async () => {
+    const files = { "config.json": "{}", "model.onnx": "a".repeat(400) };
+    const m = { ...manifest(files), base_url: "" }; // no source either: nothing to fetch
+    mkdirSync(modelDir(root, m), { recursive: true });
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(modelDir(root, m), name), text);
+    expect(modelStatus(root, m).present).toBe(false); // size alone proves nothing
+    expect((await downloadModel(root, m)).present).toBe(true);
+    expect(modelStatus(root, m).present).toBe(true);
+    // A same-sized file that does NOT match is replaced, which needs a source.
+    const other = { ...manifest({ "config.json": "{}", "model.onnx": "b".repeat(400) }), base_url: "" };
+    expect(modelStatus(root, other).present).toBe(false);
+    await expect(downloadModel(root, other)).rejects.toThrow(/no public download yet/);
+    expect(modelStatus(root, other).present).toBe(false);
   });
 
   it("an HTTP error names the file; remove deletes only the model directory", async () => {
@@ -142,5 +169,174 @@ describe("model assets", () => {
     removeModel(root, m);
     expect(existsSync(modelDir(root, m))).toBe(false);
     expect(existsSync(join(root, "unrelated.txt"))).toBe(true);
+  });
+});
+
+describe("the doorman-1 model (the default selection)", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "obf-models-"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("is pinned file-for-file to the fine-tuned package — weights, tokenizer, and the Llama LICENSE + NOTICE", () => {
+    const m = PROMPT_GUARD_2_22M_DOORMAN_1;
+    // Derived from Llama: the name starts with "Llama" and the attribution stays.
+    expect(m.name).toBe("Llama-Prompt-Guard-2-22M-doorman-1");
+    expect(m.label).toMatch(/^Llama /);
+    expect(m.notice).toBe(PROMPT_GUARD_2_22M.notice);
+    expect(m.notice).toMatch(/^Built with Llama\./);
+    expect(m.files).toEqual([
+      { name: "config.json", size: 843, sha256: "58d7584401982309334efddb53fad7ebeb6c12a0fe84c8f59923a98589893fe4" },
+      { name: "tokenizer.json", size: 8649291, sha256: "92c8b45d0b12ae0dd9680fbfe9804503542c377d65838558cd0b48a795385dde" },
+      { name: "tokenizer_config.json", size: 1475, sha256: "b1c18af55c6bab08e20873c67d7dc5783eda002a7934f543c4db33f3f89c5099" },
+      { name: "special_tokens_map.json", size: 970, sha256: "b2f1b2f15f29a6b6d9d6ea4eca1675d2c231a71477f151d48f79cc83a625ba21" },
+      { name: "model.quant.onnx", size: 87326881, sha256: "dcdfbfa68c59544f33b5ab7ebf17dadb841375189fb9f0aa5a27a7455cdd79f2" },
+      { name: "LICENSE", size: 7553, sha256: "90ae4807183070953bd8da5d7be81c4494920fb54c74359383c8a4536bf003c3" },
+      { name: "NOTICE", size: 111, sha256: "6d70b1303958ace2c652d10ffcb63cdd8436d49bc0e81c97373df4e329fad0c9" },
+    ]);
+    // The same tokenizer and the same license files as stock — only the weights and config moved.
+    const stock = new Map(PROMPT_GUARD_2_22M.files.map((f) => [f.name, f.sha256]));
+    for (const name of ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "LICENSE", "NOTICE"]) {
+      expect(m.files.find((f) => f.name === name)!.sha256, name).toBe(stock.get(name));
+    }
+    // Its own directory, so switching models never overwrites the stock one.
+    expect(modelDir(root, m)).not.toBe(modelDir(root, PROMPT_GUARD_2_22M));
+    // Its download location is the ONE config value, empty until it is published.
+    expect(m.base_url).toBe(DOORMAN_MODEL_BASE_URL);
+    expect(DOORMAN_MODEL_BASE_URL).toBe("");
+    // The model and how it reads travel together.
+    expect(m.windowing).toBe("focus");
+    expect(PROMPT_GUARD_2_22M.windowing).toBe("prefix");
+    expect(m.version).toBe("2026.10 (doorman-1)");
+  });
+
+  it("picks up the published URL from lib/model-sources.ts — that one line is all publishing changes", async () => {
+    const url = "https://huggingface.co/example-org/example-repo/resolve/0123456789abcdef0123456789abcdef01234567/";
+    vi.resetModules();
+    vi.doMock("../main/lib/model-sources.js", () => ({ DOORMAN_MODEL_BASE_URL: url }));
+    try {
+      const fresh = await import("../main/lib/model-assets.js");
+      expect(fresh.PROMPT_GUARD_2_22M_DOORMAN_1.base_url).toBe(url);
+      // The pins do not move with the URL.
+      expect(fresh.PROMPT_GUARD_2_22M_DOORMAN_1.files).toEqual(PROMPT_GUARD_2_22M_DOORMAN_1.files);
+      // …and a download then goes to it, verified against those pins.
+      const files = { "config.json": "{}", "model.onnx": "u".repeat(64) };
+      const tiny = { ...manifest(files), base_url: fresh.PROMPT_GUARD_2_22M_DOORMAN_1.base_url };
+      const urls: string[] = [];
+      await fresh.downloadModel(root, tiny, {
+        fetchImpl: async (u, init) => {
+          urls.push(u);
+          return serving(files)(u, init);
+        },
+      });
+      expect(urls).toEqual([`${url}config.json`, `${url}model.onnx`]);
+    } finally {
+      vi.doUnmock("../main/lib/model-sources.js");
+      vi.resetModules();
+    }
+  });
+
+  it("no setting (or the default chosen) is doorman-1; only an explicit stock choice is stock", () => {
+    expect(injectionModelManifest(undefined)).toBe(PROMPT_GUARD_2_22M_DOORMAN_1);
+    expect(injectionModelManifest("doorman-1")).toBe(PROMPT_GUARD_2_22M_DOORMAN_1);
+    expect(injectionModelManifest("stock")).toBe(PROMPT_GUARD_2_22M);
+  });
+});
+
+describe("which model runs: selected vs effective (lib/injection-model-choice.ts)", () => {
+  const installed = (...models: string[]) => (m: string) => models.includes(m);
+
+  it("doorman-1 selected but not downloadable falls back to STOCK — never to no model", () => {
+    expect(planInjectionModel({ selected: "doorman-1", installed: installed(), doormanSource: undefined })).toEqual({
+      selected: "doorman-1",
+      effective: "stock",
+      fallback: "unpublished",
+    });
+  });
+
+  it("a failed download (or one still on its way) also runs stock, and says which", () => {
+    expect(planInjectionModel({ selected: "doorman-1", installed: installed("stock"), doormanSource: "https://x/", doormanError: "model.quant.onnx: sha256 mismatch" }).fallback).toBe(
+      "download_failed",
+    );
+    expect(planInjectionModel({ selected: "doorman-1", installed: installed("stock"), doormanSource: "/pkg" })).toEqual({
+      selected: "doorman-1",
+      effective: "stock",
+      fallback: "not_installed",
+    });
+  });
+
+  it("switches to doorman-1 by itself once it is installed; an explicit stock choice is always stock", () => {
+    expect(planInjectionModel({ selected: "doorman-1", installed: installed("doorman-1"), doormanSource: undefined })).toEqual({ selected: "doorman-1", effective: "doorman-1" });
+    expect(planInjectionModel({ selected: "stock", installed: installed("doorman-1", "stock"), doormanSource: "/pkg" })).toEqual({ selected: "stock", effective: "stock" });
+  });
+
+  it("the environment's source beats the config URL; empty config and no env is nowhere", () => {
+    expect(doormanModelSource(undefined, "")).toBeUndefined();
+    expect(doormanModelSource(undefined, "https://huggingface.co/o/r/resolve/abc/")).toBe("https://huggingface.co/o/r/resolve/abc/");
+    expect(doormanModelSource("/opt/pkg", "https://huggingface.co/o/r/resolve/abc/")).toBe("/opt/pkg");
+  });
+});
+
+describe("the doorman-1 download path", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "obf-models-"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it("a source is an http(s) URL prefix or an absolute directory — nothing else", () => {
+    expect(parseModelSource("https://models.example.test/doorman-1")).toEqual({ kind: "url", base: "https://models.example.test/doorman-1/" });
+    expect(parseModelSource(" http://127.0.0.1:8000/pkg/ ")).toEqual({ kind: "url", base: "http://127.0.0.1:8000/pkg/" });
+    expect(parseModelSource("/opt/models/doorman-1")).toEqual({ kind: "dir", dir: "/opt/models/doorman-1" });
+    expect(parseModelSource("file:///opt/models/doorman-1")).toEqual({ kind: "dir", dir: "/opt/models/doorman-1" });
+    for (const bad of [undefined, "", "  ", "models/doorman-1", "s3://bucket/prefix", "ftp://x/y"]) expect(parseModelSource(bad), String(bad)).toBeUndefined();
+  });
+
+  it("with no public URL and no source, the download refuses by name instead of guessing a host", async () => {
+    const m = { ...manifest({ "model.onnx": "w".repeat(10) }), base_url: "" };
+    const fetchImpl = serving({ "model.onnx": "w".repeat(10) });
+    await expect(downloadModel(root, m, { fetchImpl })).rejects.toThrow(/no public download yet.*DOORMAN_INJECTION_CLASSIFIER_SOURCE/);
+    await expect(downloadModel(root, m, { fetchImpl, source: "relative/dir" })).rejects.toThrow(/http\(s\) URL or an absolute directory/);
+    expect(fetchImpl.hits).toEqual([]);
+  });
+
+  it("an operator URL replaces the empty base and is verified against the pins like any download", async () => {
+    const files = { "config.json": "{}", "model.onnx": "o".repeat(321) };
+    const m = { ...manifest(files), base_url: "" };
+    const urls: string[] = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      urls.push(url);
+      return serving(files)(url, init);
+    };
+    expect((await downloadModel(root, m, { fetchImpl, source: "https://mirror.example.test/pkg" })).present).toBe(true);
+    expect(urls).toEqual(["https://mirror.example.test/pkg/config.json", "https://mirror.example.test/pkg/model.onnx"]);
+    rmSync(modelDir(root, m), { recursive: true, force: true });
+    const tampered = { ...manifest(files, { "model.onnx": sha("not this") }), base_url: "" };
+    await expect(downloadModel(root, tampered, { fetchImpl, source: "https://mirror.example.test/pkg/" })).rejects.toThrow(/sha256 mismatch/);
+    expect(existsSync(join(modelDir(root, tampered), "model.onnx"))).toBe(false);
+  });
+
+  it("installs from a local directory through the same verify-then-rename path", async () => {
+    const files = { "config.json": "{}", "model.onnx": "l".repeat(2048), LICENSE: "license text", NOTICE: "Built with Llama." };
+    const pkg = join(root, "package");
+    mkdirSync(pkg);
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(pkg, name), text);
+    const m = { ...manifest(files), base_url: "" };
+    const models = join(root, "models");
+    const progress: number[] = [];
+    const status = await downloadModel(models, m, { source: pkg, onProgress: (p) => progress.push(p.bytes_done) });
+    expect(status.present).toBe(true);
+    expect(progress[progress.length - 1]).toBe(manifestBytes(m));
+    expect(readdirSync(modelDir(models, m)).sort()).toEqual([VERIFIED_FILE, "LICENSE", "NOTICE", "config.json", "model.onnx"]);
+    // A file in the directory that does not match its pin is refused and leaves nothing.
+    rmSync(modelDir(models, m), { recursive: true, force: true });
+    writeFileSync(join(pkg, "model.onnx"), "L".repeat(2048));
+    await expect(downloadModel(models, m, { source: `file://${pkg}` })).rejects.toThrow(/model\.onnx: sha256 mismatch/);
+    expect(existsSync(join(modelDir(models, m), "model.onnx"))).toBe(false);
+    expect(existsSync(join(modelDir(models, m), "model.onnx.part"))).toBe(false);
+    writeFileSync(join(pkg, "model.onnx"), files["model.onnx"]);
+    rmSync(join(pkg, "NOTICE"));
+    await expect(downloadModel(models, m, { source: pkg })).rejects.toThrow(/NOTICE: not in the source directory/);
   });
 });

@@ -1481,6 +1481,33 @@ function assistChip(a) {
   return a && a.verdict === "stood_down" ? "STOOD DOWN" : null;
 }
 
+/** The injection-model choices (main: guard/policy.ts InjectionModelId),
+ * the default first. */
+const INJECTION_MODEL_OPTIONS = [
+  { value: "doorman-1", label: "Doorman (fine-tuned, recommended)" },
+  { value: "stock", label: "Prompt Guard 2 (stock)" },
+];
+
+/**
+ * The line under Settings' AI-protection row about WHICH model runs
+ * (ModelAssistState.injection_classifier.model_choice): empty while the
+ * selected model is the one running and nothing pins it; otherwise the truth —
+ * the fine-tuned model is not published yet, is downloading, or failed, and
+ * Prompt Guard 2 runs in its place — and whether the environment pins it.
+ */
+function injectionModelNote(choice) {
+  if (!choice) return "";
+  const parts = [];
+  if (choice.selected === "doorman-1" && choice.effective === "stock") {
+    if (choice.fallback === "unpublished") parts.push("Doorman model · not published yet — using Prompt Guard 2 for now.");
+    else if (choice.fallback === "download_failed")
+      parts.push("Doorman model · download failed" + (choice.selected_error ? " (" + choice.selected_error + ")" : "") + " — using Prompt Guard 2 until it succeeds.");
+    else parts.push("Doorman model · " + (choice.selected_downloading ? "downloading" : "on its way") + " — using Prompt Guard 2 until it is installed.");
+  }
+  if (choice.env) parts.push("Model set by the environment (DOORMAN_INJECTION_CLASSIFIER_MODEL) — the choice is read-only.");
+  return parts.join(" ");
+}
+
 /**
  * The confidence band a row carries (FindingRow.confidence), for the closed
  * card. Absent means high and says nothing — a high-confidence chip on every
