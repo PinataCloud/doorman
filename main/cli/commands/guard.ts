@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { checkGuardIntegrity, guardHostStates, installGuard, uninstallGuard } from "../../enforcement.js";
+import type { UnattendedPolicy } from "../../guard/policy.js";
 import { describeIntegrity } from "../../lib/guard-integrity.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
@@ -22,6 +23,9 @@ function guardReport(ctx: CliContext, all: boolean): CommandResult {
     doc_path: st.docPath,
     present: st.present,
     installed: st.installed,
+    // With nobody to answer, such an agent falls back to its own permission
+    // prompt instead of a deny (guard/hold.ts unattendedOutcome).
+    native_ask: st.host.supportsNativeAsk,
   }));
   // A read: report a drifted bundle, don't re-copy it (install does that).
   const integrity = checkGuardIntegrity(ctx.dataDir, prefs.guard_wanted, { heal: false });
@@ -62,13 +66,24 @@ function guardReport(ctx: CliContext, all: boolean): CommandResult {
     ...(integrity.status === "tampered" || (installed && integrity.status !== "healthy") ? [`  ${s.red(describeIntegrity(integrity))}`] : []),
     `  bundle   ${tilde(ctx.guardDir, ctx.io.home)}${data.policy_file ? "" : s.yellow("  (no policy.json yet)")}`,
     `  holds    ${confirmSentence(policy.confirm)}`,
-    `  answers  ${
-      answering
-        ? s.green(`${answering.by}${answering.pid !== undefined ? ` (pid ${answering.pid})` : ""}`)
-        : `nobody right now: held calls are ${policy.confirm.unattended === "deny" ? "denied" : "let through with a warning"} ${s.dim("(open Doorman or run doorman watch)")}`
-    }`,
+    `  answers  ${answering ? s.green(`${answering.by}${answering.pid !== undefined ? ` (pid ${answering.pid})` : ""}`) : nobodyAnswers(hosts, policy.confirm.unattended)}`,
   ];
   return { data, text };
+}
+
+/** What a held call does while neither the app nor `doorman watch` answers:
+ * agents with their own permission prompt ask there, the rest follow
+ * `confirm.unattended` (guard/hold.ts unattendedOutcome). */
+function nobodyAnswers(hosts: readonly { label: string; installed: boolean; native_ask: boolean }[], unattended: UnattendedPolicy): string {
+  const guarded = hosts.filter((h) => h.installed);
+  const ownPrompt = [...new Set(guarded.filter((h) => h.native_ask).map((h) => h.label))];
+  const others = [...new Set(guarded.filter((h) => !h.native_ask).map((h) => h.label))].filter((l) => !ownPrompt.includes(l));
+  const fallback = unattended === "deny" ? "denied" : "let through with a warning";
+  const parts: string[] = [];
+  if (ownPrompt.length > 0) parts.push(`${ownPrompt.join(", ")} ${ownPrompt.length === 1 ? "asks in its" : "ask in their"} own prompt`);
+  if (others.length > 0) parts.push(`${others.join(", ")}: held calls are ${fallback}`);
+  if (parts.length === 0) parts.push(`held calls are ${fallback}`);
+  return `nobody right now: ${parts.join("; ")} (open Doorman or run doorman watch)`;
 }
 
 const statusOptions = { all: { type: "boolean", default: false } } as const;

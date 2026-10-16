@@ -52,7 +52,7 @@ export function confirmSentence(confirm: ConfirmPolicy): string {
   if (!confirm.interactive) return "off: ask rules go straight to the agent's own prompt";
   const timeout = confirm.on_timeout === "deny" ? "then denied" : "then the agent asks";
   const unattended = confirm.unattended === "deny" ? "denied" : "continue with a warning";
-  return `held up to ${confirm.hold_seconds}s, ${timeout} · with nobody to ask: ${unattended}`;
+  return `held up to ${confirm.hold_seconds}s, ${timeout} · with nobody to ask, agents without their own prompt: ${unattended}`;
 }
 
 function modeCounts(policy: GuardPolicy): Record<string, number> {
@@ -142,7 +142,7 @@ const policyConfirm: CliCommand = {
   details: [
     `--hold <s>               how long a call waits for you (${HOLD_SECONDS_MIN}-${HOLD_SECONDS_MAX} seconds)`,
     "--on-timeout deny|ask    what an unanswered hold becomes: denied, or the agent's own prompt",
-    "--unattended deny|continue  with nobody to ask (no app, no `doorman watch`): deny, or continue with a warning",
+    "--unattended deny|continue  with nobody to ask (no app, no `doorman watch`), for agents without their own prompt: deny, or continue with a warning",
     "--interactive on|off     hold ask-mode calls at all",
     "--armed-escalation on|off  hold the next risky call after an injected instruction arrived in the session",
     "Without options it prints the current settings.",
