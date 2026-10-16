@@ -1,14 +1,18 @@
 /**
- * Pure helpers for the hold-and-confirm flow — the wording of a held call and
- * the notification de-duplication. They live in lib/ (no electron import) so
- * they are testable from the repo root: what a banner says about a blocked
- * session is behaviour, not decoration.
+ * Pure helpers for the hold-and-confirm flow — the wording of a held call, the
+ * notification de-duplication and what an answer does to the policy. They
+ * live in lib/ (no electron import) so the app and `doorman watch` answer a
+ * held call the same way, and so they are testable from the repo root: what a
+ * banner says about a blocked session is behaviour, not decoration.
  */
 
-import type { ApprovalRequest } from "../guard/handshake.js";
-import type { ScopedIgnoreRule } from "../guard/policy.js";
+import type { ApprovalRequest, ApprovalVerdict } from "../guard/handshake.js";
+import { ALL_DETECTORS, type GuardPolicy, type ScopedIgnoreRule } from "../guard/policy.js";
+import type { SecurityDetectorId } from "../guard/security-detect.js";
+import { classifyDestination, extractHosts } from "./egress-intel.js";
 import { localDetectorLabel } from "./findings.js";
 import type { FindingRow } from "./findings.js";
+import { riskProfileFor } from "./mcp-inventory.js";
 
 /** Labels over the WIDE id set: a hold raised by the armed-session escalation
  * names `flow_injection_followed`, which DETECTOR_LABELS doesn't know, and a
@@ -107,4 +111,69 @@ export function scopedIgnoreRulesFor(
     });
   }
   return out;
+}
+
+/**
+ * What answering a held call does to the policy, computed before the verdict
+ * is written. Policy first, verdict second: "allow and stop asking" and "allow
+ * for this project" must not race the next tool call in the same session back
+ * into a hold. `silence` drops the request's detectors to observe; a project
+ * allow adds the dated ignore rules of scopedIgnoreRulesFor. `policy` is the
+ * input object itself when nothing changes (and always when the request is
+ * gone), so the caller writes and syncs only on a real change.
+ */
+export function approvalPolicyChange(
+  policy: GuardPolicy,
+  request: ApprovalRequest | undefined,
+  verdict: ApprovalVerdict,
+  options: { silence: boolean; scope: "project" | undefined },
+  now: Date = new Date(),
+): { policy: GuardPolicy; silenced: SecurityDetectorId[]; scoped: number } {
+  if (!request) return { policy, silenced: [], scoped: 0 };
+  const silenced = options.silence
+    ? request.detectors.filter((d): d is SecurityDetectorId => (ALL_DETECTORS as readonly string[]).includes(d))
+    : [];
+  let next = policy;
+  if (silenced.length > 0) {
+    const modes = { ...next.modes };
+    for (const detector of silenced) modes[detector] = "observe";
+    next = { ...next, modes };
+  }
+  let scoped = 0;
+  if (verdict === "allow" && options.scope === "project") {
+    const rules = scopedIgnoreRulesFor(request, now, ALL_DETECTORS as readonly string[]);
+    if (rules.length > 0) {
+      next = { ...next, ignore: [...next.ignore, ...rules] };
+      scoped = rules.length;
+    }
+  }
+  return { policy: next, silenced, scoped };
+}
+
+/** A one-line "where does this go?" note for a held call — the egress
+ * destination's class, or an MCP server's risk profile — so the approval card
+ * can be an informed decision (idea #9). Display-only, computed from the
+ * already-redacted request. Undefined when nothing notable applies. */
+export function approvalContextNote(request: ApprovalRequest): string | undefined {
+  const mcp = /^mcp__([^_]+(?:_[^_]+)*?)__/.exec(request.tool_name ?? "");
+  const server = request.server ?? mcp?.[1];
+  if (server) {
+    const risk = riskProfileFor(server);
+    const cls = request.tool_class ? ` · ${request.tool_class} call` : "";
+    if (risk) return `MCP · ${risk.vendor} ${risk.kind}${cls} — ${risk.note}`;
+    if (request.source === "mcp-gateway") return `MCP · ${server}${cls} — no risk profile for this server.`;
+  }
+  const hosts = extractHosts(`${request.target ?? ""}\n${request.preview ?? ""}`);
+  if (hosts.length > 0) {
+    const p = classifyDestination(hosts[0]!);
+    return `Destination: ${hosts[0]} — ${p.label}. ${p.note}`;
+  }
+  return undefined;
+}
+
+export function withApprovalContext(requests: readonly ApprovalRequest[]): ApprovalRequest[] {
+  return requests.map((r) => {
+    const note = approvalContextNote(r);
+    return note ? { ...r, context_note: note } : r;
+  });
 }

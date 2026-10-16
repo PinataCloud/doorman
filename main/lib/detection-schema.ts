@@ -224,7 +224,7 @@ export const DETECTION_SCHEMA: JsonSchema = {
     decided_at: time("When it was answered."),
     decided_via: {
       type: "string",
-      enum: ["panel", "window", "notification", "editor", "timeout", "app-absent"],
+      enum: ["panel", "window", "notification", "editor", "terminal", "timeout", "app-absent"],
       description: "Which surface answered it.",
     },
     hold_ms: { type: "number", minimum: 0, description: "Milliseconds from hold to decision." },

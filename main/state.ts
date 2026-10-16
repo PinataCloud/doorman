@@ -746,7 +746,7 @@ function emptyGraphs(days: number): SpendGraphs {
   };
 }
 
-function sanitizePrefs(raw: LegacyPrefs): Prefs {
+export function sanitizePrefs(raw: LegacyPrefs): Prefs {
   const base = defaultPrefs();
   if (typeof raw.retention_days === "number" && (RETENTION_CHOICES as readonly number[]).includes(raw.retention_days)) {
     base.retention_days = raw.retention_days;

@@ -1,0 +1,109 @@
+# Release the Doorman CLI (`@pinata/doorman` on npm) — separate from the app's
+# `v*` releases, with its own version in cli/package.json.
+#
+# Cutting a release:
+#   1. bump "version" in cli/package.json, commit;
+#   2. push a matching tag: `git tag cli-v<x.y.z> && git push origin cli-v<x.y.z>`.
+# Run workflow (workflow_dispatch) re-runs an existing tag; npm refuses to
+# publish a version twice, so a re-run only completes the GitHub release.
+#
+# Secrets:
+#   NPM_TOKEN — an npm automation token with publish rights on the @pinata scope.
+#     Without it the run still tests, packs and attaches the tarball to a
+#     GitHub release, and says plainly that nothing reached npm.
+
+name: cli-release
+
+on:
+  push:
+    tags: ["cli-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to re-run, e.g. cli-v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write # npm provenance
+    env:
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Tag matches cli/package.json
+        run: |
+          version="cli-v$(node -p 'require("./cli/package.json").version')"
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match cli/package.json ($version)"; exit 1
+          fi
+      - run: npm run typecheck
+      - run: npm test
+      # Compiles, assembles dist/cli-package and proves the bin runs on its own.
+      - run: npm run cli:package
+      - name: Pack
+        id: pack
+        working-directory: dist/cli-package
+        run: |
+          tarball=$(npm pack --silent)
+          echo "tarball=dist/cli-package/$tarball" >> "$GITHUB_OUTPUT"
+      # Install the tarball into an empty project and run the bin from there:
+      # what `npm i -g @pinata/doorman` will actually get.
+      - name: Install the tarball and run it
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          (cd "$scratch" && npm init -y >/dev/null && npm install --no-audit --no-fund "$GITHUB_WORKSPACE/${{ steps.pack.outputs.tarball }}")
+          export HOME="$scratch/home" DOORMAN_APPDATA_DIR="$scratch/appdata"
+          mkdir -p "$HOME"
+          "$scratch/node_modules/.bin/doorman" --version
+          "$scratch/node_modules/.bin/doorman" status
+          "$scratch/node_modules/.bin/doorman" status --json > /dev/null
+      - name: Publish to npm
+        if: env.HAS_NPM_TOKEN == 'true'
+        working-directory: dist/cli-package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if npm view "@pinata/doorman@$version" version >/dev/null 2>&1; then
+            echo "@pinata/doorman@$version is already on npm; skipping publish"
+          else
+            npm publish --access public --provenance
+          fi
+      - name: Report npm
+        if: env.HAS_NPM_TOKEN != 'true'
+        run: echo "::warning::NPM_TOKEN is not set, so nothing was published to npm. The tarball is attached to the GitHub release."
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=${TAG#cli-v}
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --title "Doorman CLI $version" \
+              --notes "npm install -g @pinata/doorman@$version" --latest=false
+          fi
+          gh release upload "$TAG" --repo "$REPO" --clobber "${{ steps.pack.outputs.tarball }}"

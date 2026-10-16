@@ -155,8 +155,9 @@ export type ApprovalSource = "claude-code" | "codex" | "mcp-gateway" | (string &
 /** `editor` is a decision made inside VS Code, through the companion extension
  * (vscode-extension): the extension never writes a reply itself, so by
  * the time this value is set the app has applied it through the same path the
- * panel uses. */
-export type ApprovalVia = "panel" | "window" | "notification" | "editor";
+ * panel uses. `terminal` is `doorman watch`, the CLI answering while the app
+ * is closed, through that same path. */
+export type ApprovalVia = "panel" | "window" | "notification" | "editor" | "terminal";
 
 export interface ApprovalRequest {
   id: string;
@@ -336,7 +337,7 @@ export function readReply(guardDir: string, id: string): ApprovalReply | undefin
       silenced: Array.isArray(raw.silenced)
         ? raw.silenced.filter((d): d is SecurityDetectorId => typeof d === "string")
         : undefined,
-      ...(raw.via === "panel" || raw.via === "window" || raw.via === "notification" || raw.via === "editor"
+      ...(raw.via === "panel" || raw.via === "window" || raw.via === "notification" || raw.via === "editor" || raw.via === "terminal"
         ? { via: raw.via }
         : {}),
       ...(raw.allow_scope === "project" ? { allow_scope: "project" as const } : {}),

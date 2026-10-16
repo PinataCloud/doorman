@@ -20,6 +20,8 @@ import { customDetectorLabels } from "../guard/custom-rules.js";
 
 export interface ReportInputs {
   app_version: string;
+  /** What produced the report, as the reader should see it. Default: the desktop app. */
+  generator?: string;
   generated_at: Date;
   findings: readonly FindingRow[];
   policy: GuardPolicy;
@@ -35,6 +37,8 @@ export interface ReportInputs {
 export interface SecurityReport {
   generated_at: string;
   app_version: string;
+  /** "Doorman for Mac", or "the Doorman CLI" when the CLI wrote it. */
+  generator: string;
   posture: {
     guard_installed: boolean;
     integrity: GuardIntegrityReport["status"] | "unchecked";
@@ -126,6 +130,7 @@ export function buildSecurityReport(inputs: ReportInputs): SecurityReport {
   return {
     generated_at: inputs.generated_at.toISOString(),
     app_version: inputs.app_version,
+    generator: inputs.generator ?? "Doorman for Mac",
     posture: {
       guard_installed: inputs.guard_installed,
       integrity: inputs.integrity?.status ?? "unchecked",
@@ -221,7 +226,7 @@ export function renderSecurityReportMarkdown(report: SecurityReport): string {
   const lines: string[] = [];
   lines.push(`# Doorman security report`);
   lines.push("");
-  lines.push(`Generated ${report.generated_at} by Doorman for Mac ${report.app_version}. Every excerpt below was masked on this machine before it was stored; no raw transcript text and no credential value appears in this file.`);
+  lines.push(`Generated ${report.generated_at} by ${report.generator} ${report.app_version}. Every excerpt below was masked on this machine before it was stored; no raw transcript text and no credential value appears in this file.`);
   lines.push("");
   lines.push("## Posture");
   lines.push("");
@@ -252,7 +257,7 @@ export function renderSecurityReportMarkdown(report: SecurityReport): string {
       }${typeof w30.stood_down === "number" && w30.stood_down > 0 ? ` · ${w30.stood_down} rows stood down by a model` : ""}`,
     );
     lines.push(
-      `- Decided via: panel ${w30.decided_via.panel} · window ${w30.decided_via.window} · notification ${w30.decided_via.notification} · timed out ${w30.decided_via.timeout} · app absent ${w30.decided_via["app-absent"]}`,
+      `- Decided via: panel ${w30.decided_via.panel} · window ${w30.decided_via.window} · notification ${w30.decided_via.notification} · editor ${w30.decided_via.editor} · terminal ${w30.decided_via.terminal} · timed out ${w30.decided_via.timeout} · app absent ${w30.decided_via["app-absent"]}`,
     );
     lines.push("");
     lines.push("| Rule | Exposures | Things | Sightings | Sessions | Blocked | Held | Allowed | Denied | Warned |");

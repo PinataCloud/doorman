@@ -212,10 +212,11 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
 
   const via = stats.decided_via || {};
   /* Every surface a PERSON answers through — the panel, the window, the
-     notification, and the editor (the VS Code companion). The other two values
-     (`timeout`, `app-absent`) are the guard deciding alone, which is exactly
-     what this figure is here to separate out. */
-  const byHuman = (via.panel || 0) + (via.window || 0) + (via.notification || 0) + (via.editor || 0);
+     notification, the editor (the VS Code companion) and the terminal
+     (`doorman watch`). The other two values (`timeout`, `app-absent`) are the
+     guard deciding alone, which is exactly what this figure is here to
+     separate out. */
+  const byHuman = (via.panel || 0) + (via.window || 0) + (via.notification || 0) + (via.editor || 0) + (via.terminal || 0);
   const peakDay = daily.reduce((best, d) => (d.total > (best ? best.total : 0) ? d : best), null);
   const topRule = stats.rules.length ? stats.rules[0] : null;
 

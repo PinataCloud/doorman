@@ -207,7 +207,7 @@ interface SpoolRecord {
 }
 
 const RESOLUTIONS = ["allowed", "denied", "timeout", "unattended", "unavailable"] as const;
-const DECIDED_VIA = ["panel", "window", "notification", "editor", "timeout", "app-absent"] as const;
+const DECIDED_VIA = ["panel", "window", "notification", "editor", "terminal", "timeout", "app-absent"] as const;
 
 /** The exception a spooled `excepted` finding carries — the guard's
  * ScopedIgnoreRule, taken field by field so a malformed line yields no
@@ -714,6 +714,12 @@ export class CaptureEngine {
     }, PRUNE_INTERVAL_MS);
     prune.unref?.();
     this.timers.push(prune);
+  }
+
+  /** Load the store from disk without scanning or watching: the CLI's read
+   * path. `scan()` then brings it up to date with the transcripts once. */
+  open(): void {
+    this.load();
   }
 
   stop(): void {

@@ -35,6 +35,12 @@ under [Network](#network).
 macOS (Apple silicon or Intel), the `.AppImage` for Linux, or the `.exe` for
 Windows. Installed apps update themselves from the same page.
 
+**Command line.** The same Doorman runs in a terminal, with no window:
+`npm install -g @pinata/doorman` (Node 22+), then `doorman status`. It
+covers the app's features (scan, findings, the guard and a terminal approver,
+policy and rules, MCP and the gateway, the doctor, the classifier) and shares
+the app's data directory. See [cli/README.md](cli/README.md).
+
 **The model.** Doorman's on-device injection check runs
 [Llama-Doorman-22M](https://huggingface.co/PinataCloud/Llama-Doorman-22M), a
 fine-tune of Llama Prompt Guard 2 (22M) for agent tool output, published on
@@ -152,6 +158,13 @@ turn a feature on, and every write keeps a `.bak` beside the file:
 
 - `main/`: the Electron main process, TypeScript compiled to CommonJS in
   `build/` (comments stripped by `removeComments`).
+  - `main/cli/`: the `doorman` command line (`cli/README.md`). It runs this
+    same main-process code under plain Node: `index.ts` dispatches,
+    `context.ts` resolves the shared data directory (`lib/data-dir.ts`) and
+    decides who may write (whoever holds the guard heartbeat owns the store;
+    the CLI reads a copy meanwhile), `commands/` holds one module per group.
+    Nothing under `main/cli/` may import a module that imports `electron`;
+    `scripts/build-cli-package.mjs` fails the package if it does.
   - `main/lib/`: pure logic with no `electron` import, unit-tested.
   - `main/guard/`: the **self-contained** guard bundle, including
     `guard/hosts/`. It is compiled and copied to `<userData>/doorman/guard/`
@@ -299,6 +312,19 @@ Those secrets are set (2026-10-14): Mac releases are signed with the
 and notarized through that team's App Store Connect API key (`W5X5576RG4`).
 v0.1.0 predates them and is ad-hoc signed, so its installs cannot auto-update
 and need one manual download of a signed release.
+
+**The CLI** (`@pinata/doorman` on npm) has its own version in
+`cli/package.json` and its own workflow, `.github/workflows/cli-release.yml`,
+run by a `cli-v*` tag: tests, `npm run cli:package` (which assembles
+`dist/cli-package` and checks the bin runs on its own), an install of the
+packed tarball into an empty project, `npm publish` (needs the `NPM_TOKEN`
+secret), and a GitHub release holding the tarball. That release is never
+marked latest, because the desktop app's updater reads the latest release.
+
+```sh
+# bump "version" in cli/package.json, commit, then:
+git tag cli-v0.1.0 && git push origin cli-v0.1.0
+```
 
 ## Brand assets
 

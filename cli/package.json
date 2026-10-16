@@ -1,0 +1,24 @@
+{
+  "name": "@pinata/doorman",
+  "version": "0.1.0",
+  "description": "Doorman from the terminal: watch what your AI coding agents read and run, flag the secrets they expose, and guard their tool calls.",
+  "license": "Apache-2.0",
+  "author": "Pinata",
+  "homepage": "https://github.com/PinataCloud/doorman#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PinataCloud/doorman.git"
+  },
+  "bugs": "https://github.com/PinataCloud/doorman/issues",
+  "keywords": ["doorman", "ai-agents", "claude-code", "codex", "security", "secrets", "prompt-injection", "mcp"],
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "doorman": "build/main/cli/index.js"
+  },
+  "files": ["build/", "LICENSE", "NOTICE", "README.md"],
+  "dependencies": {
+    "@huggingface/tokenizers": "0.1.3"
+  }
+}
