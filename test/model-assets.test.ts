@@ -16,6 +16,7 @@ import {
   modelStatus,
   parseModelSource,
   removeModel,
+  reverifyModel,
   type FetchLike,
   type ModelManifest,
 } from "../main/lib/model-assets.js";
@@ -145,6 +146,27 @@ describe("model assets", () => {
     expect(readFileSync(join(modelDir(root, m2), "model.onnx"), "utf8")).toBe(v2["model.onnx"]);
     // …and the old pin no longer passes either.
     expect(modelStatus(root, m1).present).toBe(false);
+  });
+
+  it("a file changed on disk after it was verified (same size) is caught at load, loses its record, and is re-fetched alone", async () => {
+    const files = { "config.json": "{}", "model.onnx": "w".repeat(500) };
+    const m = manifest(files);
+    await downloadModel(root, m, { fetchImpl: serving(files) });
+    expect(await reverifyModel(root, m)).toEqual([]); // untouched: nothing to do
+    // Flip one byte: same size, so the cheap status check still says present…
+    const path = join(modelDir(root, m), "model.onnx");
+    const bytes = readFileSync(path);
+    bytes[250] = bytes[250]! ^ 0xff;
+    writeFileSync(path, bytes);
+    expect(modelStatus(root, m).present).toBe(true);
+    // …but the load-time re-hash catches it, and from then on it is absent.
+    expect(await reverifyModel(root, m)).toEqual(["model.onnx"]);
+    expect(modelStatus(root, m)).toMatchObject({ present: false, missing: ["model.onnx"] });
+    const fetchImpl = serving(files);
+    await downloadModel(root, m, { fetchImpl });
+    expect(fetchImpl.hits).toEqual(["model.onnx"]);
+    expect(readFileSync(path, "utf8")).toBe(files["model.onnx"]);
+    expect(modelStatus(root, m).present).toBe(true);
   });
 
   it("adopts an install written before the verified record existed by hashing it once — no download when it matches", async () => {

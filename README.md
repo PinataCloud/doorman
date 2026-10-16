@@ -59,7 +59,9 @@ under [Network](#network).
 - **Injection-classifier model** (optional, on by default). When the
   classifier is on, the app downloads the model it needs into
   `<userData>/models/`, every file pinned by exact size and sha256
-  (`main/lib/model-assets.ts`) and written only after it verifies. Two models
+  (`main/lib/model-assets.ts`), written only after it verifies, and re-hashed
+  each time the app loads it (a file that no longer matches is re-fetched,
+  with the other model running meanwhile if it is installed). Two models
   can be selected in Settings → AI-delivered protection:
   - **Doorman (fine-tuned, recommended)**, the default: Llama Prompt Guard 2
     22M fine-tuned for tool output (int8 ONNX, about 96 MB with its

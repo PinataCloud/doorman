@@ -23,7 +23,7 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { open, readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -145,9 +145,10 @@ export interface ModelStatus {
    * against its pinned sha256 (VERIFIED_FILE, written by downloadModel). Size
    * alone is not enough: a new build of the same architecture has weights of
    * the SAME byte size, and an old file must never pass for a new pin.
-   * (Hashes are checked when a file is written or adopted; re-hashing 80 MB
-   * on every Settings open is not worth it — a corrupted file fails at load
-   * and the classifier reports absent.) */
+   * (A cheap check, for Settings and every scan: the full hash is checked when
+   * a file is written or adopted, and again each time the classifier LOADS
+   * the model — reverifyModel — so a file changed on disk after its record
+   * was written is caught before it runs.) */
   present: boolean;
   missing: string[];
   bytes_total: number;
@@ -190,8 +191,32 @@ export function modelStatus(modelsRoot: string, manifest: ModelManifest): ModelS
 
 export async function sha256File(path: string): Promise<string> {
   const hash = createHash("sha256");
-  hash.update(await readFile(path));
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
   return hash.digest("hex");
+}
+
+/**
+ * Re-hash an installed model against its pins — run each time the classifier
+ * loads it, so what RUNS is what was reviewed even if a file changed on disk
+ * after it was verified (same size, different bytes: the cheap modelStatus
+ * check cannot see that). Returns the files that no longer match. Their
+ * verified record is dropped, so modelStatus reports the model absent and the
+ * next downloadModel replaces exactly those files.
+ */
+export async function reverifyModel(modelsRoot: string, manifest: ModelManifest): Promise<string[]> {
+  const dir = modelDir(modelsRoot, manifest);
+  const verified = readVerified(dir);
+  const bad: string[] = [];
+  for (const file of manifest.files) {
+    const path = join(dir, file.name);
+    const ok = existsSync(path) && statSync(path).size === file.size && (await sha256File(path)) === file.sha256;
+    if (!ok) bad.push(file.name);
+  }
+  if (bad.length > 0) {
+    for (const name of bad) delete verified[name];
+    writeVerified(dir, verified);
+  }
+  return bad;
 }
 
 /** The slice of fetch the downloader needs — injectable for tests. */

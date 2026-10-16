@@ -59,7 +59,7 @@ import { McpConfigWatcher } from "./mcp-watch.js";
 import type { McpConfigServer } from "./lib/mcp-inventory.js";
 import { buildMcpInventory, discoveredMcpConfig, mcpConfigPaths } from "./lib/mcp-inventory.js";
 import { INJECTION_CLASSIFIER_LABEL, loadInjectionClassifier, runtimePresent, wasmPipeline, type InjectionClassifier } from "./lib/injection-classifier.js";
-import { PROMPT_GUARD_2_22M, PROMPT_GUARD_2_22M_DOORMAN_1, downloadModel, injectionModelManifest, modelDir, modelStatus, removeModel, type DownloadProgress, type ModelManifest } from "./lib/model-assets.js";
+import { PROMPT_GUARD_2_22M, PROMPT_GUARD_2_22M_DOORMAN_1, downloadModel, injectionModelManifest, modelDir, modelStatus, removeModel, reverifyModel, type DownloadProgress, type ModelManifest } from "./lib/model-assets.js";
 import { doormanModelSource, fetchInjectionModels, injectionModelsMissing, planInjectionModel, type InjectionModelFetchDeps, type InjectionModelPlan } from "./lib/injection-model-choice.js";
 import {
   ObservedWatcher,
@@ -624,6 +624,21 @@ async function injectionClassifierInstance(): Promise<InjectionClassifier | null
   if (injectionClassifier !== undefined && injectionClassifierFor === manifest.name) return injectionClassifier;
   const status = modelStatus(modelsRoot(), manifest);
   injectionClassifierFor = manifest.name;
+  if (status.present && runtimePresent(runtimeRoot())) {
+    // What runs must be what was pinned: re-hash before loading. A file that
+    // changed on disk since it was verified loses its record, the model counts
+    // as absent (so the effective model falls back, e.g. to stock) and the
+    // download replaces exactly that file.
+    const changed = await reverifyModel(modelsRoot(), manifest);
+    if (changed.length > 0) {
+      console.warn(`[doorman] ${manifest.name}: ${changed.join(", ")} no longer match their pins — re-fetching`);
+      injectionClassifier = undefined;
+      injectionClassifierFor = undefined;
+      ensureInjectionModel("retry");
+      scheduleRecompute();
+      return injectionClassifierInstance();
+    }
+  }
   injectionClassifier =
     status.present && runtimePresent(runtimeRoot())
       ? await loadInjectionClassifier({
@@ -2213,7 +2228,10 @@ function registerIpc(): void {
     return { ok: true, wallets };
   });
   ipcMain.handle("radar:injection-classifier-probe", async () => {
-    // Everything here is about the EFFECTIVE model — what actually runs.
+    // Everything here is about the EFFECTIVE model — what actually runs. Load
+    // it first: the load re-hashes the files, and a file that fails its pin
+    // changes which model is effective (or makes it absent).
+    await injectionClassifierInstance();
     const plan = injectionModelPlan();
     const manifest = injectionModelManifest(plan.effective);
     const status = modelStatus(modelsRoot(), manifest);
