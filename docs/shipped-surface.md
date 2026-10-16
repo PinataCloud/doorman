@@ -61,13 +61,14 @@ The app makes no request on its own except:
 - **The injection-classifier model**, downloaded only when the classifier
   needs it and verified by size and sha256 against pins in
   `main/lib/model-assets.ts`. The default selection is Doorman's fine-tuned
-  model (`doorman-1`), fetched from `DOORMAN_MODEL_BASE_URL`
-  (`main/lib/model-sources.ts`), which is **empty in this build**: no host is
-  contacted for it until that constant is set to a pinned-revision Hugging
-  Face URL (or an operator sets `DOORMAN_INJECTION_CLASSIFIER_SOURCE`). Until
-  then, and whenever its download or verification fails, the app fetches and
-  runs stock Llama Prompt Guard 2 22M from huggingface.co (pinned to one
-  commit) in its place. Each model directory gets a `.verified.json` (file
+  model (`doorman-1`), fetched from huggingface.co,
+  `PinataCloud/Llama-Doorman-22M` at commit
+  `4a43fec65a670e48835d8e8c85c705b4b0d1c907` (`DOORMAN_MODEL_BASE_URL` in
+  `main/lib/model-sources.ts`; `DOORMAN_INJECTION_CLASSIFIER_SOURCE`
+  overrides it). Whenever that download or its verification fails, the app
+  fetches and runs stock Llama Prompt Guard 2 22M from huggingface.co
+  (`gravitee-io/Llama-Prompt-Guard-2-22M-onnx`, pinned to one commit) in its
+  place, and keeps retrying the fine-tuned model. Each model directory gets a `.verified.json` (file
   name to the sha256 it was verified against; hashes of public files only).
 - **The second opinion**, off by default: a loopback-only call to a local
   OpenAI-compatible model server the person configures (`DOORMAN_SECOND_OPINION*`).
@@ -131,8 +132,8 @@ bundle. Both (stock, and Doorman's fine-tune of it) are Llama derivatives under
 the **Llama 4 Community License**: the pinned `LICENSE` and `NOTICE` files are
 downloaded with the weights and kept beside them, the fine-tune's directory name
 starts with "Llama", and the notice "Built with Llama" travels in each manifest.
-When `DOORMAN_MODEL_BASE_URL` is set, the fine-tuned weights are redistributed
-from that host under the same terms.
+The fine-tuned weights are redistributed from `PinataCloud/Llama-Doorman-22M`
+on Hugging Face under the same terms.
 
 ## Keeping this doc honest
 

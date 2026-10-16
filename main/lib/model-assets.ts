@@ -98,11 +98,11 @@ export const PROMPT_GUARD_2_22M: ModelManifest = {
  * windowing, so the model and how it reads switch together.
  *
  * Its download location is ONE value, `DOORMAN_MODEL_BASE_URL` in
- * lib/model-sources.ts — empty until the model is published, and overridden
+ * lib/model-sources.ts — the pinned-revision Hugging Face URL — overridden
  * by DOORMAN_INJECTION_CLASSIFIER_SOURCE (an http(s) prefix or a local
  * directory). Either way every file is verified against these pins, so
  * publishing changes the URL, never a pin. With no usable source the app runs
- * the stock model instead (main/index.ts injectionModels).
+ * the stock model instead (main/index.ts injectionModelPlan).
  *
  * Derived from Llama, so the Llama 4 Community License travels with the
  * weights (LICENSE + NOTICE, the same files as stock), the name starts with

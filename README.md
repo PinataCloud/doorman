@@ -63,20 +63,22 @@ under [Network](#network).
   can be selected in Settings → AI-delivered protection:
   - **Doorman (fine-tuned, recommended)**, the default: Llama Prompt Guard 2
     22M fine-tuned for tool output (int8 ONNX, about 96 MB with its
-    tokenizer). It downloads from `DOORMAN_MODEL_BASE_URL` in
-    `main/lib/model-sources.ts`, a pinned-revision Hugging Face URL that is
-    **empty until the model is published**, or from
+    tokenizer). It downloads from Hugging Face,
+    [`PinataCloud/Llama-Doorman-22M`](https://huggingface.co/PinataCloud/Llama-Doorman-22M)
+    pinned to commit `4a43fec6` (`DOORMAN_MODEL_BASE_URL` in
+    `main/lib/model-sources.ts`), or from
     `DOORMAN_INJECTION_CLASSIFIER_SOURCE` when that is set.
   - **Prompt Guard 2 (stock)**: Llama Prompt Guard 2 22M (ONNX, about 82 MB)
     from Hugging Face (`gravitee-io/Llama-Prompt-Guard-2-22M-onnx`, pinned to
     one commit).
 
-  While the fine-tuned model has no download location, or its download or
-  verification fails, the app downloads and runs the **stock** model in its
-  place (never no model) and says so in Settings; it switches to the
-  fine-tuned model by itself once that installs. So today the one download
-  is the stock model from Hugging Face; once `DOORMAN_MODEL_BASE_URL` is set,
-  the default download becomes the fine-tuned model from that URL. Both sets
+  While the fine-tuned model cannot be fetched (no network, an HTTP error,
+  a file that fails its sha256 pin), the app downloads and runs the
+  **stock** model in its place (never no model) and says so in Settings; it
+  retries, and switches to the fine-tuned model by itself once that
+  installs. So with the default selection the one download is the
+  fine-tuned model from `PinataCloud/Llama-Doorman-22M`; stock is fetched
+  only when it is chosen or the fine-tuned download fails. Both sets
   of weights are under the Llama 4 Community License, whose `LICENSE` and
   `NOTICE` files are downloaded and kept beside them. The ONNX Runtime WASM
   build that runs them ships inside the app (`scripts/stage-runtime.mjs`).
@@ -200,10 +202,11 @@ DOORMAN_SECOND_OPINION_TIMEOUT_MS=3000
 file names are appended to, or a local directory holding the package. Either
 way every file is verified against the pins in `main/lib/model-assets.ts`.
 
-**Publishing the fine-tuned model** means setting that one constant,
-`DOORMAN_MODEL_BASE_URL`, to its pinned-revision Hugging Face URL
-(`https://huggingface.co/<org>/<repo>/resolve/<commit>/`). The pins do not
-change. Installed apps then fetch it at their next launch and switch over.
+**Publishing a new revision of the fine-tuned model** means setting that one
+constant, `DOORMAN_MODEL_BASE_URL`, to its pinned-revision Hugging Face URL
+(`https://huggingface.co/<org>/<repo>/resolve/<commit>/`), and updating the
+pins in `main/lib/model-assets.ts` only if the files changed. Installed apps
+fetch it at their next launch.
 
 A Finder launch inherits nothing from a shell. For a packaged app, use
 `launchctl setenv …` and relaunch, or start it with `open -a Doorman --env …`.

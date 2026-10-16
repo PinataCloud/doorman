@@ -202,9 +202,11 @@ describe("the doorman-1 model (the default selection)", () => {
     }
     // Its own directory, so switching models never overwrites the stock one.
     expect(modelDir(root, m)).not.toBe(modelDir(root, PROMPT_GUARD_2_22M));
-    // Its download location is the ONE config value, empty until it is published.
+    // Its download location is the ONE config value: the published Hugging
+    // Face repo, pinned to a commit (the pins above still decide what runs).
     expect(m.base_url).toBe(DOORMAN_MODEL_BASE_URL);
-    expect(DOORMAN_MODEL_BASE_URL).toBe("");
+    expect(DOORMAN_MODEL_BASE_URL).toBe("https://huggingface.co/PinataCloud/Llama-Doorman-22M/resolve/4a43fec65a670e48835d8e8c85c705b4b0d1c907/");
+    expect(DOORMAN_MODEL_BASE_URL).toMatch(/^https:\/\/huggingface\.co\/[^/]+\/[^/]+\/resolve\/[0-9a-f]{40}\/$/);
     // The model and how it reads travel together.
     expect(m.windowing).toBe("focus");
     expect(PROMPT_GUARD_2_22M.windowing).toBe("prefix");
