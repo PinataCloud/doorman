@@ -297,6 +297,17 @@ describe("prefs defaults and the one-time default migration", () => {
     expect(makeStore(written).store.prefs().tray_display).toBe("spend");
   });
 
+  it("follows the OS until a theme is pinned, and keeps the pin across restarts", () => {
+    // A fresh install, and every file from before the setting existed: auto.
+    expect(makeStore().store.prefs().appearance).toBe("auto");
+    // An unknown value (a hand-edited file, a future option) is not a theme.
+    expect(makeStore({ appearance: "sepia" }).store.prefs().appearance).toBe("auto");
+
+    const { store, writes } = makeStore();
+    store.setPrefs({ appearance: "dark" });
+    expect(makeStore(writes[writes.length - 1]!).store.prefs().appearance).toBe("dark");
+  });
+
   it("v4 switches the VS Code companion on for every install, once", () => {
     // Fresh install: on.
     expect(makeStore().store.prefs().vscode_extension).toBe(true);

@@ -1,14 +1,44 @@
-# Doorman
+<p align="center">
+  <img src="assets/doorman-mark-512.png" alt="Doorman" width="112">
+</p>
+
+<h1 align="center">Doorman</h1>
+
+<p align="center">
+  Watches what your AI coding agents read and run, and flags the secrets they expose.<br>
+  On your machine, with nothing sent anywhere.
+</p>
+
+<p align="center">
+  <a href="https://github.com/PinataCloud/doorman/releases"><b>Download</b></a> ·
+  <a href="https://huggingface.co/PinataCloud/Llama-Doorman-22M">Model on Hugging Face</a> ·
+  <a href="https://pinata.cloud">Built by Pinata</a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/radar-light.png" alt="Security Radar, light theme" width="49%">
+  <img src="docs/screenshots/radar-dark.png" alt="Security Radar, dark theme" width="49%">
+</p>
 
 A local-first desktop app that watches the AI coding agents on this machine:
 what they spend in tokens, what they touch, and what they try to send. It runs
 on macOS (the primary target), with Linux (AppImage) and Windows (NSIS) builds
-from the same source.
+from the same source. Built by [Pinata](https://pinata.cloud).
 
 **Everything stays on the machine.** Doorman reads the agents' own transcript
 files from disk and keeps its store under its own data directory. It has no
 account, no server and no telemetry. The one thing it downloads is described
 under [Network](#network).
+
+**Install.** Download the latest build from
+[Releases](https://github.com/PinataCloud/doorman/releases): the `.dmg` for
+macOS (Apple silicon or Intel), the `.AppImage` for Linux, or the `.exe` for
+Windows. Installed apps update themselves from the same page.
+
+**The model.** Doorman's on-device injection check runs
+[Llama-Doorman-22M](https://huggingface.co/PinataCloud/Llama-Doorman-22M), a
+fine-tune of Llama Prompt Guard 2 (22M) for agent tool output, published on
+Hugging Face with its benchmark and file fingerprints. Built with Llama.
 
 ## What it does
 
@@ -53,6 +83,15 @@ under [Network](#network).
   plugin files and bundle are in place, and that VS Code's settings let it run.
   It applies lossless repairs automatically and offers anything lossy as a
   click.
+- **Appearance**: Light, Dark or Auto (follows the OS) in Settings →
+  Appearance. Both themes use the Pinata palette.
+
+<p align="center">
+  <img src="docs/screenshots/usage-light.png" alt="Usage, light theme" width="49%">
+  <img src="docs/screenshots/analytics-dark.png" alt="Security Analytics, dark theme" width="49%">
+</p>
+
+*Screenshots use made-up sessions in a sandboxed profile.*
 
 ## Network
 
@@ -279,3 +318,14 @@ from the app icon on every build.
 ABC Diatype (Variable, Mono and Extended) is a commercial typeface that is
 currently included and shipped inside the app. Its licence for this product
 needs to be confirmed before any build is distributed.
+
+## License
+
+Doorman is licensed under the [Apache License, Version 2.0](LICENSE).
+Copyright 2026 Pinata Technologies Inc. See [NOTICE](NOTICE) for attribution
+and the third-party code and assets in this repository.
+
+The licence covers the code, not the "Doorman" or "Pinata" names and logos.
+The model weights the app downloads ([Llama-Doorman-22M](https://huggingface.co/PinataCloud/Llama-Doorman-22M)
+and stock Llama Prompt Guard 2) are not part of this repository and are
+licensed separately under the Llama 4 Community License. Built with Llama.

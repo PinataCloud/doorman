@@ -45,43 +45,51 @@
 }
 
 :root {
-  /* Surfaces — cream #F0E8D5 canvas, #E8DFC8 recessed, #FAF5EC cards. */
-  --linen:        #F0E8D5;  /* app background */
-  --linen-2:      #E8DFC8;  /* recessed / rail */
-  --paper:        #FAF5EC;  /* cards / panels */
-  --paper-2:      #F4EDDC;  /* subtle raised (between cream and cream3) */
-  --ink-on-dark:  #F0E8D5;
+  /* Surfaces — Pinata white: white canvas and cards, a faint violet recess. */
+  --linen:        #FFFFFF;  /* app background */
+  --linen-2:      #F7F3FC;  /* recessed / rail */
+  --paper:        #FFFFFF;  /* cards / panels */
+  --paper-2:      #FAF7FE;  /* subtle raised */
+  /* Text on a surface that is dark in BOTH themes: the sidebar and the
+     evidence block (--graphite). */
+  --ink-on-dark:  #F3E9FF;
+  /* Text on a fill that flips with the theme: --navy, --bad and --ink used as
+     backgrounds (primary buttons, the tooltip, severity badges). Light here,
+     dark in the dark theme, where those fills turn light. */
+  --on-fill:      #F3E9FF;
 
-  /* Ink — a warm brown-black ramp, stepped as a φ CONTRAST
+  /* Ink — a near-neutral ramp with a faint violet cast, stepped as a φ CONTRAST
      ladder: each tier's WCAG ratio against --paper is the previous ÷ φ, so
      "demote one level" is the same perceptual step everywhere in the app.
-     Anchored at --ink (16.56:1, unchanged) and derived downward — hue and
+     Anchored at --ink (16.56:1) and derived downward — hue and
      chroma held, lightness solved for the target ratio. Re-solve if --paper
-     ever moves: irregular steps leave muted text and placeholders below AA. */
-  --ink:          #1A1612;  /* primary   16.56:1  (anchor) */
-  --ink-2:        #443A2B;  /* secondary 10.25:1  (16.56/φ) */
-  --ink-3:        #64594B;  /* muted      6.29:1  (16.56/φ²) */
-  --ink-4:        #85796A;  /* faint      3.91:1  (16.56/φ³) */
+     ever moves: irregular steps leave muted text and placeholders below AA.
+     Solved against #FFFFFF. */
+  --ink:          #1E1E24;  /* primary   16.58:1  (anchor) */
+  --ink-2:        #404046;  /* secondary 10.30:1  (16.56/φ) */
+  --ink-3:        #5F5F65;  /* muted      6.34:1  (16.56/φ²) */
+  --ink-4:        #808086;  /* faint      3.93:1  (16.56/φ³) */
 
-  /* Borders — every hairline in one warm rule color. */
-  --tan:          #C8B898;  /* default hairline */
-  --tan-2:        #B9A583;  /* stronger */
-  --tan-3:        #A8925F;  /* emphasis / focus ring base */
+  /* Borders — every hairline in one soft violet rule color. */
+  --tan:          #DDD0EE;  /* default hairline */
+  --tan-2:        #CDBBE6;  /* stronger */
+  --tan-3:        #A97FE0;  /* emphasis / focus ring base */
 
-  /* Brand palette — navy and blue. */
-  --navy:         #0D1F4E;  /* Doorman Navy */
-  --navy-2:       #1A2744;  /* panel navy */
-  --blue:         #1A4FD6;  /* Doorman Blue */
-  --blue-deep:    #143FAC;
-  --blue-soft:    #E0E6FA;
+  /* Brand palette — Pinata plum, purple and pink. The names stay (navy, blue,
+     gold) because every rule in app.css reads them by role. */
+  --navy:         #1D0033;  /* Pinata plum */
+  --navy-2:       #2A0A47;  /* panel plum */
+  --blue:         #953BED;  /* Pinata purple */
+  --blue-deep:    #7A23CF;
+  --blue-soft:    #F1E8FF;
   --accent-blue:  #4A6B8A;
   --accent-blue-soft: #E2E9F0;
-  --gold:         #C9A66B;  /* Gold Accent */
-  --gold-deep:    #A8854A;
-  --gold-soft:    #F1E7D3;
-  /* Warm fill for outlined chips. Deliberately NOT --gold-soft, which is
-     within 2/255 of --linen and so vanishes on the drawer body. */
-  --chip-soft:    #F3E7CD;
+  --gold:         #FF3AB4;  /* Pinata pink accent */
+  --gold-deep:    #D81E8F;
+  --gold-soft:    #FFEAF6;
+  /* Fill for outlined chips. Deliberately NOT --gold-soft: chips read as
+     brand purple, the pink is reserved for markers. */
+  --chip-soft:    #F1E8FF;
   --graphite:     #1A1612;
   --steel:        #4A6B8A;
 
@@ -143,12 +151,12 @@
      stopped being brand: violet at 279deg, burnt orange at 47deg.
 
      Derived by solving in OKLCH, not by eye. Verified on both surfaces
-     (--paper #FAF5EC and --linen #F0E8D5):
+     (--paper #FFFFFF and --linen-2 #F7F3FC):
        lightness band  OKLCH L 0.43–0.77 ......... all 8 pass
        chroma floor    OKLCH C >= 0.10 ........... all 8 pass
        CVD separation  adjacent, protan/deutan ... worst 16.5 (target >= 8)
        normal-vision   adjacent, unsimulated ..... worst 18.3 (floor >= 15)
-       contrast        WCAG vs both surfaces ..... all 8 >= 3:1 (min 3.09)
+       contrast        WCAG vs both surfaces ..... all 8 >= 3:1 (min 3.45)
      Adjacent CVD separation is better than the palette this replaces (16.5 vs
      12.9) — alternating two families beats interleaving eight.
 
@@ -251,4 +259,64 @@
      stays put at --t-1 — a size change was never what "compact" meant. */
   --row-pad-y: 13px;
   --table-fs: 12.78px;
+}
+
+/* ---- Dark theme: follows the OS (Electron reports it as prefers-color-scheme).
+   Same roles, same φ contrast ladder, solved against the dark card surface
+   (--paper #1B0A2E) instead of white. The fills that carry --on-fill turn
+   light, so --on-fill turns dark. The sidebar and --graphite stay dark in both
+   themes, which is why their text is --ink-on-dark and not --on-fill. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --linen:        #12001F;  /* app background */
+    --linen-2:      #0C0016;  /* recessed / rail */
+    --paper:        #1B0A2E;  /* cards / panels */
+    --paper-2:      #231238;  /* subtle raised */
+    --on-fill:      #1D0033;
+
+    --ink:          #F3F1F9;  /* primary   16.61:1 */
+    --ink-2:        #C2BFC7;  /* secondary 10.24:1 */
+    --ink-3:        #98969E;  /* muted      6.37:1 */
+    --ink-4:        #747279;  /* faint      3.92:1 */
+
+    --tan:          #3B2A55;
+    --tan-2:        #4D3A6B;
+    --tan-3:        #8B66C9;
+
+    --navy:         #C9A3FF;  /* lavender: 9.0:1 as text, a fill under --on-fill */
+    --navy-2:       #B48CF0;
+    --blue:         #AE81ED;  /* purple, 6.34:1 */
+    --blue-deep:    #C9A3FF;
+    --blue-soft:    #2C1450;
+    --gold:         #FF3AB4;  /* pink, 5.77:1 */
+    --gold-deep:    #FF8AD1;
+    --gold-soft:    #3A0F2E;
+    --chip-soft:    #2C1450;
+    --graphite:     #0B0612;
+
+    /* Status inks, each solved to 6.3:1 on --paper at its light hue. */
+    --good:         #64A56E;
+    --good-soft:    #0F2A1C;
+    --warn:         #C28D3B;
+    --warn-soft:    #33240A;
+    --bad:          #E97368;
+    --bad-soft:     #3A1218;
+    --info:         #599DCE;
+    --info-soft:    #0E2338;
+
+    /* The ramp with each slot's OKLCH lightness mirrored inside the light
+       ramp's band (L' = 1.20 - L, floored at .62), hue and chroma held: the
+       fixed blue/gold alternation is unchanged, and every slot clears 4.99:1
+       on --paper (the light ramp's c6/c7 would sit near 2:1 here). */
+    --c1: #5A99FF;
+    --c2: #B68531;
+    --c3: #1B87EB;
+    --c4: #B6770C;
+    --c5: #768ECF;
+    --c6: #DB9F67;
+    --c7: #7BB7F4;
+    --c8: #7381C6;
+    --c-other: #9A93A6;
+  }
 }

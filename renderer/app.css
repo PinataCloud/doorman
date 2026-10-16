@@ -63,16 +63,16 @@ html, body {
 /* ---- shell ---- */
 .shell { display: flex; height: 100%; }
 
-/* The sidebar column: navy gradient, light nav items, gold active bar. */
+/* The sidebar column: Pinata purple-to-plum gradient, light nav items, pink active bar. */
 .sidebar {
   width: var(--sidebar-w);
   flex: none;
   display: flex;
   flex-direction: column;
   padding: var(--s6) 12px var(--s5);
-  background: linear-gradient(180deg, #0E1F40 0%, #0D1F4E 100%);
-  color: #C5CEDC;
-  border-right: 1px solid #1f1c16;
+  background: linear-gradient(180deg, #3A0A6B 0%, #1D0033 100%);
+  color: #E3D3F8;
+  border-right: 1px solid #1D0033;
   -webkit-app-region: drag;            /* hiddenInset title bar: sidebar drags */
   padding-top: 44px;                    /* clear the traffic lights */
 }
@@ -81,7 +81,7 @@ html, body {
    typography as its statusline siblings, but a button — hover brightens, the
    hot dot says "something is waiting on you". */
 .sidebar .foot .updatebtn { appearance: none; background: transparent; border: 0; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; display: flex; align-items: center; gap: inherit; }
-.sidebar .foot .updatebtn:hover { color: #F2F6FC; text-decoration: underline; text-underline-offset: 3px; }
+.sidebar .foot .updatebtn:hover { color: #FFFFFF; text-decoration: underline; text-underline-offset: 3px; }
 
 .brand { display: flex; align-items: center; gap: var(--s5); padding: 0 6px var(--s6); }
 .brand-mark {
@@ -89,7 +89,7 @@ html, body {
   height: 34px;
   border-radius: var(--r);
   flex: 0 0 34px;
-  background: #FBF8F2;
+  background: #FFFFFF;
   display: grid;
   place-items: center;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10), 0 1px 2px rgba(0, 0, 0, .25);
@@ -112,7 +112,7 @@ html, body {
   font-size: var(--t-3);
   letter-spacing: .07em;
   text-transform: uppercase;
-  color: #7E8AA0;
+  color: #B79AD9;
   white-space: nowrap;
 }
 
@@ -144,7 +144,7 @@ html, body {
   font-size: var(--t-2);
   letter-spacing: .14em;
   text-transform: uppercase;
-  color: #74809A;
+  color: #B79AD9;
   padding: 14px 10px 6px;
 }
 .nav > .nav-label:first-child { padding-top: 0; }
@@ -156,7 +156,7 @@ html, body {
   border: none;
   border-radius: var(--r);
   background: transparent;
-  color: #B3BDCE;
+  color: #E3D3F8;
   font: inherit;
   font-size: var(--t-0);
   font-weight: 500;
@@ -167,8 +167,8 @@ html, body {
 }
 /* No :hover background — .nav-glide supplies the wash, so the two can't
    double up into a brighter pill under the pointer. */
-.nav button:hover { color: #EAEFF6; }
-.nav button.on { background: rgba(77, 163, 255, .16); color: #F2F6FC; }
+.nav button:hover { color: #FFFFFF; }
+.nav button.on { background: rgba(255, 255, 255, .14); color: #FFFFFF; }
 .nav button.on::before {
   content: "";
   position: absolute;
@@ -208,7 +208,7 @@ html, body {
   font-family: var(--mono);
   font-size: var(--t-3);
   letter-spacing: .14em;
-  color: #7E8AA0;
+  color: #B79AD9;
   margin: var(--s3) 6px 0;
 }
 .sidebar .foot .dot { width: 6px; height: 6px; border-radius: 50%; background: #4CAF7A; }
@@ -399,7 +399,9 @@ td.right, th.right { text-align: right; }
 /* The ledger row's rail as a brand mark (RailMark): a 15px logo in its own
    colour, the rail's name in the tip bubble and the accessible name. Sized to
    the row's cap line so the clock beside it keeps its baseline. */
-.railmark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; cursor: default; }
+/* `color` is what a maker's one-colour (near-black) mark draws in — see
+   markFill in components.jsx — so it flips with the theme. */
+.railmark { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; cursor: default; color: var(--ink); }
 .railmark svg { display: block; }
 .railmark:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) var(--mix-2), transparent); border-radius: var(--r-sm); }
 
@@ -443,7 +445,7 @@ td.right, th.right { text-align: right; }
   border-radius: var(--r-sm);
   white-space: nowrap;
 }
-.sevbadge.sev-critical { background: var(--bad); color: var(--ink-on-dark); }
+.sevbadge.sev-critical { background: var(--bad); color: var(--on-fill); }
 .sevbadge.sev-high { background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad); }
 .sevbadge.sev-medium { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); }
 .sevbadge.sev-low { background: var(--paper-2); color: var(--ink-3); border: 1px solid var(--tan-2); }
@@ -614,7 +616,7 @@ td.right, th.right { text-align: right; }
   font-weight: 700;
   letter-spacing: .1em;
   background: var(--bad);
-  color: var(--ink-on-dark);
+  color: var(--on-fill);
   padding: 2px var(--s3);
   border-radius: var(--r-sm);
 }
@@ -697,7 +699,7 @@ td.right, th.right { text-align: right; }
 }
 .evidence mark {
   background: var(--bad);
-  color: var(--ink-on-dark);
+  color: var(--on-fill);
   border-radius: 2px;
   padding: 0 2px;
 }
@@ -757,7 +759,7 @@ td.right, th.right { text-align: right; }
    so the middle coaching rung reads as its own step, not a shade of ask. */
 .modeseg button.on.mode-warn { background: var(--gold); color: var(--paper); }
 .modeseg button.on.mode-ask { background: var(--warn); color: var(--paper); }
-.modeseg button.on.mode-block { background: var(--bad); color: var(--ink-on-dark); }
+.modeseg button.on.mode-block { background: var(--bad); color: var(--on-fill); }
 .modeseg.off button { opacity: .5; cursor: default; }
 
 /* ---- forms ----
@@ -849,7 +851,7 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 
   padding: 6px 9px;
   border-radius: var(--r);
   background: var(--navy);
-  color: var(--ink-on-dark);
+  color: var(--on-fill);
   font-family: var(--sans);
   font-size: var(--t-2);
   font-weight: 400;
@@ -903,7 +905,7 @@ button.link:focus-visible,
   outline-offset: 1px;
 }
 button.btn:active:not(:disabled) { transform: translateY(0.5px); }
-button.btn.primary { background: var(--navy); border-color: var(--navy); color: var(--ink-on-dark); }
+button.btn.primary { background: var(--navy); border-color: var(--navy); color: var(--on-fill); }
 button.btn.primary:hover { background: var(--navy-2); }
 button.btn.danger { color: var(--bad); border-color: var(--bad); background: var(--paper); }
 /* Outlined, not filled: the approval prompt's Deny is the filled button, and the
@@ -1188,7 +1190,7 @@ button.link {
 .approval .ap-actions .spacer { flex: 1; }
 .approval .ap-foot { margin-top: var(--s4); font-size: var(--t-2); color: var(--ink-3); }
 .approval .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
-button.btn.danger.primary { background: var(--bad); border-color: var(--bad); color: var(--ink-on-dark); }
+button.btn.danger.primary { background: var(--bad); border-color: var(--bad); color: var(--on-fill); }
 button.btn.quiet { border-color: transparent; color: var(--ink-3); }
 button.btn.quiet:hover { border-color: var(--tan-2); }
 .sidebar .foot .dot.hot { background: var(--bad); }
@@ -2256,7 +2258,7 @@ table.rows tfoot .lab {
    credentials-first card): the finding's own value in the alarm colour the
    masked strip already uses, any other redacted value in the same window one
    band softer — so the eye lands on the exposed value, not a block of text. */
-.evidence.raw mark.raw-hit { background: var(--bad); color: var(--ink-on-dark); border-radius: 2px; padding: 0 2px; font-weight: 600; }
+.evidence.raw mark.raw-hit { background: var(--bad); color: var(--on-fill); border-radius: 2px; padding: 0 2px; font-weight: 600; }
 .evidence.raw mark.raw-hit.other { background: var(--gold); color: var(--ink); font-weight: 400; }
 .evidence-note {
   font-family: var(--mono);
@@ -2306,7 +2308,7 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
    the placeholder on the bad tint; revealed swaps the live value onto warn. */
 .bubble .body mark.redmark {
   background: var(--bad);
-  color: #fff;
+  color: var(--on-fill);
   border-radius: 2px;
   padding: 0 3px;
   cursor: pointer;
@@ -2648,7 +2650,7 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
    button bunched up against the title instead of sitting at the right edge. */
 .ai-head .spacer { flex: 1; }
 .ai-head .n-x { margin-left: 2px; }
-.ai-mark { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 50%; background: var(--navy); color: var(--ink-on-dark); flex: none; }
+.ai-mark { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 50%; background: var(--navy); color: var(--on-fill); flex: none; }
 .ai-title { display: grid; line-height: 1.2; min-width: 0; }
 .ai-title .muted { font-size: var(--t-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-scroll { flex: 1; overflow: auto; padding: var(--s4); display: grid; gap: var(--s3); align-content: start; }
@@ -2854,12 +2856,12 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
   background: var(--paper); color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--tan-2);
   transition: background var(--glide-ms) var(--ease), color var(--glide-ms) var(--ease), box-shadow var(--glide-ms) var(--ease);
 }
-.rw-stop.current .rw-num { background: var(--navy); color: var(--ink-on-dark); box-shadow: inset 0 0 0 1px var(--navy); }
+.rw-stop.current .rw-num { background: var(--navy); color: var(--on-fill); box-shadow: inset 0 0 0 1px var(--navy); }
 .rw-stop.current .rw-stoplabel { color: var(--ink); font-weight: 600; }
 .rw-stop.done .rw-num { color: var(--navy); box-shadow: inset 0 0 0 1px var(--navy); }
 .rw-stop.locked .rw-num { color: var(--ink-4); box-shadow: inset 0 0 0 1px var(--ring); }
 .rw-stop.flagged .rw-num { color: var(--bad); box-shadow: inset 0 0 0 1px var(--bad); }
-.rw-stop.flagged.current .rw-num { background: var(--bad); color: var(--ink-on-dark); }
+.rw-stop.flagged.current .rw-num { background: var(--bad); color: var(--on-fill); }
 .rw-line { flex: 1 1 auto; min-width: 12px; height: 1px; margin: 0 var(--s3); background: var(--ring-strong); }
 .rw-stop.done .rw-line { background: var(--navy); }
 
@@ -3004,7 +3006,7 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 /* The tool's own mark, beside its state dot. Baseline-nudged so the logo sits
    on the name's line rather than riding above it, and greyscale-free: these
    are brand marks, and a desaturated logo reads as disabled. */
-.toolmark { display: inline-flex; align-items: center; vertical-align: -2px; flex: none; }
+.toolmark { display: inline-flex; align-items: center; vertical-align: -2px; flex: none; color: var(--ink); }
 .cover-none-list .toolmark { vertical-align: -1px; }
 /* In the ledger's mono turn label the mark sits ahead of the text, so it
    carries its own trailing gap and drops the letter-spacing it would inherit. */
@@ -4168,7 +4170,7 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
   border: 1px solid var(--tan-2); border-radius: 7px; background: var(--paper); color: var(--ink-2);
   display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.fstep-nav .fstep-btn:hover { background: var(--ink); border-color: var(--ink); color: var(--ink-on-dark); }
+.fstep-nav .fstep-btn:hover { background: var(--ink); border-color: var(--ink); color: var(--on-fill); }
 .fstep-nav .fstep-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .fstep-nav .fstep-btn svg { display: block; }
 .fstep-nav .fstep-prev { transform: rotate(180deg); }
@@ -4180,7 +4182,7 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
   border-radius: 999px; padding: 1px 9px; font: inherit; font-size: var(--t-2); line-height: 1.4; cursor: pointer;
 }
 .stepbtn:hover { background: var(--linen); color: var(--ink); }
-.stepbtn.on { background: var(--ink); border-color: var(--ink); color: var(--ink-on-dark); }
+.stepbtn.on { background: var(--ink); border-color: var(--ink); color: var(--on-fill); }
 .stepbtn:focus-visible { outline: 2px solid var(--navy); outline-offset: 1px; }
 /* Severity is said once, by the badge — the card wears no rail for it. */
 

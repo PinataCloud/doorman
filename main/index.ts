@@ -16,7 +16,7 @@
  * because Chromium refuses cross-origin font loads on non-http schemes.
  */
 
-import { BrowserWindow, app, dialog, ipcMain, nativeImage, net, protocol, safeStorage, shell } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
@@ -186,6 +186,14 @@ const WINDOW_WIDTH = 1180;
 const WINDOW_HEIGHT = 780;
 const WINDOW_MIN_WIDTH = 960;
 const WINDOW_MIN_HEIGHT = 620;
+
+/** Settings → Appearance onto Electron's theme switch. `system` follows the OS. */
+const THEME_SOURCE = { auto: "system", light: "light", dark: "dark" } as const;
+/** The page canvas of the theme in force (tokens.css --linen, light and dark),
+ * so a window never flashes the other theme's colour while it paints. */
+function windowCanvas(): string {
+  return nativeTheme.shouldUseDarkColors ? "#12001F" : "#FFFFFF";
+}
 
 /** How many rows cross the IPC bridge in a snapshot — the full sets never do. */
 const SNAPSHOT_SESSIONS = 100;
@@ -1339,9 +1347,9 @@ function createWindow(): BrowserWindow {
     show: false,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 14 },
-    // Opaque: the sidebar is solid navy, so vibrancy would only show through
+    // Opaque: the sidebar is solid plum, so vibrancy would only show through
     // during load as a mismatched blur.
-    backgroundColor: "#F0E8D5",
+    backgroundColor: windowCanvas(),
     webPreferences: {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -2504,6 +2512,8 @@ function registerIpc(): void {
       applyGuardSync();
     }
     if (next.mcp_answers !== before.mcp_answers) applyMcpAnswers(next.mcp_answers === true);
+    // nativeTheme's "updated" (wired at boot) repaints the window canvas.
+    if (next.appearance !== before.appearance) nativeTheme.themeSource = THEME_SOURCE[next.appearance];
     if (next.vscode_extension !== before.vscode_extension) applyEditorExtension(next.vscode_extension === true);
     digests.start(); // reschedule against the new prefs
     // The AI status is derived from prefs + credentials — re-fold it.
@@ -2738,6 +2748,13 @@ if (!app.requestSingleInstanceLock()) {
       readPrefs,
       writePrefs,
       onChange: broadcast,
+    });
+    // Before any window exists, so the first paint is already in the chosen theme.
+    nativeTheme.themeSource = THEME_SOURCE[store.prefs().appearance];
+    // A pinned theme or the OS (under `auto`) switching: keep the window's own
+    // canvas on the theme in force, or a resize edge flashes the other one.
+    nativeTheme.on("updated", () => {
+      if (window && !window.isDestroyed()) window.setBackgroundColor(windowCanvas());
     });
     // A refused banner is a UI fact, not just a log line: the approval flow
     // leans on notifications, so the person has to know they aren't arriving.
