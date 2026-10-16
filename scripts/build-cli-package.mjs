@@ -33,8 +33,11 @@ if (!existsSync(runtime)) fail("build/runtime/onnxruntime-web is missing; run `n
 const vsix = join(root, "build", "vscode");
 if (!existsSync(vsix) || !readdirSync(vsix).some((f) => f.endsWith(".vsix"))) fail("build/vscode/*.vsix is missing; run `npm run compile` first");
 
-rmSync(out, { recursive: true, force: true });
+// Empty the folder rather than replace it: a container or editor that has
+// dist/cli-package mounted keeps seeing the new contents (a removed and
+// recreated directory leaves the mount pointing at the deleted one).
 mkdirSync(out, { recursive: true });
+for (const entry of readdirSync(out)) rmSync(join(out, entry), { recursive: true, force: true });
 
 // Source maps stay out, as they do from the app (electron-builder `!**/*.map`):
 // they would carry the source, comments included, that `removeComments` strips.
