@@ -179,3 +179,33 @@ export function uninstallMcpServer(userDataDir: string, home: string, env: NodeJ
     hosts: mcpServerStatus(userDataDir, home, env),
   };
 }
+
+/** The prefs the `mcp_answers` switch reads and writes. */
+export interface McpAnswersPrefs {
+  get(): { mcp_recognized?: string[]; mcp_recognized_at?: Record<string, string> };
+  set(patch: { mcp_recognized: string[]; mcp_recognized_at: Record<string, string> }): void;
+}
+
+/** The `mcp_answers` switch moved: register the server with every MCP-capable
+ * host present, or take our entry back out. Our own server is recognized in
+ * the same breath, so the inventory never reports it as an MCP server nobody
+ * approved. Shared by the app (index.ts applyMcpAnswers) and the CLI. */
+export function switchMcpAnswers(
+  enabled: boolean,
+  userDataDir: string,
+  home: string,
+  prefs: McpAnswersPrefs,
+  env: NodeJS.ProcessEnv = process.env,
+): McpInstallOutcome {
+  const outcome = enabled ? installMcpServer(userDataDir, home, env) : uninstallMcpServer(userDataDir, home, env);
+  if (enabled && outcome.ok) {
+    const current = prefs.get().mcp_recognized ?? [];
+    if (!current.includes("doorman")) {
+      prefs.set({
+        mcp_recognized: [...current, "doorman"],
+        mcp_recognized_at: { ...(prefs.get().mcp_recognized_at ?? {}), doorman: new Date().toISOString() },
+      });
+    }
+  }
+  return outcome;
+}

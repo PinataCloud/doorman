@@ -6,5 +6,7 @@ export default defineConfig({
     // directories — ~/.cursor holds whole extensions, test files included —
     // and vitest must never collect those.
     exclude: [...configDefaults.exclude, "**/.dev-sandbox/**"],
+    // The CLI tests drive the compiled tree; build it once per run.
+    globalSetup: ["./test/global-setup.mjs"],
   },
 });

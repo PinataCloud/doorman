@@ -794,7 +794,7 @@ export function summarizeRuleStats(
   let stoodDown = 0;
   let burned: number | undefined;
   let burnedTokens: number | undefined;
-  const via: Record<DecidedVia, number> = { panel: 0, window: 0, notification: 0, editor: 0, timeout: 0, "app-absent": 0 };
+  const via: Record<DecidedVia, number> = { panel: 0, window: 0, notification: 0, editor: 0, terminal: 0, timeout: 0, "app-absent": 0 };
   // Every exposure in the window, with the earliest sighting we know of (which
   // may predate the window — then it is not NEW) and its worst outcome; and
   // every thing, for the secondary count.

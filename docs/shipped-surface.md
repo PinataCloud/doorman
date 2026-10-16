@@ -138,6 +138,38 @@ starts with "Llama", and the notice "Built with Llama" travels in each manifest.
 The fine-tuned weights are redistributed from `PinataCloud/Llama-Doorman-22M`
 on Hugging Face under the same terms.
 
+## The CLI package (`@pinata/doorman` on npm)
+
+Published from this repo by `.github/workflows/cli-release.yml` and built by
+`scripts/build-cli-package.mjs`; npm tarballs are as readable as the app.
+Audited from the built `dist/cli-package` (2026-10-16, 0.1.0): 150 files,
+15 MB unpacked, 4.4 MB packed.
+
+- `build/main/**` — the same compiled main process as the app (comments
+  stripped), **minus** the Electron-only modules (`index`, `preload`, `tray`,
+  `menu`, `approval-window`, `notifications`, `updater`) and every `*.map`.
+  The build script fails if the bin loads an Electron-only module or any file
+  outside the package.
+- `build/runtime/onnxruntime-web/` — the same three WASM runtime files the app
+  ships under `Resources/runtime` (14 MB).
+- `build/vscode/doorman.vsix` — the VS Code companion `doorman editor install`
+  installs.
+- `LICENSE`, `NOTICE`, `README.md` (from `cli/README.md`), `package.json`
+  (from `cli/package.json`; its one dependency, `@huggingface/tokenizers`, is
+  pinned to the app's version).
+
+Network: the same as the app minus the updater. The only request the CLI
+makes on its own is `doorman model download` (Hugging Face, sha256-pinned);
+the second-opinion call stays loopback-only. URLs in the code beyond
+`huggingface.co`, `127.0.0.1` and schema ids are the vendor consoles linked in
+credential-rotation guidance (GitHub, OpenAI, AWS, Stripe…), shown as text and
+never fetched. The secret grep below came back empty for the package.
+
+What it writes: the app's own data directory (shared, see `cli/README.md`)
+and, only when asked (`guard install`, `mcp server install`, `gateway route`,
+`editor install`), the same documents the app writes, with the same backups.
+It never opens the app's Keychain item or evidence vault.
+
 ## Keeping this doc honest
 
 ```sh

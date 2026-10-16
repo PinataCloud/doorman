@@ -18,7 +18,7 @@
 
 import { BrowserWindow, app, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -45,7 +45,6 @@ import {
   guardDir,
   guardHostSummaries,
   installGuard,
-  installedGuardHostIds,
   isGuardInstalled,
   refreshGuardBundle,
   syncGuard,
@@ -54,7 +53,6 @@ import {
   writeArmedSessions,
   writeGuardPolicy,
 } from "./enforcement.js";
-import { HOSTS } from "./guard/hosts/index.js";
 import { McpConfigWatcher } from "./mcp-watch.js";
 import type { McpConfigServer } from "./lib/mcp-inventory.js";
 import { buildMcpInventory, discoveredMcpConfig, mcpConfigPaths } from "./lib/mcp-inventory.js";
@@ -69,7 +67,7 @@ import {
   unrouteServer,
   type ObservedToolState,
 } from "./gateway-install.js";
-import { installMcpServer, mcpServerStatus, uninstallMcpServer } from "./mcp-install.js";
+import { mcpServerStatus, switchMcpAnswers } from "./mcp-install.js";
 import {
   clearEditorStatus,
   editorPresence,
@@ -83,26 +81,23 @@ import { watchEditorIntents } from "./vscode-ext-install.js";
 import { appBundlePath } from "./lib/vscode-ext.js";
 import { DEFAULT_VARIANT, fileLink } from "./lib/vscode.js";
 import { formatTokens } from "./lib/format.js";
-import { classifyDestination, extractHosts } from "./lib/egress-intel.js";
-import { riskProfileFor } from "./lib/mcp-inventory.js";
-import { parsePresence, presenceDir, presencePath, type ApprovalRequest, type ApprovalVia, type PresenceRecord } from "./guard/handshake.js";
-import { scanShadowAi, type ShadowAiState } from "./lib/shadow-ai.js";
+import { parsePresence, presenceDir, presencePath, type ApprovalVia, type PresenceRecord } from "./guard/handshake.js";
+import type { ShadowAiState } from "./lib/shadow-ai.js";
 import { alignRedactedValues } from "./lib/reveal.js";
-import { accountForRow, familyNoun } from "./lib/account.js";
 import { normalizeTraceInput, type TraceReport } from "./lib/secret-trace.js";
 import {
   RULE_STATS_WINDOWS,
   localDetectorLabel,
   mintFindingRow,
-  ruleModeOf,
   summarizeFindings,
-  summarizeRuleStats,
   thingKey,
   type FindingRow,
   type FindingStatus,
   type WindowStats,
 } from "./lib/findings.js";
-import { annotateExposure, createPlaceResolver, exposureKey } from "./lib/exposures.js";
+import { createPlaceResolver, exposureKey } from "./lib/exposures.js";
+import { alertsBySession, alertsByTask, detectionsExportFor, ledgerExportFor, radarRows, ruleStatsWindow, sessionTaskLookup } from "./lib/app-views.js";
+import { shadowAiNow } from "./shadow-ai-now.js";
 import {
   ALL_DETECTORS,
   DEFAULT_MODES,
@@ -131,9 +126,11 @@ import {
 } from "./guard/policy.js";
 import { classifyWalletAddress, WALLET_CHAIN_LABELS, walletAddressHash } from "./guard/wallet-codec.js";
 import { randomBytes } from "node:crypto";
-import { customDetectorLabels, parseCustomRules, validateCustomRule, type CustomRule } from "./guard/custom-rules.js";
-import { RULE_PACK_IDS, packRules } from "./guard/rule-packs.js";
-import { applyPolicyEnv, injectionModelFromEnv, injectionModelSourceFromEnv, policyEnvActive } from "./lib/policy-env.js";
+import { customDetectorLabels, parseCustomRules, validateCustomRule, validateCustomRuleList } from "./guard/custom-rules.js";
+import { RULE_PACK_IDS } from "./guard/rule-packs.js";
+import { injectionModelFromEnv, injectionModelSourceFromEnv, policyEnvActive } from "./lib/policy-env.js";
+import { livePolicy as policyFromPrefs } from "./lib/live-policy.js";
+import { readPrefsFile, writePrefsFile } from "./lib/prefs-file.js";
 import type { SecurityDetectorId } from "./guard/security-detect.js";
 import { describeIntegrity, type GuardIntegrityReport } from "./lib/guard-integrity.js";
 import { buildSecurityReport, renderSecurityReportMarkdown } from "./lib/report.js";
@@ -158,7 +155,7 @@ import {
 } from "./ai-assistant.js";
 import { aggregateGraphs } from "./lib/spend.js";
 import { installAppMenu } from "./menu.js";
-import { scopedIgnoreRulesFor, suppressHeldFindings } from "./lib/approvals.js";
+import { approvalPolicyChange, suppressHeldFindings, withApprovalContext } from "./lib/approvals.js";
 import {
   DigestScheduler,
   notifyApprovalNeeded,
@@ -363,22 +360,13 @@ function publishEditorStatusNow(): void {
 }
 
 /** The `mcp_answers` switch moved (or boot found it on): register the server
- * with every MCP-capable host present, or take our entry back out. Our own
- * server is recognized in the same breath, so the inventory never reports it
- * as an MCP server nobody approved. */
+ * with every MCP-capable host present, or take our entry back out
+ * (mcp-install.ts switchMcpAnswers, which also recognizes our own server). */
 function applyMcpAnswers(enabled: boolean): void {
-  const userData = app.getPath("userData");
-  const home = app.getPath("home");
-  const outcome = enabled ? installMcpServer(userData, home) : uninstallMcpServer(userData, home);
-  if (enabled && outcome.ok) {
-    const current = store.prefs().mcp_recognized ?? [];
-    if (!current.includes("doorman")) {
-      store.setPrefs({
-        mcp_recognized: [...current, "doorman"],
-        mcp_recognized_at: { ...(store.prefs().mcp_recognized_at ?? {}), doorman: new Date().toISOString() },
-      });
-    }
-  }
+  const outcome = switchMcpAnswers(enabled, app.getPath("userData"), app.getPath("home"), {
+    get: () => store.prefs(),
+    set: (patch) => store.setPrefs(patch),
+  });
   mcpServerState = {
     enabled,
     hosts: outcome.hosts,
@@ -526,35 +514,9 @@ function setGuardWanted(on: boolean): { ok: boolean; error?: string } {
   return outcome;
 }
 
+/** The policy the guard enforces, from the current prefs (lib/live-policy.ts). */
 function livePolicy(): GuardPolicy {
-  const prefs = store.prefs();
-  // The model-assisted rules (injection classifier, credential second opinion)
-  // left Settings on 2026-09-05; the environment is their only knob now, laid
-  // over whatever the prefs file still says (lib/policy-env.ts).
-  const policy = applyPolicyEnv(prefs.policy);
-  // The shipped packs the person has on, with their own rules layered over
-  // (an edited copy of a pack rule — same id — replaces the shipped one). One
-  // list reaches the guard; the split is a prefs concern, not a policy one.
-  const own = prefs.policy.custom_rules ?? [];
-  const ownIds = new Set(own.map((r) => r.id));
-  const fromPacks = packRules(prefs.rule_packs_enabled ?? []).filter((r) => !ownIds.has(r.id));
-  const customRules = [...fromPacks, ...own];
-  const withRules: GuardPolicy = customRules.length > 0 ? { ...policy, custom_rules: customRules } : { ...policy, custom_rules: undefined };
-  if (withRules.custom_rules === undefined) delete (withRules as { custom_rules?: unknown }).custom_rules;
-  // Union the person's own recognized MCP servers into the approved list, so
-  // `unknown_mcp_server` has a local opinion. A case-insensitive de-dupe keeps
-  // `GitHub`/`github` one.
-  const recognized = prefs.mcp_recognized ?? [];
-  if (recognized.length === 0) return withRules;
-  const seen = new Set((withRules.approved_mcp_servers ?? []).map((s) => s.toLowerCase()));
-  const merged = [...(withRules.approved_mcp_servers ?? [])];
-  for (const server of recognized) {
-    if (!seen.has(server.toLowerCase())) {
-      seen.add(server.toLowerCase());
-      merged.push(server);
-    }
-  }
-  return { ...withRules, approved_mcp_servers: merged };
+  return policyFromPrefs(store.prefs());
 }
 
 /**
@@ -998,76 +960,9 @@ function securityWeek(days = 7): SecurityWeek {
   };
 }
 
-/** A one-line "where does this go?" note for a held call — the egress
- * destination's class, or an MCP server's risk profile — so the approval card
- * can be an informed decision (idea #9). Display-only, computed from the
- * already-redacted request. Undefined when nothing notable applies. */
-function approvalContextNote(request: ApprovalRequest): string | undefined {
-  const mcp = /^mcp__([^_]+(?:_[^_]+)*?)__/.exec(request.tool_name ?? "");
-  const server = request.server ?? mcp?.[1];
-  if (server) {
-    const risk = riskProfileFor(server);
-    const cls = request.tool_class ? ` · ${request.tool_class} call` : "";
-    if (risk) return `MCP · ${risk.vendor} ${risk.kind}${cls} — ${risk.note}`;
-    if (request.source === "mcp-gateway") return `MCP · ${server}${cls} — no risk profile for this server.`;
-  }
-  const hosts = extractHosts(`${request.target ?? ""}\n${request.preview ?? ""}`);
-  if (hosts.length > 0) {
-    const p = classifyDestination(hosts[0]!);
-    return `Destination: ${hosts[0]} — ${p.label}. ${p.note}`;
-  }
-  return undefined;
-}
-
-function withApprovalContext(requests: readonly ApprovalRequest[]): ApprovalRequest[] {
-  return requests.map((r) => {
-    const note = approvalContextNote(r);
-    return note ? { ...r, context_note: note } : r;
-  });
-}
-
-/** The shadow-AI catalog against this machine's filesystem. Home-relative
- * paths are joined here; absolute ones (app bundles) pass through. */
+/** The shadow-AI catalog against this machine (shadow-ai-now.ts). */
 function runShadowAiScan(): ShadowAiState {
-  const home = homedir();
-  const resolve = (rel: string): string => (rel.startsWith("/") ? rel : join(home, rel));
-  const exists = (rel: string): boolean => {
-    try {
-      return existsSync(resolve(rel));
-    } catch {
-      return false;
-    }
-  };
-  const newestMtimeMs = (rels: string[]): number | undefined => {
-    let newest = 0;
-    for (const rel of rels) {
-      try {
-        const ms = statSync(resolve(rel)).mtimeMs;
-        if (ms > newest) newest = ms;
-      } catch {
-        // absent — skip
-      }
-    }
-    return newest > 0 ? newest : undefined;
-  };
-  return scanShadowAi(
-    exists,
-    newestMtimeMs,
-    Date.now(),
-    // `covered` is computed, not declared: a catalog entry counts as covered
-    // only while the guard is installed into its host.
-    installedGuardHostIds(),
-    // ...and `guardable` is every host the registry has an adapter for, so an
-    // uncovered row can say "one switch away" instead of "unreachable".
-    HOSTS.map((h) => h.id),
-    // `captured` is computed the same way: the transcript sources registered on
-    // this build whose host is on this machine (capture.ts), so a row reads
-    // "Captured" exactly when a parser for it exists and can see something —
-    // plus any app whose sessions one of the RAILS carried instead (ChatGPT
-    // Desktop, over the Codex rollouts its desktop mode writes, which no
-    // descriptor of its own will ever discover).
-    engine ? [...engine.presentSources().map((s) => s.id), ...engine.capturedAppIds()] : [],
-  );
+  return shadowAiNow(homedir(), engine);
 }
 
 /**
@@ -1109,10 +1004,9 @@ function saveRuleSet(prefs: Prefs, name: string): SavedRuleSet[] | undefined {
 
 /**
  * Answer a held call — from the window, the floating panel or a notification.
- * Policy first, verdict second: "allow and stop asking" and "allow for this
- * project" must not race the next tool call in the same session back into a
- * hold. The scoped allow writes dated ignore rules anchored to the call's
- * directory (lib/approvals.ts scopedIgnoreRulesFor).
+ * Policy first, verdict second (lib/approvals.ts approvalPolicyChange): "allow
+ * and stop asking" and "allow for this project" must not race the next tool
+ * call in the same session back into a hold.
  */
 function resolveApproval(
   id: string,
@@ -1120,30 +1014,11 @@ function resolveApproval(
   options: { silence: boolean; scope: "project" | undefined; via: ApprovalVia },
 ): { ok: boolean; silenced: SecurityDetectorId[]; scoped: number } {
   const request = store.snapshot().approvals.find((a) => a.id === id);
-  const silenced =
-    options.silence && request
-      ? request.detectors.filter((d): d is SecurityDetectorId => (ALL_DETECTORS as readonly string[]).includes(d))
-      : [];
-  let scoped = 0;
-  if (request) {
-    const prefs = store.prefs();
-    let policy = prefs.policy;
-    if (silenced.length > 0) {
-      const modes = { ...policy.modes };
-      for (const detector of silenced) modes[detector] = "observe";
-      policy = { ...policy, modes };
-    }
-    if (verdict === "allow" && options.scope === "project") {
-      const rules = scopedIgnoreRulesFor(request, new Date(), ALL_DETECTORS as readonly string[]);
-      if (rules.length > 0) {
-        policy = { ...policy, ignore: [...policy.ignore, ...rules] };
-        scoped = rules.length;
-      }
-    }
-    if (policy !== prefs.policy) {
-      store.setPrefs({ policy });
-      applyGuardSync();
-    }
+  const prefs = store.prefs();
+  const { policy, silenced, scoped } = approvalPolicyChange(prefs.policy, request, verdict, options);
+  if (policy !== prefs.policy) {
+    store.setPrefs({ policy });
+    applyGuardSync();
   }
   const ok = approvals.resolve(id, verdict, {
     silenced: silenced.length > 0 ? silenced : undefined,
@@ -1308,24 +1183,13 @@ function registerProtocol(): void {
 
 // ---- preferences ---------------------------------------------------------------
 
-function prefsPath(): string {
-  return join(app.getPath("userData"), "prefs.json");
-}
-
 function readPrefs(): Partial<Prefs> {
-  try {
-    const raw: unknown = JSON.parse(readFileSync(prefsPath(), "utf8"));
-    if (!raw || typeof raw !== "object") return {};
-    return raw as Partial<Prefs>; // Store.sanitize re-validates every field
-  } catch {
-    return {};
-  }
+  return readPrefsFile(app.getPath("userData"));
 }
 
 function writePrefs(prefs: Prefs): void {
   try {
-    mkdirSync(app.getPath("userData"), { recursive: true });
-    writeFileSync(prefsPath(), `${JSON.stringify(prefs, null, 2)}\n`);
+    writePrefsFile(app.getPath("userData"), prefs);
   } catch (err) {
     console.warn("[doorman] couldn't write prefs:", err);
   }
@@ -1433,33 +1297,6 @@ function remindUpdateReady(reason: "open" | "focus" | "ready"): void {
 // ---- state recompute ------------------------------------------------------------
 
 let recomputeTimer: NodeJS.Timeout | undefined;
-
-/**
- * Open findings grouped by the use-case of the session they fired in, most
- * alerts first. Findings with no session (or a session older than the turn
- * retention window, so its class is unknowable) fold into "other" rather than
- * being dropped — a finding that cannot be attributed is still a finding.
- */
-function alertsByTask(
-  findings: Iterable<FindingRow>,
-  taskOf: (sessionId: string) => string | undefined,
-): { task: string; alerts: number; sessions: number }[] {
-  const alerts = new Map<string, number>();
-  const sessions = new Map<string, Set<string>>();
-  for (const finding of findings) {
-    if (finding.status !== "open") continue;
-    const task = (finding.session_id ? taskOf(finding.session_id) : undefined) ?? "other";
-    alerts.set(task, (alerts.get(task) ?? 0) + 1);
-    if (finding.session_id) {
-      let set = sessions.get(task);
-      if (!set) sessions.set(task, (set = new Set()));
-      set.add(finding.session_id);
-    }
-  }
-  return [...alerts.entries()]
-    .map(([task, count]) => ({ task, alerts: count, sessions: sessions.get(task)?.size ?? 0 }))
-    .sort((a, b) => b.alerts - a.alerts || a.task.localeCompare(b.task));
-}
 
 /** Fold the engine's maps into the next snapshot. Debounced: a live session
  * appends constantly, and the fold walks every turn. */
@@ -1640,37 +1477,14 @@ function recompute(): void {
   const findings = engine.shownFindings().sort((a, b) =>
     a.last_seen_at < b.last_seen_at ? 1 : a.last_seen_at > b.last_seen_at ? -1 : 0,
   );
-  // Open-finding counts per session, so a ledger row can say "· 2 alerts".
-  const alertsBySession = new Map<string, number>();
-  for (const row of findings) {
-    if (row.status !== "open" || !row.session_id) continue;
-    alertsBySession.set(row.session_id, (alertsBySession.get(row.session_id) ?? 0) + 1);
-  }
+  const alertCounts = alertsBySession(findings);
   const turns = [...engine.turns.values()];
   const now = new Date();
   const labels = customLabels();
   const ruleStats: Partial<Record<(typeof RULE_STATS_WINDOWS)[number], WindowStats>> = {};
-  for (const days of RULE_STATS_WINDOWS) {
-    const stats = summarizeRuleStats(engine.shownFindings(), days, now, labels);
-    /* The denominators that turn "17 sessions had a finding" into "a third of
-       the sessions that ran did". Counted off the session store rather than
-       `sessions_total`, which is every session ever KEPT — retention prunes
-       sessions while their findings live on, so that denominator can shrink
-       below its own numerator. A session counts for the window it ENDED in. */
-    const cutoff = new Date(now.getTime() - days * 86_400_000).toISOString();
-    const prevCutoff = new Date(now.getTime() - 2 * days * 86_400_000).toISOString();
-    let ran = 0;
-    let ranBefore = 0;
-    for (const s of sessions) {
-      if (s.ended_at >= cutoff) ran += 1;
-      else if (s.ended_at >= prevCutoff) ranBefore += 1;
-    }
-    ruleStats[days] = { ...stats, window_sessions: ran, prev_window_sessions: ranBefore };
-  }
+  for (const days of RULE_STATS_WINDOWS) ruleStats[days] = ruleStatsWindow(engine.shownFindings(), sessions, days, now, labels);
   // Session → use-case, so the spend graphs can split cost by task type.
-  const sessionTask = new Map<string, string>();
-  for (const s of sessions) if (s.task) sessionTask.set(s.id, s.task);
-  const taskOf = (id: string): string | undefined => sessionTask.get(id);
+  const taskOf = sessionTaskLookup(sessions);
   // Per-rail totals, keyed by TurnSource. The rail LIST comes from the engine's
   // registry (the two native rails plus every registered transcript source), so
   // a newly registered host gets a row here the moment it is registered — and a
@@ -1715,7 +1529,7 @@ function recompute(): void {
     const resume = resumeCommand(s.source, s.id);
     return {
       ...s,
-      alerts: alertsBySession.get(s.id) ?? 0,
+      alerts: alertCounts.get(s.id) ?? 0,
       ...(resume === undefined ? {} : { resume_command: resume }),
     };
   });
@@ -1749,31 +1563,8 @@ function recompute(): void {
       summary: summarizeFindings(engine.shownFindings(), { hide_confidence: hiddenConfidenceBands(store.prefs()) }),
       // Stamped with the exposure (rule × place) each row belongs to, resolved
       // over EVERY stored row so the renderer groups on the same key main
-      // counted with — lib/exposures.ts.
-      findings: (() => {
-        const places = createPlaceResolver(findings, { home: app.getPath("home") });
-        // A row minted before accounts existed, or by the guard's spool at hold
-        // time, gets a THIN account from its own fields here (lib/account.ts)
-        // so its card is still titled by the exposure, not the rule. Not
-        // stored: the next transcript scan writes the full one.
-        return findings.slice(0, SNAPSHOT_FINDINGS).map((row) => {
-          const thin = row.account === undefined ? accountForRow(row) : undefined;
-          // A stored account's family WORD is re-derived from its label on the
-          // way out, so a row written by an older build (whose words differed,
-          // or which kept a raw token) reads with today's spelling — the
-          // label is the fact, the word is presentation.
-          const account = thin ?? row.account;
-          const refreshed =
-            account === undefined
-              ? undefined
-              : (() => {
-                  const { family_noun: _stale, ...rest } = account;
-                  const noun = familyNoun(account.credential_family);
-                  return noun === undefined ? rest : { ...rest, family_noun: noun };
-                })();
-          return annotateExposure(refreshed === undefined ? row : { ...row, account: refreshed }, places);
-        });
-      })(),
+      // counted with — lib/exposures.ts, via lib/app-views.ts radarRows.
+      findings: radarRows(findings, app.getPath("home"), SNAPSHOT_FINDINGS),
       alerts_by_task: alertsByTask(engine.shownFindings(), taskOf),
       guard_installed: isGuardInstalled(),
       // One row per REGISTERED host (guard/hosts/index.ts): the Settings card
@@ -2330,24 +2121,9 @@ function registerIpc(): void {
     return { ok: true, ignore };
   });
   ipcMain.handle("rules:custom-set", (_e, raw: unknown) => {
-    if (!Array.isArray(raw)) return { ok: false, problems: [{ field: "rules", message: "expected a list" }] };
-    const problems: unknown[] = [];
-    const rules: CustomRule[] = [];
-    const seen = new Set<string>();
-    for (const item of raw) {
-      const result = validateCustomRule(item);
-      if (!result.ok) {
-        problems.push(...result.problems);
-        continue;
-      }
-      if (seen.has(result.rule.id)) {
-        problems.push({ id: result.rule.id, field: "id", message: "duplicate id" });
-        continue;
-      }
-      seen.add(result.rule.id);
-      rules.push(result.rule);
-    }
-    if (problems.length > 0) return { ok: false, problems };
+    const result = validateCustomRuleList(raw);
+    if (!result.ok) return { ok: false, problems: result.problems };
+    const rules = result.rules;
     const prefs = store.prefs();
     const policy: GuardPolicy = { ...prefs.policy };
     if (rules.length > 0) policy.custom_rules = parseCustomRules(rules);
@@ -2424,16 +2200,7 @@ function registerIpc(): void {
   // (lib/detection-schema.ts). Masked like the report: fingerprints
   // stand in for values, and the evidence vault is never read here.
   ipcMain.handle("radar:export-detections", async () => {
-    const policy = livePolicy();
-    const labels = customDetectorLabels(policy.custom_rules ?? []);
-    const bundle = buildDetectionsExport({
-      rows: engine.shownFindings(),
-      app_version: app.getVersion(),
-      generated_at: new Date(),
-      labelOf: (id) => localDetectorLabel(id, labels),
-      modeOf: (id) => ruleModeOf(id, policy),
-    });
-    const problems = validateDetectionsExport(bundle);
+    const { bundle, problems } = detectionsExportFor(engine, livePolicy(), app.getVersion(), new Date());
     if (problems.length > 0) {
       // Written anyway — the person asked for their data — but flagged, since
       // a consumer validating against the published schema will refuse it.
@@ -2458,29 +2225,10 @@ function registerIpc(): void {
   // every session, or one, with its turns — text redacted, removed values as
   // the same fingerprints the detections carry.
   ipcMain.handle("ledger:export", async (_e, sessionId: unknown) => {
-    const all = engine.sessions();
-    const sessions = typeof sessionId === "string" && sessionId !== "" ? all.filter((s) => s.id === sessionId) : all;
-    if (sessions.length === 0) return { ok: false, error: "No sessions to export." };
-    // Grouped once: per-session scans of the whole store and the whole ledger
-    // made the export quadratic in sessions.
-    const turns = engine.turnsBySession();
-    const detections = new Map<string, string[]>();
-    for (const f of engine.shownFindings()) {
-      if (!f.session_id) continue;
-      const list = detections.get(f.session_id);
-      if (list) list.push(f.finding_id);
-      else detections.set(f.session_id, [f.finding_id]);
-    }
-    const bundle = buildLedgerExport({
-      sessions,
-      turnsOf: (id) => turns.get(id) ?? [],
-      detectionIdsOf: (id) => detections.get(id) ?? [],
-      mask: maskTurnText,
-      fingerprintsOf: (raw, masked) => engine.fingerprintsOf(raw, masked),
-      app_version: app.getVersion(),
-      generated_at: new Date(),
-    });
-    const problems = validateLedgerExport(bundle);
+    const built = ledgerExportFor(engine, typeof sessionId === "string" ? sessionId : undefined, app.getVersion(), new Date());
+    if (!built) return { ok: false, error: "No sessions to export." };
+    const { bundle, problems } = built;
+    const sessions = bundle.sessions;
     if (problems.length > 0) {
       console.warn(
         `[doorman] ledger export breaks its schema: ${problems.slice(0, 5).map((p) => `${p.path} ${p.message}`).join("; ")}`,

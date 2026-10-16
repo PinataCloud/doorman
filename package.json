@@ -18,6 +18,8 @@
     "build": "npm run compile && npm run icons && npm run renderer:min && electron-builder --mac",
     "build:linux": "npm run compile && npm run icons && npm run renderer:min && electron-builder --linux",
     "build:win": "npm run compile && npm run icons && npm run renderer:min && electron-builder --win",
+    "cli": "node build/main/cli/index.js",
+    "cli:package": "npm run compile && node scripts/build-cli-package.mjs",
     "renderer:min": "node scripts/build-renderer.mjs",
     "runtime": "node scripts/stage-runtime.mjs",
     "vsix": "node scripts/build-vsix.mjs",

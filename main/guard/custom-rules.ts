@@ -236,6 +236,30 @@ export function parseCustomRules(raw: unknown): CustomRule[] {
   return out;
 }
 
+/** Validate the whole list the person is saving (the Rules editor, `doorman
+ * custom-rules`): every problem is reported, a duplicate id is a problem
+ * rather than silently dropped, and nothing is kept unless all of it is good. */
+export function validateCustomRuleList(raw: unknown): { ok: true; rules: CustomRule[] } | { ok: false; problems: CustomRuleProblem[] } {
+  if (!Array.isArray(raw)) return { ok: false, problems: [{ field: "rules", message: "expected a list" }] };
+  const problems: CustomRuleProblem[] = [];
+  const rules: CustomRule[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const result = validateCustomRule(item);
+    if (!result.ok) {
+      problems.push(...result.problems);
+      continue;
+    }
+    if (seen.has(result.rule.id)) {
+      problems.push({ id: result.rule.id, field: "id", message: "duplicate id" });
+      continue;
+    }
+    seen.add(result.rule.id);
+    rules.push(result.rule);
+  }
+  return problems.length > 0 ? { ok: false, problems } : { ok: true, rules };
+}
+
 /** What the guard knows about one call, shaped for matching. */
 export interface CustomRuleInput {
   tool_name?: string;

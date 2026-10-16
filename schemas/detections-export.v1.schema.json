@@ -475,6 +475,7 @@
             "window",
             "notification",
             "editor",
+            "terminal",
             "timeout",
             "app-absent"
           ],
