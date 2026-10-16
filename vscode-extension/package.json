@@ -4,7 +4,7 @@
   "publisher": "pinata",
   "version": "0.0.0",
   "description": "Agent token usage, Security Guard state and held tool calls from the Doorman desktop app, in the editor.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "private": true,
   "icon": "icon.png",
   "galleryBanner": { "color": "#0D1F4E", "theme": "dark" },

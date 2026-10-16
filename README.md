@@ -318,3 +318,14 @@ from the app icon on every build.
 ABC Diatype (Variable, Mono and Extended) is a commercial typeface that is
 currently included and shipped inside the app. Its licence for this product
 needs to be confirmed before any build is distributed.
+
+## License
+
+Doorman is licensed under the [Apache License, Version 2.0](LICENSE).
+Copyright 2026 Pinata Technologies Inc. See [NOTICE](NOTICE) for attribution
+and the third-party code and assets in this repository.
+
+The licence covers the code, not the "Doorman" or "Pinata" names and logos.
+The model weights the app downloads ([Llama-Doorman-22M](https://huggingface.co/PinataCloud/Llama-Doorman-22M)
+and stock Llama Prompt Guard 2) are not part of this repository and are
+licensed separately under the Llama 4 Community License. Built with Llama.

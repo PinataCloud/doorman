@@ -41,8 +41,8 @@ Doorman.app/Contents/
 
 Inside `app.asar`:
 
-- `package.json` — name, version, description, author, the two runtime
-  dependencies. No scripts or dev dependencies.
+- `package.json` — name, version, description, author, licence
+  (`Apache-2.0`), the two runtime dependencies. No scripts or dev dependencies.
 - `build/main/**` — the compiled main process, guard bundle, MCP server and
   gateway. Compiled with `removeComments`, so no source commentary ships.
 - `renderer/` — `index.html`, `app.css`, `tokens.css` and one precompiled,
@@ -100,6 +100,9 @@ file it changes.
 | Test files and fixtures | not in `files` |
 
 ## Licensing — everything redistributed
+
+**Doorman itself** is Apache-2.0 (`LICENSE` and `NOTICE` at the repo root),
+copyright Pinata Technologies Inc.
 
 **npm runtime dependencies** (in `app.asar/node_modules`):
 

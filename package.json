@@ -7,7 +7,7 @@
   "main": "build/main/index.js",
   "desktopName": "cloud.pinata.doorman.desktop",
   "author": "Pinata",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "scripts": {
     "brand": "node scripts/brand-dev-shell.mjs",
     "compile": "npm run clean && npm run icons && npm run brand && npm run runtime && npm run vsix && tsc -p tsconfig.json",
