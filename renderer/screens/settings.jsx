@@ -323,6 +323,27 @@ function SettingsScreen({ state, onGoRules }) {
         ) : null}
       </Card>
 
+      <Card title="Appearance">
+        <div className="setting">
+          <div className="what">
+            <div className="t">Theme</div>
+            <div className="d">Auto follows {os}'s light or dark setting and switches with it.</div>
+          </div>
+          {/* `|| "auto"` matches defaultPrefs: a prefs file from before this
+              setting existed follows the OS. */}
+          <Segmented
+            ariaLabel="Theme"
+            value={prefs.appearance || "auto"}
+            options={[
+              { key: "light", label: "Light" },
+              { key: "dark", label: "Dark" },
+              { key: "auto", label: "Auto" },
+            ]}
+            onPick={(v) => setPref({ appearance: v })}
+          />
+        </div>
+      </Card>
+
       <Card title="Menu bar">
         <div className="setting">
           <div className="what">

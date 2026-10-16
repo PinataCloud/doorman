@@ -187,6 +187,14 @@ const WINDOW_HEIGHT = 780;
 const WINDOW_MIN_WIDTH = 960;
 const WINDOW_MIN_HEIGHT = 620;
 
+/** Settings → Appearance onto Electron's theme switch. `system` follows the OS. */
+const THEME_SOURCE = { auto: "system", light: "light", dark: "dark" } as const;
+/** The page canvas of the theme in force (tokens.css --linen, light and dark),
+ * so a window never flashes the other theme's colour while it paints. */
+function windowCanvas(): string {
+  return nativeTheme.shouldUseDarkColors ? "#12001F" : "#FFFFFF";
+}
+
 /** How many rows cross the IPC bridge in a snapshot — the full sets never do. */
 const SNAPSHOT_SESSIONS = 100;
 /** The last secret trace's masked report — the assistant's `trace` subject.
@@ -1340,9 +1348,8 @@ function createWindow(): BrowserWindow {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 14 },
     // Opaque: the sidebar is solid plum, so vibrancy would only show through
-    // during load as a mismatched blur. The page canvas of the OS theme
-    // (tokens.css --linen), so the window does not flash white before a dark page.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#12001F" : "#FFFFFF",
+    // during load as a mismatched blur.
+    backgroundColor: windowCanvas(),
     webPreferences: {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -2505,6 +2512,8 @@ function registerIpc(): void {
       applyGuardSync();
     }
     if (next.mcp_answers !== before.mcp_answers) applyMcpAnswers(next.mcp_answers === true);
+    // nativeTheme's "updated" (wired at boot) repaints the window canvas.
+    if (next.appearance !== before.appearance) nativeTheme.themeSource = THEME_SOURCE[next.appearance];
     if (next.vscode_extension !== before.vscode_extension) applyEditorExtension(next.vscode_extension === true);
     digests.start(); // reschedule against the new prefs
     // The AI status is derived from prefs + credentials — re-fold it.
@@ -2739,6 +2748,13 @@ if (!app.requestSingleInstanceLock()) {
       readPrefs,
       writePrefs,
       onChange: broadcast,
+    });
+    // Before any window exists, so the first paint is already in the chosen theme.
+    nativeTheme.themeSource = THEME_SOURCE[store.prefs().appearance];
+    // A pinned theme or the OS (under `auto`) switching: keep the window's own
+    // canvas on the theme in force, or a resize edge flashes the other one.
+    nativeTheme.on("updated", () => {
+      if (window && !window.isDestroyed()) window.setBackgroundColor(windowCanvas());
     });
     // A refused banner is a UI fact, not just a log line: the approval flow
     // leans on notifications, so the person has to know they aren't arriving.

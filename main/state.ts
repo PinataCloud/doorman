@@ -67,6 +67,9 @@ export type NotifyThreshold = "off" | "critical" | "high" | "medium";
 /** What the menu-bar title shows beside the glyph. */
 export type TrayDisplay = "spend" | "alerts" | "none";
 
+/** The window theme: the OS setting (`auto`), or pinned light or dark. */
+export type Appearance = "auto" | "light" | "dark";
+
 /** How often a digest lands: 09:00 every day, or Monday 09:00. The two
  * digests carry one each, so a person can have security daily and spend
  * weekly. */
@@ -149,6 +152,11 @@ export interface Prefs {
   reopen_after_update?: boolean;
   /** Menu-bar title: today's spend, open exposures to review, or glyph only. */
   tray_display: TrayDisplay;
+  /** Light, dark, or `auto` (follow the OS). Drives Electron's
+   * `nativeTheme.themeSource`, which every window's prefers-color-scheme —
+   * and so tokens.css's dark set — follows, along with native menus and
+   * dialogs. */
+  appearance: Appearance;
   /** The enforcement policy — also written to the guard's policy.json. */
   policy: GuardPolicy;
   /**
@@ -302,6 +310,7 @@ export function defaultPrefs(): Prefs {
     // and a running dollar figure there is not something to opt INTO by
     // default. Both numbers are one click away in the menu.
     tray_display: "none",
+    appearance: "auto",
     policy: defaultPolicy(),
     guard_wanted: false,
     rule_packs_enabled: defaultEnabledPacks(),
@@ -795,6 +804,7 @@ function sanitizePrefs(raw: LegacyPrefs): Prefs {
   ) {
     base.tray_display = raw.tray_display;
   }
+  if (raw.appearance === "auto" || raw.appearance === "light" || raw.appearance === "dark") base.appearance = raw.appearance;
   if (typeof raw.guard_wanted === "boolean") base.guard_wanted = raw.guard_wanted;
   // Tri-state on purpose (see the field): absent is not the same as false, so
   // this only ever copies a value the file actually carries.
