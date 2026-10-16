@@ -16,7 +16,7 @@
  * because Chromium refuses cross-origin font loads on non-http schemes.
  */
 
-import { BrowserWindow, app, dialog, ipcMain, nativeImage, net, protocol, safeStorage, shell } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, safeStorage, shell } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
@@ -1339,9 +1339,10 @@ function createWindow(): BrowserWindow {
     show: false,
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 14 },
-    // Opaque: the sidebar is solid navy, so vibrancy would only show through
-    // during load as a mismatched blur.
-    backgroundColor: "#F0E8D5",
+    // Opaque: the sidebar is solid plum, so vibrancy would only show through
+    // during load as a mismatched blur. The page canvas of the OS theme
+    // (tokens.css --linen), so the window does not flash white before a dark page.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#12001F" : "#FFFFFF",
     webPreferences: {
       preload: join(__dirname, "preload.js"),
       contextIsolation: true,
