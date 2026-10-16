@@ -79,3 +79,40 @@ describe("applyPolicyEnv", () => {
     expect(out.injection_classifier).toBe(stored.injection_classifier);
   });
 });
+
+describe("the injection model from the environment", () => {
+  it("DOORMAN_INJECTION_CLASSIFIER_MODEL wins over the stored choice either way; junk is no opinion", async () => {
+    const { INJECTION_MODEL_ENV, injectionModelFromEnv } = await import("../main/lib/policy-env.js");
+    const { selectedInjectionModel } = await import("../main/guard/policy.js");
+    expect(INJECTION_MODEL_ENV).toBe("DOORMAN_INJECTION_CLASSIFIER_MODEL");
+    // Nothing stored, nothing in the environment: the default, doorman-1.
+    expect(selectedInjectionModel(applyPolicyEnv(base(), {}).injection_classifier)).toBe("doorman-1");
+    // `stock` from the environment beats the default, and is the one value written down.
+    expect(applyPolicyEnv(base(), { DOORMAN_INJECTION_CLASSIFIER_MODEL: " STOCK " }).injection_classifier).toEqual({
+      enabled: true,
+      suppress_below: 0.2, // the threshold does not move with the model
+      model: "stock",
+    });
+    // `doorman-1` from the environment beats a stored stock choice (back to the absent key).
+    const stored = { ...base(), injection_classifier: { ...defaultInjectionClassifierConfig(), model: "stock" as const } };
+    expect(applyPolicyEnv(stored, { DOORMAN_INJECTION_CLASSIFIER_MODEL: "doorman-1" }).injection_classifier).toEqual(defaultInjectionClassifierConfig());
+    expect(selectedInjectionModel(applyPolicyEnv(stored, { DOORMAN_INJECTION_CLASSIFIER_MODEL: "doorman-1" }).injection_classifier)).toBe("doorman-1");
+    // Unset, empty or junk: the stored choice stands, untouched.
+    const policy = base();
+    expect(applyPolicyEnv(policy, { DOORMAN_INJECTION_CLASSIFIER_MODEL: "gpt-9" })).toBe(policy);
+    expect(applyPolicyEnv(stored, { DOORMAN_INJECTION_CLASSIFIER_MODEL: "" }).injection_classifier?.model).toBe("stock");
+    // What Settings reads to make the dropdown read-only.
+    expect(injectionModelFromEnv({ DOORMAN_INJECTION_CLASSIFIER_MODEL: "doorman-1" })).toBe("doorman-1");
+    expect(injectionModelFromEnv({ DOORMAN_INJECTION_CLASSIFIER_MODEL: "nope" })).toBeUndefined();
+    expect(injectionModelFromEnv({})).toBeUndefined();
+  });
+
+  it("choosing a model does not lock the on/off switch, and the source is read verbatim", async () => {
+    const { injectionModelSourceFromEnv, POLICY_ENV_VARS } = await import("../main/lib/policy-env.js");
+    expect(POLICY_ENV_VARS).not.toContain("DOORMAN_INJECTION_CLASSIFIER_MODEL");
+    expect(policyEnvActive({ DOORMAN_INJECTION_CLASSIFIER_MODEL: "stock", DOORMAN_INJECTION_CLASSIFIER_SOURCE: "/opt/m" })).toBe(false);
+    expect(injectionModelSourceFromEnv({})).toBeUndefined();
+    expect(injectionModelSourceFromEnv({ DOORMAN_INJECTION_CLASSIFIER_SOURCE: "  " })).toBeUndefined();
+    expect(injectionModelSourceFromEnv({ DOORMAN_INJECTION_CLASSIFIER_SOURCE: " /opt/models/doorman-1 " })).toBe("/opt/models/doorman-1");
+  });
+});

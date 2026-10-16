@@ -60,8 +60,13 @@ import { existsSync, readFileSync } from "node:fs";
 import type { FindingAssist } from "./findings.js";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { focusCrops, focusTarget } from "./injection-focus.js";
+import type { ModelManifest } from "./model-assets.js";
 export type { InjectionClassifierConfig } from "../guard/policy.js";
 import type { InjectionClassifierConfig } from "../guard/policy.js";
+
+/** How a model reads a tool output — the manifest's `windowing`. */
+export type ModelWindowing = ModelManifest["windowing"];
 
 export const INJECTION_CLASSIFIER_DEFAULT_MODEL = "Llama-Prompt-Guard-2-22M";
 
@@ -112,6 +117,10 @@ export interface InjectionClassifierDeps {
   modelDir?: string;
   model?: string;
   log?: (message: string) => void;
+  /** The selected model's windowing (default `prefix`). A `focus` model gets
+   * the text UNTRIMMED: its crops sit on the regex's offsets, which index the
+   * text exactly as the detector read it. */
+  windowing?: ModelWindowing;
 }
 
 /** The minimal surface a loaded pipeline must offer — one text in, scores out.
@@ -142,7 +151,7 @@ export async function loadInjectionClassifier(
       const trimmed = text.trim();
       if (trimmed === "") return null;
       try {
-        const out = await runner(trimmed);
+        const out = await runner(deps.windowing === "focus" ? text : trimmed);
         if (out === null || out.length === 0) return null; // the runner declined to judge
         const malicious = out.find((r) => MALICIOUS_LABELS.has(r.label.toLowerCase()));
         // A model that names only the benign class still tells us P(malicious).
@@ -206,8 +215,13 @@ export function classifierWindows(ids: readonly number[]): number[][] | null {
  * the standalone `@huggingface/tokenizers` for the DeBERTa tokenizer. No native
  * code, so nothing here needs a Team-ID signature to load, which is what lets
  * the model arrive after install. Returns `null` when either half is missing.
+ *
+ * `windowing` is the model's (its manifest's): `prefix` reads the first
+ * MAX_WINDOWS windows (classifierWindows); `focus` reads one crop per regex hit
+ * region (lib/injection-focus.ts), each trimmed and encoded as its own
+ * `[CLS] … [SEP]` text — exactly what the model was calibrated on.
  */
-export async function wasmPipeline(runtimeDir: string, modelDir: string): Promise<InjectionRunner | null> {
+export async function wasmPipeline(runtimeDir: string, modelDir: string, windowing: ModelWindowing = "prefix"): Promise<InjectionRunner | null> {
   const modelFile = join(modelDir, "model.quant.onnx");
   if (!runtimePresent(runtimeDir) || !existsSync(modelFile)) return null;
   // A REAL dynamic import: with `module: CommonJS` TypeScript would otherwise
@@ -238,11 +252,8 @@ export async function wasmPipeline(runtimeDir: string, modelDir: string): Promis
     const sum = exps.reduce((a, b) => a + b, 0);
     return exps.map((x) => x / sum);
   };
-  return async (text: string) => {
-    // Too long to read in full → no verdict. Never a benign guess over a prefix.
-    const windows = classifierWindows(tokenizer.encode(text).ids);
-    if (windows === null) return null;
-    let best: number[] | undefined;
+  /** The most malicious of `windows`' probabilities, or `best` if none beats it. */
+  const readWindows = async (windows: readonly number[][], best: number[] | undefined): Promise<number[] | undefined> => {
     for (const windowIds of windows) {
       // Unpadded, so every position is real text.
       const windowMask = windowIds.map(() => 1);
@@ -256,8 +267,31 @@ export async function wasmPipeline(runtimeDir: string, modelDir: string): Promis
       // Most malicious window wins: an attack buried in page 3 is still an attack.
       if (!best || (probs[1] ?? 0) > (best[1] ?? 0)) best = probs;
     }
-    const probs = best ?? [1, 0];
-    return Object.entries(id2label).map(([index, label]) => ({ label, score: probs[Number(index)] ?? 0 }));
+    return best;
+  };
+  const labelled = (probs: number[]) => Object.entries(id2label).map(([index, label]) => ({ label, score: probs[Number(index)] ?? 0 }));
+  if (windowing === "focus") {
+    return async (text: string) => {
+      const target = focusTarget(text);
+      const crops = focusCrops(target.text, target.offsets, (s) => tokenizer.encode(s, { add_special_tokens: false }).ids.length);
+      let best: number[] | undefined;
+      for (const crop of crops) {
+        const trimmed = crop.trim();
+        if (trimmed === "") continue;
+        // A crop is ≤ FOCUS_BUDGET tokens unless its one hit line alone is
+        // longer; one too long to read in full is skipped, never guessed over.
+        const windows = classifierWindows(tokenizer.encode(trimmed).ids);
+        if (windows !== null) best = await readWindows(windows, best);
+      }
+      // No crop read → no verdict: the detector stands.
+      return best ? labelled(best) : null;
+    };
+  }
+  return async (text: string) => {
+    // Too long to read in full → no verdict. Never a benign guess over a prefix.
+    const windows = classifierWindows(tokenizer.encode(text).ids);
+    if (windows === null) return null;
+    return labelled((await readWindows(windows, undefined)) ?? [1, 0]);
   };
 }
 
@@ -275,4 +309,4 @@ interface OrtModule {
 type TokenizerCtor = new (
   tokenizerJson: unknown,
   tokenizerConfig: unknown,
-) => { encode(text: string): { ids: number[]; attention_mask?: number[] } };
+) => { encode(text: string, options?: { add_special_tokens?: boolean }): { ids: number[]; attention_mask?: number[] } };

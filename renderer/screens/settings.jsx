@@ -587,16 +587,20 @@ function RulesCard({ state, onGoRules }) {
       </div>
 
       {/* AI-delivered protection: the local model that re-reads what the rules
-          catch (Prompt Guard 2 — lib/injection-classifier.ts). It ran env-only
-          after Settings lost its model rows (2026-09-05); back as ONE switch,
-          default on, because the fact a reader needs is the privacy one: the
-          model runs in this app's process and nothing it reads leaves the Mac.
+          catch (lib/injection-classifier.ts). One switch, default on, because
+          the fact a reader needs is the privacy one: the model runs in this
+          app's process and nothing it reads leaves the Mac. Beside it, WHICH
+          model: Doorman's fine-tuned one (the default) or stock Prompt Guard 2.
+          The row always names the model that actually RUNS — while the
+          fine-tuned one has no download yet, that is stock, and it says so.
           The environment overrides (policy-env.ts) still win when set, and the
-          row says so rather than showing a switch that changes nothing. */}
+          row says so rather than showing a control that changes nothing. */}
       {(() => {
         const assist = state.model_assist || {};
         const ic = assist.injection_classifier || {};
         const envSet = !!assist.env;
+        const choice = ic.model_choice || {};
+        const modelNote = injectionModelNote(choice);
         const mb = (n) => Math.max(1, Math.round((n || 0) / 1048576));
         // The model's own line: what is on disk, against the build the app
         // pins. "Up to date" is exactly "every pinned file present" — a newer
@@ -624,6 +628,11 @@ function RulesCard({ state, onGoRules }) {
                 Mac — nothing it reads leaves the machine. {status}
                 {envSet ? " Set by the environment (DOORMAN_INJECTION_CLASSIFIER) — the switch is read-only." : ""}
               </div>
+              {modelNote ? (
+                <div className="d injection-model-note" style={{ marginTop: "var(--s2)" }}>
+                  {modelNote}
+                </div>
+              ) : null}
               {/* No "Built with Llama" line here (2026-09-06). The Llama
                   license's attribution is carried where the model is actually
                   named — the Guardrails screen's classifier row — and shipped
@@ -656,12 +665,25 @@ function RulesCard({ state, onGoRules }) {
                 </div>
               ) : null}
             </div>
-            <Switch
-              ariaLabel="AI-delivered protection"
-              on={ic.enabled !== false}
-              disabled={envSet}
-              onChange={(v) => window.doorman.setInjectionClassifier({ enabled: v })}
-            />
+            <div className="row hold-controls">
+              <select
+                aria-label="Injection model"
+                title={choice.env ? "Set by DOORMAN_INJECTION_CLASSIFIER_MODEL" : "Which on-device model re-reads flagged tool results"}
+                disabled={!!choice.env || ic.enabled === false}
+                value={choice.selected || "doorman-1"}
+                onChange={(e) => window.doorman.setInjectionClassifier({ model: e.target.value })}
+              >
+                {INJECTION_MODEL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <Switch
+                ariaLabel="AI-delivered protection"
+                on={ic.enabled !== false}
+                disabled={envSet}
+                onChange={(v) => window.doorman.setInjectionClassifier({ enabled: v })}
+              />
+            </div>
           </div>
         );
       })()}

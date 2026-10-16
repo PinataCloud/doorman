@@ -59,7 +59,8 @@ import { McpConfigWatcher } from "./mcp-watch.js";
 import type { McpConfigServer } from "./lib/mcp-inventory.js";
 import { buildMcpInventory, discoveredMcpConfig, mcpConfigPaths } from "./lib/mcp-inventory.js";
 import { INJECTION_CLASSIFIER_LABEL, loadInjectionClassifier, runtimePresent, wasmPipeline, type InjectionClassifier } from "./lib/injection-classifier.js";
-import { PROMPT_GUARD_2_22M, downloadModel, modelDir, modelStatus, removeModel, type DownloadProgress } from "./lib/model-assets.js";
+import { PROMPT_GUARD_2_22M, PROMPT_GUARD_2_22M_DOORMAN_1, downloadModel, injectionModelManifest, modelDir, modelStatus, removeModel, reverifyModel, type DownloadProgress, type ModelManifest } from "./lib/model-assets.js";
+import { doormanModelSource, fetchInjectionModels, injectionModelsMissing, planInjectionModel, type InjectionModelFetchDeps, type InjectionModelPlan } from "./lib/injection-model-choice.js";
 import {
   ObservedWatcher,
   refreshGatewayBundle,
@@ -123,6 +124,7 @@ import {
   normalizeSecondOpinion,
   defaultInjectionClassifierConfig,
   normalizeInjectionClassifierConfig,
+  selectedInjectionModel,
   defaultWallets,
   normalizeWallets,
   OWN_WALLETS_MAX,
@@ -131,7 +133,7 @@ import { classifyWalletAddress, WALLET_CHAIN_LABELS, walletAddressHash } from ".
 import { randomBytes } from "node:crypto";
 import { customDetectorLabels, parseCustomRules, validateCustomRule, type CustomRule } from "./guard/custom-rules.js";
 import { RULE_PACK_IDS, packRules } from "./guard/rule-packs.js";
-import { applyPolicyEnv, policyEnvActive } from "./lib/policy-env.js";
+import { applyPolicyEnv, injectionModelFromEnv, injectionModelSourceFromEnv, policyEnvActive } from "./lib/policy-env.js";
 import type { SecurityDetectorId } from "./guard/security-detect.js";
 import { describeIntegrity, type GuardIntegrityReport } from "./lib/guard-integrity.js";
 import { buildSecurityReport, renderSecurityReportMarkdown } from "./lib/report.js";
@@ -591,24 +593,68 @@ function runtimeRoot(): string {
 function modelsRoot(): string {
   return join(app.getPath("userData"), "models");
 }
+/** The selected model, the one that actually runs, and why they differ —
+ * lib/injection-model-choice.ts. Selected: the policy's
+ * `injection_classifier.model` (DOORMAN_INJECTION_CLASSIFIER_MODEL laid over
+ * it), absent = doorman-1. Effective: doorman-1 once installed, stock in its
+ * place until then — never "no model" for want of a download location. */
+function injectionModelPlan(): InjectionModelPlan {
+  return planInjectionModel({
+    selected: selectedInjectionModel(livePolicy().injection_classifier),
+    installed: (model) => modelStatus(modelsRoot(), injectionModelManifest(model)).present,
+    doormanSource: doormanSource(),
+    ...(modelDownloadErrors.has(PROMPT_GUARD_2_22M_DOORMAN_1.name) ? { doormanError: modelDownloadErrors.get(PROMPT_GUARD_2_22M_DOORMAN_1.name)! } : {}),
+  });
+}
+/** Where doorman-1 is fetched from: DOORMAN_INJECTION_CLASSIFIER_SOURCE, else
+ * DOORMAN_MODEL_BASE_URL (lib/model-sources.ts); undefined = nowhere yet. */
+function doormanSource(): string | undefined {
+  return doormanModelSource(injectionModelSourceFromEnv(), PROMPT_GUARD_2_22M_DOORMAN_1.base_url);
+}
+/** The manifest of the model that RUNS (the effective one). */
+function injectionManifest(): ModelManifest {
+  return injectionModelManifest(injectionModelPlan().effective);
+}
 let injectionClassifier: InjectionClassifier | null | undefined;
+/** The manifest `injectionClassifier` was loaded for — when the effective
+ * model changes (a selection, doorman-1 finishing its download) it reloads. */
+let injectionClassifierFor: string | undefined;
 async function injectionClassifierInstance(): Promise<InjectionClassifier | null> {
-  if (injectionClassifier !== undefined) return injectionClassifier;
-  const status = modelStatus(modelsRoot(), PROMPT_GUARD_2_22M);
+  const manifest = injectionManifest();
+  if (injectionClassifier !== undefined && injectionClassifierFor === manifest.name) return injectionClassifier;
+  const status = modelStatus(modelsRoot(), manifest);
+  injectionClassifierFor = manifest.name;
+  if (status.present && runtimePresent(runtimeRoot())) {
+    // What runs must be what was pinned: re-hash before loading. A file that
+    // changed on disk since it was verified loses its record, the model counts
+    // as absent (so the effective model falls back, e.g. to stock) and the
+    // download replaces exactly that file.
+    const changed = await reverifyModel(modelsRoot(), manifest);
+    if (changed.length > 0) {
+      console.warn(`[doorman] ${manifest.name}: ${changed.join(", ")} no longer match their pins — re-fetching`);
+      injectionClassifier = undefined;
+      injectionClassifierFor = undefined;
+      ensureInjectionModel("retry");
+      scheduleRecompute();
+      return injectionClassifierInstance();
+    }
+  }
   injectionClassifier =
     status.present && runtimePresent(runtimeRoot())
       ? await loadInjectionClassifier({
-          loadPipeline: (dir, _model) => wasmPipeline(runtimeRoot(), dir),
-          modelDir: modelDir(modelsRoot(), PROMPT_GUARD_2_22M),
-          model: PROMPT_GUARD_2_22M.name,
+          loadPipeline: (dir, _model) => wasmPipeline(runtimeRoot(), dir, manifest.windowing),
+          modelDir: modelDir(modelsRoot(), manifest),
+          model: manifest.name,
+          windowing: manifest.windowing,
           log: (m) => console.warn(`[doorman] ${m}`),
         })
       : null;
   return injectionClassifier;
 }
 /** In-flight model download, for the Settings card to poll. One at a time. */
-let modelDownload: { progress: DownloadProgress; controller: AbortController } | undefined;
-let modelDownloadError: string | undefined;
+let modelDownload: { manifest: ModelManifest; progress: DownloadProgress; controller: AbortController } | undefined;
+/** Model directory name → the last download failure for it (cleared on success). */
+const modelDownloadErrors = new Map<string, string>();
 /** The auto-download starts at most once per launch on its own — but a FAILED
  * one is retried on a widening delay rather than waiting for the next start.
  * The model is the whole feature; "it'll be there tomorrow" is not automatic.
@@ -619,11 +665,11 @@ let modelRetries = 0;
 let modelRetryTimer: NodeJS.Timeout | undefined;
 const MODEL_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000];
 
-async function startModelDownload(): Promise<{ ok: boolean; already?: boolean; error?: string }> {
+async function startModelDownload(manifest: ModelManifest = injectionManifest()): Promise<{ ok: boolean; already?: boolean; error?: string }> {
   if (modelDownload) return { ok: true, already: true };
   const controller = new AbortController();
-  modelDownload = { progress: { file: "", bytes_done: 0, bytes_total: PROMPT_GUARD_2_22M.files.reduce((a, f) => a + f.size, 0) }, controller };
-  modelDownloadError = undefined;
+  modelDownload = { manifest, progress: { file: "", bytes_done: 0, bytes_total: manifest.files.reduce((a, f) => a + f.size, 0) }, controller };
+  modelDownloadErrors.delete(manifest.name);
   /* The Settings row reads `model_assist` off the SNAPSHOT, and a snapshot is
      only built when something asks for one. A download is the one thing in this
      app that moves for a minute while nothing else happens, so it has to ask on
@@ -634,8 +680,12 @@ async function startModelDownload(): Promise<{ ok: boolean; already?: boolean; e
      otherwise ask tens of thousands of times. */
   let ticked = 0;
   scheduleRecompute();
+  // doorman-1 comes from the environment's source when one is named (it beats
+  // lib/model-sources.ts); otherwise every model uses its manifest's base URL.
+  const source = manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? injectionModelSourceFromEnv() : undefined;
   try {
-    await downloadModel(modelsRoot(), PROMPT_GUARD_2_22M, {
+    await downloadModel(modelsRoot(), manifest, {
+      ...(source === undefined ? {} : { source }),
       signal: controller.signal,
       onProgress: (progress) => {
         if (modelDownload) modelDownload.progress = progress;
@@ -645,11 +695,12 @@ async function startModelDownload(): Promise<{ ok: boolean; already?: boolean; e
         scheduleRecompute();
       },
     });
-    injectionClassifier = undefined; // reload with the model now present
+    injectionClassifier = undefined; // reload: the effective model may have changed
     return { ok: true };
   } catch (err) {
-    modelDownloadError = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: modelDownloadError };
+    const error = err instanceof Error ? err.message : String(err);
+    modelDownloadErrors.set(manifest.name, error);
+    return { ok: false, error };
   } finally {
     modelDownload = undefined;
     // Finished or failed, the row is now wrong until the next fold — and on an
@@ -658,24 +709,34 @@ async function startModelDownload(): Promise<{ ok: boolean; already?: boolean; e
   }
 }
 
+/** The app's side of lib/injection-model-choice.ts's download orchestration. */
+const injectionModelFetchDeps: InjectionModelFetchDeps = {
+  plan: () => injectionModelPlan(),
+  doormanSource: () => doormanSource(),
+  stockInstalled: () => modelStatus(modelsRoot(), PROMPT_GUARD_2_22M).present,
+  download: (model) => startModelDownload(injectionModelManifest(model)),
+};
+
 /**
- * The model arrives on its own. The classifier is on by default and its whole
- * value is that nobody has to think about it, so when it is on, the runtime is
- * in this build and the model is not on disk yet, the download just starts —
- * at boot, again the moment the switch is turned on, and again on a widening
- * delay if it failed. Quiet: progress shows in Settings for anyone who looks,
- * and nothing else announces it.
+ * The models arrive on their own. The classifier is on by default and its
+ * whole value is that nobody has to think about it, so when it is on, the
+ * runtime is in this build and a model the plan needs is not on disk yet, the
+ * download just starts — at boot, again the moment the switch is turned on (or
+ * the model is changed), and again on a widening delay if it failed. Quiet:
+ * progress shows in Settings for anyone who looks, and nothing else announces
+ * it. With doorman-1 selected but not downloadable, that is the stock model.
  *
  * This is also the UPDATE path, and it needs no separate machinery: `present`
- * means every file pinned by THIS build is on disk at its pinned size, so a
- * build that pins a newer revision finds the old weights failing their pin,
- * calls the model absent and fetches the new one over it. Nobody presses
- * anything for that either.
+ * means every file pinned by THIS build is on disk and recorded as verified
+ * against THIS pin's sha256 (lib/model-assets.ts), so a build that pins a
+ * newer revision finds the old weights failing their pin, calls the model
+ * absent and fetches the new one over it; an unrecorded install whose hash
+ * matches is adopted without a download. Nobody presses anything for that.
  */
 function ensureInjectionModel(reason: "boot" | "enabled" | "retry"): void {
   const cfg = livePolicy().injection_classifier ?? defaultInjectionClassifierConfig();
   if (!cfg.enabled || !runtimePresent(runtimeRoot())) return;
-  if (modelStatus(modelsRoot(), PROMPT_GUARD_2_22M).present || modelDownload) return;
+  if (modelDownload || !injectionModelsMissing(injectionModelFetchDeps)) return;
   if (reason === "boot" && modelAutoDownloadTried) return;
   modelAutoDownloadTried = true;
   // Turning the switch on is a person asking now: it starts over from the first
@@ -685,7 +746,7 @@ function ensureInjectionModel(reason: "boot" | "enabled" | "retry"): void {
     if (modelRetryTimer) clearTimeout(modelRetryTimer);
     modelRetryTimer = undefined;
   }
-  void startModelDownload().then((r) => {
+  void fetchInjectionModels(injectionModelFetchDeps).then((r) => {
     if (r.ok) {
       modelRetries = 0;
       return;
@@ -1728,25 +1789,38 @@ function recompute(): void {
   });
 }
 
-/** The model-assisted rules as they stand — for the Rules screen's notes. The
- * classifier is "ready" when it is on and its runtime + model are on disk;
- * "not ready" while the model is still downloading (it fetches itself). */
+/** The model-assisted rules as they stand — for the Rules screen's notes and
+ * Settings' AI-protection row. The classifier is "ready" when it is on and the
+ * runtime + the EFFECTIVE model are on disk; `model_choice` says which model
+ * was selected, which one runs, and why they differ. */
 function modelAssistNow(): ModelAssistState {
   const policy = livePolicy();
   const ic = policy.injection_classifier ?? defaultInjectionClassifierConfig();
   const so = policy.second_opinion ?? defaultSecondOpinion();
-  const status = modelStatus(modelsRoot(), PROMPT_GUARD_2_22M);
+  const plan = injectionModelPlan();
+  const manifest = injectionModelManifest(plan.effective);
+  const status = modelStatus(modelsRoot(), manifest);
   const runtime = runtimePresent(runtimeRoot());
+  const error = modelDownloadErrors.get(manifest.name);
+  const doormanError = modelDownloadErrors.get(PROMPT_GUARD_2_22M_DOORMAN_1.name);
   return {
     injection_classifier: {
       enabled: ic.enabled,
       ready: ic.enabled && runtime && status.present,
       model: INJECTION_CLASSIFIER_LABEL,
-      version: PROMPT_GUARD_2_22M.version,
+      version: manifest.version,
       installed: status.present,
       runtime_present: runtime,
       ...(modelDownload ? { downloading: { bytes_done: modelDownload.progress.bytes_done, bytes_total: modelDownload.progress.bytes_total } } : {}),
-      ...(modelDownloadError ? { download_error: modelDownloadError } : {}),
+      ...(error ? { download_error: error } : {}),
+      model_choice: {
+        selected: plan.selected,
+        effective: plan.effective,
+        ...(plan.fallback ? { fallback: plan.fallback } : {}),
+        ...(plan.fallback === "download_failed" && doormanError ? { selected_error: doormanError } : {}),
+        ...(injectionModelFromEnv() ? { env: true } : {}),
+        ...(modelDownload?.manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? { selected_downloading: true } : {}),
+      },
     },
     second_opinion: { enabled: so.enabled, model: so.model },
     env: policyEnvActive(),
@@ -2093,7 +2167,10 @@ function registerIpc(): void {
     // The guard ignores this field; it rides policy.json so one document holds
     // every rule setting. The engine re-reads livePolicy() on its next scan.
     applyGuardSync();
+    // A model change may change what runs (or start a download): fetch what
+    // the new choice needs, and refold so the Settings row says so at once.
     if (injection_classifier.enabled) ensureInjectionModel("enabled");
+    scheduleRecompute();
     return { ok: true, injection_classifier };
   });
   /* ── My wallets ──
@@ -2151,15 +2228,25 @@ function registerIpc(): void {
     return { ok: true, wallets };
   });
   ipcMain.handle("radar:injection-classifier-probe", async () => {
-    const status = modelStatus(modelsRoot(), PROMPT_GUARD_2_22M);
+    // Everything here is about the EFFECTIVE model — what actually runs. Load
+    // it first: the load re-hashes the files, and a file that fails its pin
+    // changes which model is effective (or makes it absent).
+    await injectionClassifierInstance();
+    const plan = injectionModelPlan();
+    const manifest = injectionModelManifest(plan.effective);
+    const status = modelStatus(modelsRoot(), manifest);
+    const error = modelDownloadErrors.get(manifest.name);
     const base = {
       runtime_present: runtimePresent(runtimeRoot()),
       model_present: status.present,
-      model_label: PROMPT_GUARD_2_22M.label,
+      model_label: manifest.label,
       bytes_total: status.bytes_total,
-      notice: PROMPT_GUARD_2_22M.notice,
+      notice: manifest.notice,
+      selected_model: plan.selected,
+      effective_model: plan.effective,
+      ...(plan.fallback ? { fallback: plan.fallback } : {}),
       ...(modelDownload ? { downloading: modelDownload.progress } : {}),
-      ...(modelDownloadError ? { download_error: modelDownloadError } : {}),
+      ...(error ? { download_error: error } : {}),
     };
     if (!base.runtime_present) return { ...base, available: false, error: "the WASM runtime is missing from this build" };
     if (!status.present) return { ...base, available: false, error: `model not downloaded (${status.missing.length} file${status.missing.length === 1 ? "" : "s"} missing)` };
@@ -2173,7 +2260,7 @@ function registerIpc(): void {
   ipcMain.handle("radar:injection-classifier-download", () => startModelDownload());
   ipcMain.handle("radar:injection-classifier-remove", () => {
     modelDownload?.controller.abort();
-    removeModel(modelsRoot(), PROMPT_GUARD_2_22M);
+    removeModel(modelsRoot(), injectionManifest());
     injectionClassifier = undefined;
     return { ok: true };
   });
@@ -2769,6 +2856,7 @@ if (!app.requestSingleInstanceLock()) {
       policy: () => livePolicy(),
       retentionDays: () => store.prefs().retention_days,
       classifyInjection: async (text) => (await injectionClassifierInstance())?.classify(text) ?? null,
+      injectionModelInUse: () => injectionModelPlan().effective,
       onUpdate: () => scheduleRecompute(),
       onNewFindings: (rows) =>
         notifyFindings(

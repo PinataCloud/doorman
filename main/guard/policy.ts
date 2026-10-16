@@ -252,6 +252,28 @@ export interface InjectionClassifierConfig {
    * only when it is confidently benign, never on a coin toss.
    */
   suppress_below: number;
+  /**
+   * Which model re-reads the hit. Absent = `doorman-1`, Doorman's fine-tuned
+   * model and the default, which reads focus crops around the regex hit (it
+   * was trained and calibrated on those — lib/model-assets.ts,
+   * lib/injection-focus.ts). `stock` is stock Llama Prompt Guard 2 over the
+   * first 2 × 512 tokens, and is the only value ever written down: an
+   * explicit choice of stock persists, choosing the default removes the key.
+   * The app runs stock in doorman-1's place while doorman-1 has no usable
+   * download (main/index.ts injectionModels).
+   */
+  model?: InjectionModelId;
+}
+
+export type InjectionModelId = "stock" | "doorman-1";
+
+/** The model an unset `injection_classifier.model` means. */
+export const DEFAULT_INJECTION_MODEL: InjectionModelId = "doorman-1";
+
+/** The model the person (or the environment) selected: the stored id, or
+ * the default when none is stored. */
+export function selectedInjectionModel(cfg: Pick<InjectionClassifierConfig, "model"> | undefined): InjectionModelId {
+  return cfg?.model ?? DEFAULT_INJECTION_MODEL;
 }
 
 export const INJECTION_SUPPRESS_BELOW_DEFAULT = 0.2;
@@ -273,6 +295,9 @@ export function normalizeInjectionClassifierConfig(raw: unknown): InjectionClass
   if (typeof obj.suppress_below === "number" && Number.isFinite(obj.suppress_below)) {
     cfg.suppress_below = Math.min(INJECTION_SUPPRESS_BELOW_MAX, Math.max(INJECTION_SUPPRESS_BELOW_MIN, obj.suppress_below));
   }
+  // Only a choice AWAY from the default is stored, so `{ model: "doorman-1" }`
+  // (the Settings patch choosing the default) normalizes to the absent key.
+  if (obj.model === "stock") cfg.model = "stock";
   return cfg;
 }
 
