@@ -85,16 +85,17 @@ html, body {
 
 .brand { display: flex; align-items: center; gap: var(--s5); padding: 0 6px var(--s6); }
 .brand-mark {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--r);
-  flex: 0 0 34px;
+  flex: 0 0 40px;
+  overflow: hidden;
   background: #FFFFFF;
   display: grid;
   place-items: center;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10), 0 1px 2px rgba(0, 0, 0, .25);
 }
-.brand-mark img { width: 23px; height: 23px; display: block; object-fit: contain; }
+.brand-mark img { width: 34px; height: 34px; display: block; object-fit: contain; }
 .brand-lock { min-width: 0; flex: 1; }
 .brand-wordmark {
   display: block;
@@ -2365,6 +2366,27 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
    on the text baseline and read as punctuation in the sentence. */
 .pb-sep { width: 1px; align-self: stretch; margin: 2px 1px; background: var(--ring); flex: none; }
 .pb-manage { font-size: var(--t-1); }
+/* In the sidebar (dark in both themes), across its width under the brand —
+   with the sidebar's own inks rather than the page's. */
+.sidebar .protbadge {
+  display: flex;
+  margin: 0 6px var(--s6);
+  padding: 8px 12px;
+  border-radius: var(--r);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .12);
+  color: var(--ink-on-dark);
+  font-size: var(--t-1);
+}
+.sidebar .protbadge.protected .pb-dot { background: #4CAF7A; }
+.sidebar .protbadge.protected strong { color: #8FE0AE; }
+.sidebar .protbadge.watch strong { color: #B79AD9; }
+.sidebar .protbadge.off { border-color: rgba(242, 198, 107, .55); }
+.sidebar .protbadge.off .pb-dot { background: #F2C66B; }
+.sidebar .protbadge.off strong { color: #F2C66B; }
+.sidebar .pb-sep { display: none; }
+.sidebar .pb-manage { margin-left: auto; color: #D9C2F5; }
+.sidebar .pb-manage:hover { color: #FFFFFF; }
 
 .sechead-pill {
   display: inline-flex; align-items: center; gap: var(--s3); flex: none;
@@ -2604,12 +2626,12 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
    header that resizes itself per screen is worse than a truncated question. */
 .askbtn {
   font: inherit;
-  font-size: var(--t-2);
-  height: 26px;
-  padding: 0 10px 0 7px;
+  font-size: var(--t-1);
+  height: var(--control-h);
+  padding: 0 14px 0 5px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   max-width: 30ch;
   border: 1px solid transparent;
   border-radius: 999px;
@@ -2629,11 +2651,25 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
 .askbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .askbtn:active:not(:disabled) { transform: translateY(0.5px); }
 .askbtn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.askbtn.compact { height: 22px; font-size: var(--t-3); padding: 0 9px 0 6px; gap: 5px; }
+/* The same height as every other control (--control-h): beside a button it
+   used to read as a footnote. Compact only tightens the padding. */
+.askbtn.compact { padding: 0 12px 0 5px; }
 /* The mark beside the label: the sidebar's logo at button scale, so the entry
-   point is recognisably ours without a second wordmark on the screen. */
-.ai-brand { width: 13px; height: 13px; display: block; object-fit: contain; flex: none; }
-.askbtn.compact .ai-brand { width: 11px; height: 11px; }
+   point is recognisably ours without a second wordmark on the screen — on the
+   same white the sidebar sets it on, because the llama's jacket and cap are
+   black and vanish on a dark button. */
+.ai-brand {
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--navy) 16%, transparent);
+  display: block;
+  object-fit: contain;
+  flex: none;
+}
 /* The door reduced to the mark, for a list row. Same navy wash as .askbtn so a
    column of these still reads as the assistant and not as another row action;
    no border at rest, because one per row is a grid of boxes. */
@@ -3309,8 +3345,9 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .onb-note { color: var(--ink-3); font-size: var(--t-1); margin: 0; }
 
 /* The brand mark on the welcome step, and the tick on the last one. */
-.onb-hero-mark { width: 76px; height: 76px; display: block; }
-.onb-hero-mark img { width: 100%; height: 100%; border-radius: var(--r-xl); display: block; }
+/* The mark always sits on white (its jacket and cap are black). */
+.onb-hero-mark { width: 76px; height: 76px; display: block; padding: 8px; box-sizing: border-box; border-radius: var(--r-xl); background: #FFFFFF; box-shadow: var(--shadow); }
+.onb-hero-mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .onb-tick {
   width: 54px; height: 54px; border-radius: 50%; flex: none;
   display: flex; align-items: center; justify-content: center;
@@ -3331,14 +3368,14 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .onb-tile {
   width: 62px; height: 62px; border-radius: var(--r-lg); flex: none;
   display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--navy); background: var(--paper); box-shadow: var(--shadow);
+  border: 1px solid var(--navy); background: #FFFFFF; box-shadow: var(--shadow);
 }
 .onb-tile img { width: 34px; height: 34px; border-radius: var(--r-sm); display: block; }
 .onb-tile.is-temp {
   border-style: dashed; border-color: var(--tan-2);
   background: var(--linen-2); box-shadow: none;
 }
-.onb-tile.is-temp img { opacity: .55; }
+.onb-tile.is-temp img { opacity: .55; background: #FFFFFF; padding: 3px; box-sizing: border-box; }
 
 /* The tools list. Rows are 54px so the mark, the name and its kind all read
    without crowding; the state sits right. */

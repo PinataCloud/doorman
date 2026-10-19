@@ -67,7 +67,13 @@ const mocked = vi.hoisted(() => {
     },
   };
   const nativeTheme = { shouldUseDarkColors: false, on: () => {} };
-  return { FakeTray, Menu, nativeImage, nativeTheme, built, popped, images };
+  /** The system's own appearance, which the menu bar follows: "Dark" or unset. */
+  const system = { style: "" };
+  const systemPreferences = {
+    getUserDefault: (key: string) => (key === "AppleInterfaceStyle" ? system.style : ""),
+    subscribeNotification: () => 0,
+  };
+  return { FakeTray, Menu, nativeImage, nativeTheme, systemPreferences, system, built, popped, images };
 });
 
 // The desktop tree carries its own node_modules, so from main/* the
@@ -77,9 +83,10 @@ vi.mock("../node_modules/electron/index.js", () => ({
   Menu: mocked.Menu,
   nativeImage: mocked.nativeImage,
   nativeTheme: mocked.nativeTheme,
+  systemPreferences: mocked.systemPreferences,
 }));
 
-import { TrayController } from "../main/tray.js";
+import { TrayController, menuBarIsDark } from "../main/tray.js";
 import { Store } from "../main/state.js";
 
 const { FakeTray, built, popped } = mocked;
@@ -267,5 +274,18 @@ describe("the guard on the menu-bar mark", () => {
     expect(items[1]!.label).toBe("Ask Doorman AI…");
     items[1]!.click?.();
     expect(calls).toContain("ask");
+  });
+});
+
+describe("the menu-bar mark follows the menu bar, not the app's theme", () => {
+  it("reads the system appearance on macOS, whatever Settings → Appearance says", () => {
+    // The app set to Dark on a light Mac, then to Light on a dark one.
+    mocked.nativeTheme.shouldUseDarkColors = true;
+    mocked.system.style = "";
+    expect(menuBarIsDark("darwin")).toBe(false);
+    mocked.nativeTheme.shouldUseDarkColors = false;
+    mocked.system.style = "Dark";
+    expect(menuBarIsDark("darwin")).toBe(true);
+    mocked.system.style = "";
   });
 });

@@ -5,7 +5,7 @@
  * by returning an EMPTY image.
  */
 
-import { Menu, Tray, nativeImage, nativeTheme, type NativeImage } from "electron";
+import { Menu, Tray, nativeImage, nativeTheme, systemPreferences, type NativeImage } from "electron";
 import { liveSummaryLine } from "./lib/live-sessions.js";
 import { ALL_DETECTORS } from "./guard/policy.js";
 import { formatTokens } from "./lib/format.js";
@@ -87,6 +87,27 @@ function trayIcon(glance: GuardGlance, dark: boolean): NativeImage {
   return image;
 }
 
+/**
+ * Whether the bar the icon sits in is dark. That is the SYSTEM's appearance,
+ * not this app's: Settings → Appearance recolours the window (through
+ * nativeTheme.themeSource, which is all `shouldUseDarkColors` then reports),
+ * while the macOS menu bar keeps following the system — so a person who picks
+ * Light on a dark Mac got a black mark on a black bar. macOS keeps the system
+ * choice in the AppleInterfaceStyle default ("Dark", or unset for light, and
+ * Auto flips it); Windows has its own taskbar setting.
+ */
+export function menuBarIsDark(platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === "darwin" && typeof systemPreferences?.getUserDefault === "function") {
+    try {
+      return systemPreferences.getUserDefault("AppleInterfaceStyle", "string") === "Dark";
+    } catch {
+      // fall through to the app's theme
+    }
+  }
+  if (platform === "win32" && nativeTheme) return !!nativeTheme.shouldUseDarkColorsForSystemIntegratedUI;
+  return !!(nativeTheme && nativeTheme.shouldUseDarkColors);
+}
+
 export class TrayController {
   private tray: Tray | undefined;
   /** The newest snapshot, for the right-click menu. The handler used to close
@@ -107,6 +128,13 @@ export class TrayController {
     // A coloured (non-template) mark is drawn for one bar appearance; when the
     // system flips light/dark, draw it again for the other.
     nativeTheme?.on?.("updated", () => { if (this.latest) this.render(this.latest); });
+    // …and that flip is the SYSTEM's, which with Appearance set to Light or
+    // Dark no longer reaches nativeTheme: hear it from macOS directly.
+    if (process.platform === "darwin" && typeof systemPreferences?.subscribeNotification === "function") {
+      systemPreferences.subscribeNotification("AppleInterfaceThemeChangedNotification", () => {
+        if (this.latest) this.render(this.latest);
+      });
+    }
     // BOTH buttons open the menu, which is what every other menu-bar app on
     // this Mac does. Left-click used to jump straight to the window, so the
     // glanceable numbers and Rescan were reachable only by right-clicking —
@@ -195,7 +223,7 @@ export class TrayController {
     this.latest = state;
     if (!this.tray) return;
     const glance = guardGlance(state);
-    const dark = !!(nativeTheme && nativeTheme.shouldUseDarkColors);
+    const dark = menuBarIsDark();
     const key = glance + (dark ? ":dark" : ":light");
     if (key !== this.iconKey) {
       this.iconKey = key;
@@ -207,7 +235,7 @@ export class TrayController {
 
   private icon(state: AppState): NativeImage {
     const glance = guardGlance(state);
-    const dark = !!(nativeTheme && nativeTheme.shouldUseDarkColors);
+    const dark = menuBarIsDark();
     this.iconKey = glance + (dark ? ":dark" : ":light");
     return trayIcon(glance, dark);
   }

@@ -1043,24 +1043,27 @@ describe("every screen renders (renderer)", () => {
     expect(shape.stops).toBe(4);
   });
 
-  it("says what protection AMOUNTS TO, in one word, on every security screen", () => {
+  it("says what protection AMOUNTS TO, in one word, in the sidebar", () => {
     // The badge says what protection AMOUNTS TO. "Watch only" exists
     // so that "Protected" can never contradict a level that stops nothing — a
     // guard that is ON while every rule observes is not called protected.
-    const badge = (state: AppState) => {
+    // It lives in the sidebar (every screen), not in the security headers.
+    const inHeader = runInContext(
+      `__nodes(SecurityHeader({ screen: "rules" }), "ProtectionBadge", [], 0).length`,
+      ctx as object,
+      { filename: "header without badge" },
+    );
+    expect(inHeader).toBe(0);
+    const badge = (state: AppState, onGoSettings: boolean = true) => {
       ctx.__state = state;
+      ctx.__manage = onGoSettings;
       return runInContext(
         `(function () {
-           var tree = SecurityHeader({
+           var inner = ProtectionBadge({
              state: __state,
-             screen: "rules",
              enforcing: enforcingCount(__state),
-             onGoRules: function () {},
-             onGoSettings: function () {},
+             onGoSettings: __manage ? function () {} : undefined,
            });
-           var b = __nodes(tree, "ProtectionBadge", [], 0)[0];
-           if (!b) return null;
-           var inner = ProtectionBadge(b.props);
            var pill = inner && inner.props ? String(inner.props.className || "") : "";
            var word = __nodes(inner, "strong", [], 0)[0];
            var manage = __nodes(inner, "button", [], 0).filter(function (n) {
@@ -1118,6 +1121,8 @@ describe("every screen renders (renderer)", () => {
       },
     };
     expect(badge(tampered)).toEqual({ kind: "off", word: "Not protected", manages: true });
+    // On Settings itself there is nowhere to Manage to: the word stays, the link goes.
+    expect(badge(populatedState(), false)).toEqual({ kind: "protected", word: "Protected", manages: false });
   });
 
   it("states a changed guard once — in Radar's needs-attention list, not as a header banner", () => {

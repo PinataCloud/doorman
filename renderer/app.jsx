@@ -199,6 +199,13 @@ function App() {
             <span className="sub">Powered by Pinata</span>
           </span>
         </div>
+        {/* What protection amounts to, on every screen rather than only the
+            security ones; Manage is the way to Settings, so not on Settings. */}
+        <ProtectionBadge
+          state={state}
+          enforcing={enforcing}
+          onGoSettings={screen === "settings" ? undefined : () => setScreen("settings")}
+        />
         <Nav screen={screen} onPick={setScreen} radarOpen={radarOpen} />
         <div className="foot">
           <div className="statusline">
@@ -243,13 +250,7 @@ function App() {
         <div className="drag-edge drag-edge-r" />
         <div className="drag-edge drag-edge-b" />
         {SECURITY_SCREENS.includes(screen) ? (
-          <SecurityHeader
-            state={state}
-            screen={screen}
-            enforcing={enforcing}
-            onGoSettings={() => setScreen("settings")}
-            title={screen === "radar" && trace ? "Trace a secret" : undefined}
-          />
+          <SecurityHeader screen={screen} title={screen === "radar" && trace ? "Trace a secret" : undefined} />
         ) : null}
         {screen === "spend" ? <GraphsScreen state={state} onOpenTask={openTask} /> : null}
         {screen === "ledger" ? (
@@ -393,14 +394,14 @@ function enforcingCount(state) {
  * it is the badge's tooltip, and on Guardrails the level card's own
  * "What's protected" row counts the same rules in full.
  *
- * CAVEAT, and it is the one recorded in itself: "Protected" is only as
- * true as `guard_installed`, and documents that the guard can fail
- * open while that flag reads true (the hook entry invokes a bare `node`, which
- * a Mac-app-only install may not have on its PATH — and `lib/doctor.ts` says
- * plainly that resolving one from this process proves nothing either way).
- * This badge is therefore no less honest than the ratio it replaces, but the
- * word is a stronger claim than a number, so when lands its check
- * belongs HERE, as the gate on `protected` below.
+ * "Protected" is only as true as `guard_installed`. The hook used to invoke a
+ * bare `node`, which a Mac-app-only install may not have on its PATH — a
+ * guard that never ran while this read Protected. It now starts Doorman's
+ * launcher (main/lib/node-launcher.ts), which runs the guard on the app's own
+ * runtime when there is no Node.js, so the word holds on macOS and Linux;
+ * Windows still runs a bare `node`.
+ *
+ * It lives in the sidebar, under the brand, on every screen.
  */
 function ProtectionBadge({ state, enforcing, onGoSettings }) {
   const installed = !!state.radar.guard_installed;
@@ -424,22 +425,21 @@ function ProtectionBadge({ state, enforcing, onGoSettings }) {
       <strong data-tip={why} aria-label={word + " — " + why}>
         {word}
       </strong>
-      {/* On EVERY security screen, unlike the old pill's Guardrails-suppressed
-          link: this one goes to Settings, which no security screen is. */}
-      <span className="pb-sep" aria-hidden="true" />
-      <button className="linkbtn pb-manage" onClick={onGoSettings} data-tip="Real time protection, the hold window and the guard's integrity check">
-        Manage
-      </button>
+      {/* Goes to Settings, so it is left out while Settings is open. */}
+      {onGoSettings ? <span className="pb-sep" aria-hidden="true" /> : null}
+      {onGoSettings ? (
+        <button className="linkbtn pb-manage" onClick={onGoSettings} data-tip="Real time protection, the hold window and the guard's integrity check">
+          Manage
+        </button>
+      ) : null}
     </span>
   );
 }
 
-function SecurityHeader({ state, screen, enforcing, onGoSettings, title }) {
+function SecurityHeader({ screen, title }) {
   return (
     <div className="screen-head sechead">
       <h1>{title || SECURITY_TITLES[screen] || "Security"}</h1>
-      <span className="spacer" />
-      <ProtectionBadge state={state} enforcing={enforcing} onGoSettings={onGoSettings} />
     </div>
   );
 }
