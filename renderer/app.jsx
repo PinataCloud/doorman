@@ -217,7 +217,14 @@ function App() {
         </div>
         <Nav screen={screen} onPick={setScreen} radarOpen={radarOpen} />
         <div className="foot">
-          <div className="statusline credit">POWERED BY PINATA</div>
+          <button
+            type="button"
+            className="statusline updatebtn credit"
+            onClick={() => window.doorman.openExternal("https://pinata.cloud")}
+            title="pinata.cloud"
+          >
+            POWERED BY PINATA
+          </button>
           {/* The update's one control, present only while there is one: the
               percentage while a download runs, a button once it has landed.
               Updates otherwise install on their own the moment the window is
