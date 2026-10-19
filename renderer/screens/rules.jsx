@@ -77,10 +77,12 @@ function RulesScreen({ state, onGoSettings }) {
       {installed ? null : <GuardOffNotice wanted={wanted} onGoSettings={onGoSettings} />}
 
       {state.radar.guard_sync_error ? (
-        <div className="callout bad" style={{ marginBottom: "var(--s4)" }}>
-          The guard's hook entries couldn't be updated: {state.radar.guard_sync_error}. The modes below are what the
-          app WANTS; wherever the update didn't land, the guard on disk may be running an older policy, or none.
-        </div>
+        <GuardProblem
+          title={guardSyncTitle(state.radar.guard_sync_failures)}
+          error={state.radar.guard_sync_error}
+          failures={state.radar.guard_sync_failures}
+          note="The modes below are what the app wants. Wherever the update didn't land, the guard may still run an older policy, or none."
+        />
       ) : null}
       <LevelCard state={state} frozen={frozen} installed={installed} />
 

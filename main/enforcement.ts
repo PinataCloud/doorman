@@ -478,17 +478,12 @@ export function writeArmedSessions(
   writeDocumentAtomically(join(target, "armed.json"), `${JSON.stringify({ version: 1, sessions }, null, 2)}\n`);
 }
 
-/** The "there is nothing here to guard" sentence, built from the registry so a
- * new host joins it without an edit. With Claude Code and Codex registered it
- * reads exactly as it always has. */
-function nothingToInstallInto(): string {
-  const labels = HOSTS.map((h) => h.label);
-  const where = HOSTS.flatMap((h) => h.presencePaths).map((p) => (p.startsWith("/") ? p : `~/${p}`));
-  const who =
-    labels.length === 2 ? `Neither ${labels[0]} nor ${labels[1]}` : `None of ${labels.join(", ")}`;
-  const paths = where.length === 2 ? `${where[0]} or ${where[1]}` : where.join(", ");
-  return `${who} was found on this machine (no ${paths}), so there is nothing to install the guard into.`;
-}
+/** No supported agent is installed, so the guard has nowhere to live. One
+ * short sentence: it used to name all fifteen agents and every folder each is
+ * looked for in, which made a paragraph out of "nothing to guard yet". The app
+ * shows this as an empty state (the outcome's `no_agents`), not as an error;
+ * `doorman guard status --all` lists what is supported. */
+export const NO_AGENTS_FOUND = "No supported AI agent was found on this machine, so there is nothing to install the guard into.";
 
 /** A host the install (or removal) could not reach, and the host's own reason
  * — its merge's refusal ("~/.hermes/config.yaml is … ; not touching it") or
@@ -506,7 +501,7 @@ export interface GuardHostFailure {
  */
 export type GuardInstallOutcome =
   | { ok: true; codex_restart_required: boolean; failures: GuardHostFailure[] }
-  | { ok: false; error: string; failures?: GuardHostFailure[] };
+  | { ok: false; error: string; failures?: GuardHostFailure[]; no_agents?: true };
 
 /** One sentence per failing host, named — what `guard_sync_error` carries.
  * No closing period, so whoever shows it can end the sentence. */
@@ -514,12 +509,34 @@ export function describeGuardFailures(failures: readonly GuardHostFailure[]): st
   return failures.map((f) => `${f.label}: ${f.error.replace(/\.+$/, "")}`).join(". ");
 }
 
-/** The problem to show for an install outcome, or undefined when every present
- * host took the guard. A partial install is a problem too: an agent the guard
- * couldn't reach runs an older policy, or none. */
+/** What an install, sync or removal left undone: the sentence, and the agents
+ * it couldn't reach with each one's reason (so a screen can list them instead
+ * of printing one run-on sentence). */
+export interface GuardProblem {
+  error: string;
+  failures: GuardHostFailure[];
+}
+
+/** The problem to show for a guard outcome, or undefined when every present
+ * host took it. A partial install is a problem too: an agent the guard
+ * couldn't reach runs an older policy, or none. No agent on this machine is
+ * NOT one — nothing is out of date, there is just nothing to guard yet, and
+ * the screens say that on their own. */
+export function guardProblem(outcome: {
+  ok: boolean;
+  error?: string;
+  failures?: readonly GuardHostFailure[];
+  no_agents?: true;
+}): GuardProblem | undefined {
+  if (outcome.no_agents) return undefined;
+  const failures = [...(outcome.failures ?? [])];
+  if (!outcome.ok) return { error: outcome.error ?? "unknown error", failures };
+  return failures.length > 0 ? { error: describeGuardFailures(failures), failures } : undefined;
+}
+
+/** guardProblem's sentence alone. */
 export function guardInstallProblem(outcome: GuardInstallOutcome): string | undefined {
-  if (!outcome.ok) return outcome.error;
-  return outcome.failures.length > 0 ? describeGuardFailures(outcome.failures) : undefined;
+  return guardProblem(outcome)?.error;
 }
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -541,7 +558,7 @@ export function installGuard(userDataDir: string, policy: GuardPolicy): GuardIns
     if (present.length === 0) {
       // Nothing to guard — say so rather than flip a switch that enforces
       // nowhere while the UI reads "enforcing".
-      return { ok: false, error: nothingToInstallInto() };
+      return { ok: false, error: NO_AGENTS_FOUND, no_agents: true };
     }
     // Plan each host on its own: its hook document(s), its companion documents
     // (a consent allowlist) and its plugin artefacts, all parsed and built
@@ -649,12 +666,12 @@ export function installGuard(userDataDir: string, policy: GuardPolicy): GuardIns
 export function syncGuard(
   userDataDir: string,
   policy: GuardPolicy,
-): { ok: true } | { ok: false; error: string } {
+): { ok: true } | { ok: false; error: string; failures?: GuardHostFailure[] } {
   try {
     if (isGuardInstalled()) {
       const outcome = installGuard(userDataDir, policy);
-      const problem = guardInstallProblem(outcome);
-      return problem === undefined ? { ok: true } : { ok: false, error: problem };
+      const problem = guardProblem(outcome);
+      return problem === undefined ? { ok: true } : { ok: false, ...problem };
     }
     writeGuardPolicy(userDataDir, policy);
     return { ok: true };
@@ -670,7 +687,7 @@ export function syncGuard(
  * only removed once it has, so a failure never strands an entry pointing at
  * nothing. Not ok while any host still carries the guard.
  */
-export function uninstallGuard(): { ok: true } | { ok: false; error: string } {
+export function uninstallGuard(): { ok: true } | { ok: false; error: string; failures?: GuardHostFailure[] } {
   try {
     if (!hookWritesAllowed()) return { ok: false, error: SANDBOX_READ_ONLY };
     const home = homedir();
@@ -692,7 +709,7 @@ export function uninstallGuard(): { ok: true } | { ok: false; error: string } {
         failures.push({ id: host.id, label: host.label, error: errorText(err) });
       }
     }
-    return failures.length === 0 ? { ok: true } : { ok: false, error: describeGuardFailures(failures) };
+    return failures.length === 0 ? { ok: true } : { ok: false, error: describeGuardFailures(failures), failures };
   } catch (err) {
     return { ok: false, error: errorText(err) };
   }

@@ -73,7 +73,8 @@ describe("one agent's config the merge refuses", () => {
     const problem = enforcement.guardInstallProblem(outcome);
     expect(problem).toMatch(/^Hermes Agent: ~\/\.hermes\/config\.yaml .*not touching it$/);
     // A later policy sync reports the same agent, while Claude takes the policy.
-    expect(enforcement.syncGuard(dataDir, defaultPolicy())).toEqual({ ok: false, error: problem });
+    // The screens list that per agent, from the same failures.
+    expect(enforcement.syncGuard(dataDir, defaultPolicy())).toEqual({ ok: false, error: problem, failures: outcome.failures });
   });
 
   it("is not ok when no present agent could take the guard, and writes nothing", () => {
@@ -88,6 +89,22 @@ describe("one agent's config the merge refuses", () => {
     expect(outcome.failures?.map((f) => f.id)).toEqual(["claude", "hermes"]);
     expect(readFileSync(claudeSettings(), "utf8")).toBe("{ not json");
     expect(readFileSync(hermesConfig(), "utf8")).toBe(REFUSED_HERMES);
+    expect(existsSync(enforcement.guardDir(dataDir))).toBe(false);
+  });
+});
+
+describe("no supported agent on this machine", () => {
+  it("is an empty state, not a problem: one short sentence, flagged no_agents, nothing written", () => {
+    rmSync(join(home, ".claude"), { recursive: true, force: true });
+    rmSync(join(home, ".hermes"), { recursive: true, force: true });
+
+    const outcome = enforcement.installGuard(dataDir, defaultPolicy());
+
+    expect(outcome).toEqual({ ok: false, error: enforcement.NO_AGENTS_FOUND, no_agents: true });
+    // It used to name all fifteen agents and every folder each is looked for in.
+    expect(enforcement.NO_AGENTS_FOUND.length).toBeLessThan(120);
+    // Nothing is out of date, so Settings and Rules show no red callout for it.
+    expect(enforcement.guardProblem(outcome)).toBeUndefined();
     expect(existsSync(enforcement.guardDir(dataDir))).toBe(false);
   });
 });

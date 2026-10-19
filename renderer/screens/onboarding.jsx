@@ -331,6 +331,11 @@ function OnboardingWatching({ state, pending, onSet }) {
   // The switch reads the PREF, not a local answer — see setWarnings.
   const on = !!(state.prefs && state.prefs.guard_wanted);
   const error = (state.radar && state.radar.guard_sync_error) || "";
+  const failed = ((state.radar && state.radar.guard_sync_failures) || []).map((f) => f.label);
+  // No agent on this machine yet: nothing for the guard to go into, so the
+  // switch rests and says when it will matter instead of bouncing back.
+  const hosts = (state.radar && state.radar.guard_hosts) || [];
+  const noAgents = !on && hosts.length > 0 && hosts.every((h) => !h.present);
   // While the install runs, the panel follows the position being MOVED to, so
   // the border and the sentence don't lag a beat behind the knob.
   const shown = pending == null ? on : !!pending;
@@ -352,14 +357,15 @@ function OnboardingWatching({ state, pending, onSet }) {
         <span className="onb-opt-said">
           <span className="onb-opt-name">Pause risky actions and ask me first</span>
           <span className="onb-opt-note">
-            {shown
-              ? "Enable the guard to pause risky actions and require your approval before they run."
+            {noAgents
+              ? "No AI agent on " + thisMachine(state.platform) + " yet. Once you install one, turn this on in Settings."
               : "Enable the guard to pause risky actions and require your approval before they run."}
           </span>
         </span>
         <Switch
           on={on}
           pending={pending}
+          disabled={noAgents}
           ariaLabel="Pause risky actions and ask me first"
           onChange={onSet}
         />
@@ -371,7 +377,11 @@ function OnboardingWatching({ state, pending, onSet }) {
           opinion about it. With the switch ON, the same error names the
           agents the install couldn't reach while every other one took it. */}
       {pending == null && error ? (
-        <p className="onb-err">{on ? "The guard couldn't be added to every agent. " + error + "." : error}</p>
+        <p className="onb-err">
+          {on && failed.length > 0
+            ? "Couldn't add the guard to " + listOf(failed) + ". Settings shows why."
+            : endSentence(error)}
+        </p>
       ) : null}
     </div>
   );

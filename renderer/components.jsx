@@ -1468,6 +1468,48 @@ function Switch({ on, onChange, disabled, ariaLabel, pending }) {
   );
 }
 
+/** A reason as one sentence with exactly one full stop: main's reasons arrive
+ * with and without one, and the screens used to add a second. */
+function endSentence(text) {
+  const s = String(text || "").trim().replace(/\.+$/, "");
+  return s ? s + "." : "";
+}
+
+/**
+ * What a guard install, sync or removal couldn't finish: a headline, then one
+ * short line per agent it couldn't reach (or the one reason, when it isn't any
+ * agent's). It used to be a single sentence with every reason strung into it,
+ * which ran to a paragraph as soon as more than one agent was involved.
+ */
+function GuardProblem({ title, error, failures, note }) {
+  const list = failures || [];
+  return (
+    <div className="callout bad guardproblem" role="alert">
+      <div className="gp-head">{title}</div>
+      {list.length > 0 ? (
+        <ul className="gp-list">
+          {list.map((f) => (
+            <li key={f.id}>
+              <b>{f.label}</b> {endSentence(f.error)}
+            </li>
+          ))}
+        </ul>
+      ) : error ? (
+        <div className="gp-detail">{endSentence(error)}</div>
+      ) : null}
+      {note ? <div className="gp-note">{note}</div> : null}
+    </div>
+  );
+}
+
+/** "The guard couldn't be updated in Hermes Agent" / "in 3 agents". */
+function guardSyncTitle(failures) {
+  const list = failures || [];
+  if (list.length === 1) return "The guard couldn't be updated in " + list[0].label;
+  if (list.length > 1) return "The guard couldn't be updated in " + list.length + " agents";
+  return "The guard couldn't be updated";
+}
+
 /**
  * Progressive disclosure for the settings nobody needs on a first run —
  * self-hosting, key pasting. Collapsed by default: an input pre-filled with a

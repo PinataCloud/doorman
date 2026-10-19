@@ -10,7 +10,7 @@
 
 import { CONFIDENCE_BANDS, type FindingConfidence, type FindingRow, type RadarSummary, type RuleStatsWindow, type WindowStats } from "./lib/findings.js";
 import type { GuardIntegrityReport } from "./lib/guard-integrity.js";
-import type { GuardHostSummary } from "./enforcement.js";
+import type { GuardHostFailure, GuardHostSummary } from "./enforcement.js";
 import { parseCustomRules } from "./guard/custom-rules.js";
 import { RULE_PACKS, RULE_PACK_IDS, defaultEnabledPacks } from "./guard/rule-packs.js";
 import type { SpendGraphs } from "./lib/spend.js";
@@ -517,6 +517,10 @@ export interface RadarState {
    * still updated. Absent when healthy. Without this, the app would show the
    * policy it WANTS while the guard on disk quietly runs an older one. */
   guard_sync_error?: string;
+  /** The same problem, per agent: which ones the guard couldn't reach and why,
+   * for the screens to list instead of printing guard_sync_error as one long
+   * sentence. Empty when the problem isn't any one agent's. */
+  guard_sync_failures?: GuardHostFailure[];
   /** Per-rule counters over each Analytics window (lib/findings.ts
    * summarizeRuleStats) — computed in main over EVERY stored finding, because
    * the `findings` array above is capped. */

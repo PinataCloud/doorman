@@ -106,6 +106,16 @@ describe("the guard", () => {
     expect(planRepairs(report, "auto").map((r) => r.fix)).toEqual(["install-guard"]);
   });
 
+  it("has nothing to check or repair when no supported agent is on the machine", () => {
+    const home = mkdtempSync(join(tmpdir(), "doctor-empty-"));
+    roots.push(home);
+    const report = diagnose(input(home, { guardWanted: true, guardDir: guardDirFor(home) }));
+    expect(byId(report, "guard.hooks").status).toBe("skip");
+    // No missing-bundle failure to "repair" with an install that refuses.
+    expect(report.checks.some((c) => c.id === "guard.bundle")).toBe(false);
+    expect(planRepairs(report, "auto")).toEqual([]);
+  });
+
   it("counts a host as present by its own footprint, not by a hook directory we have yet to create", () => {
     // Copilot CLI's hook document lives under `~/.copilot/hooks/`; on a Mac
     // that has Copilot but has never had the guard, that directory does not

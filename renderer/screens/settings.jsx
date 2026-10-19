@@ -90,11 +90,9 @@ function listOf(labels) {
  * that are not on this Mac are not mentioned at all: "Gemini CLI — not on this
  * Mac" is a fact about the catalog, not about this person's setup.
  */
-function guardHostsSentence(hosts, installed) {
+function guardHostsSentence(hosts, installed, platform) {
   const here = (hosts || []).filter((h) => h.present);
-  if (here.length === 0) {
-    return installed ? "On, but no supported agent is on this Mac." : "Off — and no supported agent is on this Mac to guard.";
-  }
+  if (here.length === 0) return "On, but no supported agent is on " + thisMachine(platform) + ".";
   const names = here.map((h) => h.label);
   if (!installed) {
     return "Off — the Radar's rules only watch. On, it holds or blocks what they catch in " + listOf(names) + " before the tool runs.";
@@ -148,12 +146,36 @@ function unattendedSentence(hosts, confirm) {
   return "Off: with this app closed, " + who + " warns and continues — the call runs.";
 }
 
-/** The sentence for "the guard has nowhere to live on this machine". */
-function noHostSentence(hosts) {
+/** "this Mac" / "this PC" / "this computer" — the machine, named the way its
+ * owner would. */
+function thisMachine(platform) {
+  if (platform === "macos") return "this Mac";
+  if (platform === "windows") return "this PC";
+  return "this computer";
+}
+
+/**
+ * The guard strip with no supported agent on this machine: an empty state, not
+ * an error. Before, the switch stayed live, and flipping it printed every
+ * agent and every folder it is looked for in — twice, as two red callouts.
+ * The first three agents by name, the rest behind a tooltip.
+ */
+function NoAgentsLine({ hosts, platform }) {
   const labels = (hosts || []).map((h) => h.label);
-  if (labels.length === 2) return "Neither " + labels[0] + " nor " + labels[1] + " was found on this machine.";
-  if (labels.length === 1) return labels[0] + " was not found on this machine.";
-  return "No supported agent (" + labels.join(", ") + ") was found on this machine.";
+  const shown = labels.slice(0, 3);
+  const rest = labels.slice(3);
+  return (
+    <div className="d">
+      {"No AI agent on " + thisMachine(platform) + " yet. Doorman guards " + shown.join(", ")}
+      {rest.length > 0 ? " and " : null}
+      {rest.length > 0 ? (
+        <span className="gmore" data-tip={rest.join(", ")} tabIndex={0}>
+          {rest.length} more
+        </span>
+      ) : null}
+      {" "}— install one, then switch this on.
+    </div>
+  );
 }
 
 const PLATFORM_LABELS = { macos: "macOS", windows: "Windows", linux: "Linux" };
@@ -564,6 +586,9 @@ function RulesCard({ state, onGoRules }) {
   const integrity = state.radar.integrity;
   const hosts = state.radar.guard_hosts || [];
   const e = enforcingCount(state);
+  // Nothing on this machine for the guard to live in. While it's off, that is
+  // an empty state with the switch at rest — there is nothing it could do.
+  const noAgents = !installed && hosts.length > 0 && hosts.every((h) => !h.present);
 
   // The app's own state caught up with what was asked for — the switch is at
   // rest again. Also the release valve for a flip that FAILED: main leaves
@@ -588,7 +613,9 @@ function RulesCard({ state, onGoRules }) {
     call.then((res) => {
       setBusy(false);
       if (res && res.ok === false) {
-        setError(res.error || "failed");
+        // The last agent went away between render and click: the strip below
+        // already says so, an error would only repeat it.
+        if (!res.no_agents) setError({ on: target, error: res.error || "unknown error", failures: res.failures || [] });
         setPendingGuard(null);
       }
       // On success the switch stays pending until `guard_installed` agrees
@@ -606,19 +633,23 @@ function RulesCard({ state, onGoRules }) {
       hint={installed ? e.enforcing + " of " + e.total + " rules act before a tool runs" : undefined}
     >
       {error ? (
-        <div className="callout bad" style={{ marginBottom: "var(--s4)" }}>
-          Couldn't update the guard: {error}
-        </div>
+        <GuardProblem
+          title={error.on ? "Couldn't turn the guard on" : "Couldn't turn the guard off"}
+          error={error.error}
+          failures={error.failures}
+        />
       ) : null}
       {/* A sync that can't reach a hook document (usually a config file the
           merge can't follow) means the guard in that agent is running an OLDER
           policy than the one shown below, or none — while every other agent
           took it. The error names each such agent; the one state this card
           must never be quiet about. */}
-      {state.radar.guard_sync_error ? (
-        <div className="callout bad" style={{ marginBottom: "var(--s4)" }}>
-          The guard's hook entries couldn't be updated: {state.radar.guard_sync_error}.
-        </div>
+      {state.radar.guard_sync_error && !error ? (
+        <GuardProblem
+          title={guardSyncTitle(state.radar.guard_sync_failures)}
+          error={state.radar.guard_sync_error}
+          failures={state.radar.guard_sync_failures}
+        />
       ) : null}
       {/* The other state this card must never be quiet about: the guard's
           entry or bundle is not what the app left. A silent fail-open, made
@@ -649,7 +680,7 @@ function RulesCard({ state, onGoRules }) {
           verb the reader has to invert ("which state am I in that this button
           would leave?"). Install/uninstall stays async underneath — the switch
           disables while the hooks are being written. */}
-      <div className={"guardbar " + (installed ? "on" : "off")}>
+      <div className={"guardbar " + (installed ? "on" : noAgents ? "none" : "off")}>
         <span className="gdot" aria-hidden="true" />
         <div className="gtext">
           <div className="t">{guardTitle(hosts)}</div>
@@ -660,7 +691,11 @@ function RulesCard({ state, onGoRules }) {
               a person wants to know is WHICH agents are covered, and whether
               any that live on this Mac is not. Agents that are not on this Mac
               are simply not mentioned. */}
-          <div className="d">{guardHostsSentence(hosts, installed)}</div>
+          {noAgents ? (
+            <NoAgentsLine hosts={hosts} platform={state.platform} />
+          ) : (
+            <div className="d">{guardHostsSentence(hosts, installed, state.platform)}</div>
+          )}
         </div>
         {/* Named for what is happening, not "working…": installing writes
             three hook documents, and the wait is long enough that a person
@@ -674,7 +709,7 @@ function RulesCard({ state, onGoRules }) {
           ariaLabel={guardTitle(hosts)}
           on={installed}
           pending={pendingGuard}
-          disabled={busy}
+          disabled={busy || noAgents}
           onChange={toggleGuard}
         />
       </div>

@@ -44,7 +44,7 @@ import {
   SpoolWatcher,
   guardDir,
   guardHostSummaries,
-  guardInstallProblem,
+  guardProblem,
   installGuard,
   isGuardInstalled,
   refreshGuardBundle,
@@ -53,6 +53,7 @@ import {
   readArmedSessions,
   writeArmedSessions,
   writeGuardPolicy,
+  type GuardProblem,
 } from "./enforcement.js";
 import { McpConfigWatcher } from "./mcp-watch.js";
 import type { McpConfigServer } from "./lib/mcp-inventory.js";
@@ -471,19 +472,17 @@ function recordNotificationCheck(result: { ok: boolean; error?: string; undeterm
 /** Why the last guard sync failed (malformed hook document, unwritable file) —
  * broadcast with the radar state so Settings can say so instead of the app
  * silently displaying a policy the guard on disk isn't running. */
-let guardSyncError: string | undefined;
+let guardSyncProblem: GuardProblem | undefined;
 
 /** Every routine guard re-merge goes through here so a failure is recorded
  * and shown, not swallowed. (The explicit install/uninstall IPC handlers
  * return their outcome to the renderer directly.) */
 function applyGuardSync(): void {
   const outcome = syncGuard(app.getPath("userData"), livePolicy());
-  const error = outcome.ok ? undefined : outcome.error;
-  if (error && error !== guardSyncError) {
-    console.warn(`[doorman] guard sync failed: ${error}`);
-  }
-  if (error !== guardSyncError) {
-    guardSyncError = error;
+  const problem = guardProblem(outcome);
+  if (problem?.error !== guardSyncProblem?.error) {
+    if (problem) console.warn(`[doorman] guard sync failed: ${problem.error}`);
+    guardSyncProblem = problem;
     scheduleRecompute();
   }
 }
@@ -498,7 +497,7 @@ function setGuardWanted(on: boolean): { ok: boolean; error?: string } {
     const outcome = installGuard(app.getPath("userData"), livePolicy());
     // A partial install is ON (some agents are guarded) and still a problem
     // to show: the hosts it couldn't reach are named, one by one.
-    guardSyncError = guardInstallProblem(outcome);
+    guardSyncProblem = guardProblem(outcome);
     // The person wants the guard: from here a missing entry is tampering.
     if (outcome.ok) store.setPrefs({ guard_wanted: true });
     // Coverage is computed from where the guard IS — re-scan so the card
@@ -512,7 +511,7 @@ function setGuardWanted(on: boolean): { ok: boolean; error?: string } {
   // person's own act rather than an attack on the guard.
   store.setPrefs({ guard_wanted: false });
   const outcome = uninstallGuard();
-  guardSyncError = outcome.ok ? undefined : outcome.error;
+  guardSyncProblem = guardProblem(outcome);
   shadowAiState = runShadowAiScan();
   integrity?.check();
   scheduleRecompute();
@@ -1627,7 +1626,9 @@ function recompute(): void {
       // and the coverage card name hosts from this, never from a hard-coded
       // pair.
       guard_hosts: guardHostSummaries(),
-      ...(guardSyncError !== undefined ? { guard_sync_error: guardSyncError } : {}),
+      ...(guardSyncProblem !== undefined
+        ? { guard_sync_error: guardSyncProblem.error, guard_sync_failures: guardSyncProblem.failures }
+        : {}),
       rule_stats: ruleStats,
       ...(integrity?.latest() ? { integrity: integrity.latest() } : {}),
     },
@@ -1707,7 +1708,7 @@ function onIntegrityReport(report: GuardIntegrityReport, previous: GuardIntegrit
       notifyGuardTampered(description, {
         onReinstall: () => {
           const outcome = installGuard(app.getPath("userData"), livePolicy());
-          guardSyncError = guardInstallProblem(outcome);
+          guardSyncProblem = guardProblem(outcome);
           integrity.check();
           scheduleRecompute();
         },
@@ -2905,8 +2906,8 @@ if (!app.requestSingleInstanceLock()) {
     if (isGuardInstalled()) {
       const outcome = installGuard(app.getPath("userData"), livePolicy());
       // Hosts the re-merge couldn't reach are named in Settings, not only the log.
-      guardSyncError = guardInstallProblem(outcome);
-      if (guardSyncError !== undefined) console.warn("[doorman] couldn't re-merge the guard at boot:", guardSyncError);
+      guardSyncProblem = guardProblem(outcome);
+      if (guardSyncProblem !== undefined) console.warn("[doorman] couldn't re-merge the guard at boot:", guardSyncProblem.error);
       if (!outcome.ok) {
         try {
           refreshGuardBundle(app.getPath("userData"));

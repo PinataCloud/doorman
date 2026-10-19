@@ -3153,6 +3153,58 @@ describe("the Updates card says when this copy is outdated", () => {
   });
 });
 
+describe("the guard card's problems stay short (renderer/screens/settings.jsx)", () => {
+  const ctx = loadApp();
+  const host = (id: string, label: string, present: boolean) => ({
+    id, label, source: id, doc_path: "~/." + id, present, installed: false, native_ask: false,
+  });
+  const LABELS = ["Claude Code", "Codex", "Cursor", "Gemini CLI", "Goose"];
+  /** Every node of one tag in SettingsScreen's tree for a radar shape. */
+  const nodes = (radar: Record<string, unknown>, tag: string) => {
+    const state = blankState();
+    ctx.__state = { ...state, platform: "macos", radar: { ...state.radar, ...radar } };
+    return runInContext(
+      `__nodes(SettingsScreen({ state: __state, onGoRules: function () {} }), ${JSON.stringify(tag)}, [], 0)
+        .map(function (n) { var p = n.props || {}; return { cls: p.className || "", kids: JSON.stringify(n.kids), role: p.role || "", disabled: !!p.disabled, tip: p["data-tip"] || "" }; })`,
+      ctx as object,
+      { filename: "settings-guard-problems" },
+    ) as Array<{ cls: string; kids: string; role: string; disabled: boolean; tip: string }>;
+  };
+
+  it("with no agent on this machine, is a quiet empty state: switch at rest, three names and a count", () => {
+    const radar = { guard_installed: false, guard_hosts: LABELS.map((l) => host(l.toLowerCase(), l, false)) };
+    const divs = nodes(radar, "div");
+    expect(divs.some((n) => n.cls === "guardbar none")).toBe(true);
+    const line = divs.find((n) => n.cls === "d" && n.kids.includes("No AI agent on this Mac yet"));
+    expect(line, "the empty-state line").toBeTruthy();
+    // The visible words; the other two ride in the tooltip.
+    expect(JSON.parse(line!.kids)[0]).toBe("No AI agent on this Mac yet. Doorman guards Claude Code, Codex, Cursor");
+    const more = nodes(radar, "span").find((n) => n.cls === "gmore");
+    expect(more?.tip).toBe("Gemini CLI, Goose");
+    expect(nodes(radar, "button").find((n) => n.role === "switch")?.disabled).toBe(true);
+    expect(divs.some((n) => n.cls.includes("callout bad"))).toBe(false);
+  });
+
+  it("lists the agents a sync couldn't reach, one line each, with a single full stop", () => {
+    const radar = {
+      guard_installed: true,
+      guard_hosts: [host("claude", "Claude Code", true), host("hermes", "Hermes Agent", true), host("cursor", "Cursor", true)],
+      guard_sync_error: "Hermes Agent: ~/.hermes/config.yaml is not a YAML document this guard can follow; not touching it. Cursor: ~/.cursor/hooks.json is not valid JSON; not touching it",
+      guard_sync_failures: [
+        { id: "hermes", label: "Hermes Agent", error: "~/.hermes/config.yaml is not a YAML document this guard can follow; not touching it" },
+        { id: "cursor", label: "Cursor", error: "~/.cursor/hooks.json is not valid JSON; not touching it." },
+      ],
+    };
+    const head = nodes(radar, "div").filter((n) => n.cls === "gp-head");
+    expect(head.map((n) => n.kids)).toEqual([JSON.stringify(["The guard couldn't be updated in 2 agents"])]);
+    const items = nodes(radar, "li").map((n) => n.kids);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toContain("Hermes Agent");
+    expect(items[1]).toContain("not valid JSON; not touching it.");
+    expect(items.join("")).not.toContain("..");
+  });
+});
+
 describe("the AI-delivered protection row downloads its model without being asked", () => {
   const ctx = loadApp();
   /** SettingsScreen's tree for one `model_assist.injection_classifier` shape. */

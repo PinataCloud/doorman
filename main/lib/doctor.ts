@@ -318,6 +318,14 @@ function guardChecks(input: DoctorInput): DoctorCheck[] {
           doc: fs.read(doc.path),
         })),
   );
+  // No supported agent here at all: nothing to wire the guard into, so nothing
+  // to check or repair. Before, the missing bundle failed and the doctor
+  // "repaired" it on every run with an install that refuses for exactly this
+  // reason — a repair that could only ever fail.
+  if (!hosts.some((h) => h.present)) {
+    out.push({ id: "guard.hooks", host, title: "Guard hook entries", status: "skip", detail: "No supported agent on this machine yet — nothing to wire the guard into." });
+    return out;
+  }
   const missing: string[] = [];
   const unreadable: string[] = [];
   const docChecks: DoctorCheck[] = [];

@@ -993,6 +993,8 @@ button.link {
 .guardbar .gdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .guardbar.on .gdot { background: var(--good); }
 .guardbar.off .gdot { background: var(--warn); }
+.guardbar.none .gdot { background: var(--ink-4); }
+.guardbar .gmore { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
 .guardbar .gtext { flex: 1; min-width: 0; }
 .guardbar .gtext .t { font-size: var(--t-1); font-weight: 650; }
 .guardbar .gtext .d { font-size: var(--t-2); color: var(--ink-2); margin-top: 1px; }
@@ -1104,6 +1106,17 @@ button.link {
 }
 .callout.info { border-color: color-mix(in srgb, var(--info) var(--mix-2), var(--tan)); background: var(--info-soft); color: var(--info); }
 .callout.bad { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+/* GuardProblem (components.jsx): a red headline, then the reasons in body ink
+   — a paragraph of red text is hard to read and harder to act on. */
+.guardproblem { margin-bottom: var(--s4); }
+.guardproblem .gp-head { font-weight: 650; }
+.guardproblem .gp-list { list-style: none; margin: var(--s2) 0 0; padding: 0; display: grid; gap: var(--s1); }
+.guardproblem .gp-list li,
+.guardproblem .gp-detail,
+.guardproblem .gp-note { color: var(--ink-2); overflow-wrap: anywhere; }
+.guardproblem .gp-list b { color: var(--ink); font-weight: 600; }
+.guardproblem .gp-detail { margin-top: var(--s1); }
+.guardproblem .gp-note { margin-top: var(--s2); font-size: var(--t-2); }
 
 /* ---- wizard popup (rules.jsx WizardPopup) ----
    The rule and exception wizards open over the Rules screen (2026-09-09).

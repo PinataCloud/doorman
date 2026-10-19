@@ -107,7 +107,9 @@ const guardInstall: CliCommand = {
     // setGuardWanted(true): install, and only then record the intent.
     ctx.requireWritable("Turn the guard on");
     const outcome = installGuard(ctx.dataDir, ctx.policy());
-    if (!outcome.ok) throw new CliError(outcome.error);
+    if (!outcome.ok) {
+      throw new CliError(outcome.no_agents ? `${outcome.error}\nRun \`doorman guard status --all\` to see the agents Doorman supports.` : outcome.error);
+    }
     ctx.setPrefs({ guard_wanted: true });
     const report = guardReport(ctx, false);
     const notes = outcome.codex_restart_required ? [ctx.style.yellow("Restart running Codex sessions so they load the new hook.")] : [];
