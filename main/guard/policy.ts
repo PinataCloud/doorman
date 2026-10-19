@@ -838,7 +838,9 @@ export function normalizeConfirm(raw: unknown): ConfirmPolicy {
 export function parsePolicy(json: string | undefined): GuardPolicy {
   if (!json) return defaultPolicy();
   try {
-    const raw = JSON.parse(json) as Record<string, unknown>;
+    // A leading BOM (Windows PowerShell 5.1's `-Encoding UTF8`, Notepad) makes
+    // JSON.parse throw, and a throw here is "every rule back to defaults".
+    const raw = JSON.parse(json.replace(/^\uFEFF/, "")) as Record<string, unknown>;
     if (!raw || typeof raw !== "object") return defaultPolicy();
     const policy = defaultPolicy();
     const modes = raw.modes as Record<string, unknown> | undefined;
