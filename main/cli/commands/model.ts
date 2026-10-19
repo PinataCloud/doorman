@@ -14,11 +14,12 @@ import {
   type ModelManifest,
 } from "../../lib/model-assets.js";
 import { injectionModelSourceFromEnv } from "../../lib/policy-env.js";
-import { autoDownloadView, backgroundDownloadPid, runAutoDownload, type AutoDownloadView } from "../auto-download.js";
+import { releaseLock, takeLock, type LockRecord } from "../../lib/data-owner.js";
+import { activeDownload, autoDownloadView, runAutoDownload, type AutoDownloadView } from "../auto-download.js";
 import { doormanSource, loadClassifier, modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
-import type { CliCommand } from "../command.js";
+import type { CliCommand, ParsedArgs } from "../command.js";
 import type { CliContext } from "../context.js";
-import { CliError, type Styles } from "../output.js";
+import { CliError, type CommandResult, type Styles } from "../output.js";
 
 const MODELS: readonly InjectionModelId[] = ["doorman-1", "stock"];
 
@@ -78,7 +79,7 @@ export function runningModel(
     : !runtime
       ? "the classifier runtime is missing"
       : download.status === "running"
-        ? `downloading ${download.model} in the background, ${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}`
+        ? `${download.by === "app" ? "the app is downloading" : "downloading"} ${download.model}${download.by === "app" ? "" : " in the background"}, ${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}`
         : download.status === "failed"
           ? `the background download failed (${download.error}); retry now: doorman model download`
           : "no model downloaded yet: doorman model download";
@@ -181,32 +182,56 @@ const downloadCommand: CliCommand = {
       const r = await runAutoDownload(ctx);
       return { data: r, text: r.ok ? [] : [`Couldn't download: ${r.error}`], exitCode: r.ok ? 0 : 1 };
     }
-    const background = backgroundDownloadPid(ctx);
-    if (background !== undefined) {
-      throw new CliError(`The model is already downloading in the background (pid ${background}); \`doorman model\` shows its progress.`);
+    // Never two downloads into the same folder: the app (which fetches its
+    // own while it runs), the background one, or another command's.
+    refuseWhileOwned(ctx, "download it");
+    if (!takeLock(ctx.dataDir, "model-download", { pid: process.pid, by: "cli", command: "model download" }, ctx.io.now())) {
+      throw new CliError(alreadyDownloading(activeDownload(ctx)));
     }
-    const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).selected;
-    const manifest = injectionModelManifest(model);
-    // doorman-1 comes from the environment's source when one is named;
-    // every other model from its manifest (the app's startModelDownload).
-    const source = manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? injectionModelSourceFromEnv(ctx.io.env) : undefined;
-    const before = modelStatus(modelsRoot(ctx.dataDir), manifest).present;
-    const progress = progressReporter(ctx, manifest);
     try {
-      await downloadModel(modelsRoot(ctx.dataDir), manifest, { ...(source === undefined ? {} : { source }), onProgress: (p) => progress.update(p) });
-    } catch (err) {
-      progress.done();
-      throw new CliError(`Couldn't download ${model}: ${err instanceof Error ? err.message : String(err)}`);
+      return await downloadNow(ctx, args);
+    } finally {
+      releaseLock(ctx.dataDir, "model-download", process.pid);
     }
-    progress.done();
-    const view = modelView(ctx, model);
-    if (!view.installed) throw new CliError(`${model} downloaded but didn't verify; run it again.`);
-    return {
-      data: view,
-      text: [before ? `${model} was already installed and verified.` : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`],
-    };
   },
 };
+
+/** While the app (or `doorman watch`) runs it owns the models folder too. */
+function refuseWhileOwned(ctx: CliContext, action: string): void {
+  const other = ctx.running();
+  if (!other) return;
+  const who = other.pid !== undefined ? ` (pid ${other.pid})` : "";
+  throw new CliError(`Doorman is running${who}, and it keeps the classifier's model itself; ${action} in the app, or quit it and run this again.`);
+}
+
+function alreadyDownloading(lock: LockRecord | undefined): string {
+  const who = lock?.by === "app" ? "The app is" : "Another doorman command is";
+  return `${who} already downloading the model${lock ? ` (pid ${lock.pid})` : ""}; \`doorman model\` shows its progress.`;
+}
+
+/** The download the person asked for, with progress on stderr. */
+async function downloadNow(ctx: CliContext, args: ParsedArgs): Promise<CommandResult> {
+  const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).selected;
+  const manifest = injectionModelManifest(model);
+  // doorman-1 comes from the environment's source when one is named;
+  // every other model from its manifest (the app's startModelDownload).
+  const source = manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? injectionModelSourceFromEnv(ctx.io.env) : undefined;
+  const before = modelStatus(modelsRoot(ctx.dataDir), manifest).present;
+  const progress = progressReporter(ctx, manifest);
+  try {
+    await downloadModel(modelsRoot(ctx.dataDir), manifest, { ...(source === undefined ? {} : { source }), onProgress: (p) => progress.update(p) });
+  } catch (err) {
+    progress.done();
+    throw new CliError(`Couldn't download ${model}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  progress.done();
+  const view = modelView(ctx, model);
+  if (!view.installed) throw new CliError(`${model} downloaded but didn't verify; run it again.`);
+  return {
+    data: view,
+    text: [before ? `${model} was already installed and verified.` : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`],
+  };
+}
 
 const removeCommand: CliCommand = {
   name: "model remove",
@@ -214,6 +239,9 @@ const removeCommand: CliCommand = {
   usage: "[--model doorman-1|stock]",
   options: { model: { type: "string" } },
   async run(ctx, args) {
+    refuseWhileOwned(ctx, "remove it");
+    const download = activeDownload(ctx);
+    if (download) throw new CliError(alreadyDownloading(download).replace("; `doorman model` shows its progress.", ": remove it once that finishes."));
     const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).effective;
     const manifest = injectionModelManifest(model);
     const root = modelsRoot(ctx.dataDir);
@@ -276,7 +304,7 @@ const checkCommand: CliCommand = {
       if (!modelStatus(modelsRoot(ctx.dataDir), manifest).present) {
         const download = autoDownloadView(ctx);
         if (download.status === "running") {
-          throw new CliError(`The model is still downloading in the background (${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}); try again once it finishes.`);
+          throw new CliError(`The model is still downloading${download.by === "app" ? " in the app" : " in the background"} (${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}); try again once it finishes.`);
         }
         throw new CliError(`No model downloaded. Run \`doorman model download\` first.`);
       }

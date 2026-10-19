@@ -118,13 +118,14 @@ describe("model assets", () => {
     expect(fetchImpl.hits).toEqual(["model.onnx"]);
   });
 
-  it("a build that pins a newer revision calls the old model absent and fetches only what changed — even at the same byte size", async () => {
+  it("a build that pins a newer revision gets its own folder, fetches only what changed — even at the same byte size — and leaves the old one", async () => {
     // This IS the auto-update path, and there is no other machinery behind it:
     // `present` means every file pinned by THIS build is on disk and recorded
-    // as verified against THIS pin, so a newer pin makes the old weights fail
-    // and `ensureInjectionModel` downloads over them at the next boot. A
-    // retrained model of the same architecture has weights of the SAME size
-    //, so size alone must not pass.
+    // as verified against THIS pin, so a newer pin finds its folder empty and
+    // `ensureInjectionModel` downloads it at the next boot. A retrained model of
+    // the same architecture has weights of the SAME size, so size alone must
+    // not pass. The old revision stays: the app and the CLI update separately,
+    // and the one still pinning it must not re-download over the other.
     const v1 = { "config.json": "{}", "model.onnx": "old".repeat(100) };
     const m1 = manifest(v1);
     await downloadModel(root, m1, { fetchImpl: serving(v1) });
@@ -133,19 +134,51 @@ describe("model assets", () => {
     const v2 = { "config.json": "{}", "model.onnx": "new".repeat(100) }; // same size
     const m2 = manifest(v2);
     m2.version = "next";
+    expect(modelDir(root, m2)).not.toBe(modelDir(root, m1));
     // The app sees the model it pins as NOT installed, which is what starts it.
     expect(modelStatus(root, m2).present).toBe(false);
-    expect(modelStatus(root, m2).missing).toEqual(["model.onnx"]);
 
     const fetchImpl = serving(v2);
     await downloadModel(root, m2, { fetchImpl });
-    // Only the file that moved is re-fetched — and REPLACED in place, never
-    // left beside the old one; the unchanged small files cost nothing.
+    // Only the file that moved is fetched; the unchanged one is linked from
+    // the old revision's folder.
     expect(fetchImpl.hits).toEqual(["model.onnx"]);
     expect(modelStatus(root, m2).present).toBe(true);
     expect(readFileSync(join(modelDir(root, m2), "model.onnx"), "utf8")).toBe(v2["model.onnx"]);
-    // …and the old pin no longer passes either.
-    expect(modelStatus(root, m1).present).toBe(false);
+    // …and the build still pinning the old weights keeps them.
+    expect(modelStatus(root, m1).present).toBe(true);
+    expect(await reverifyModel(root, m1)).toEqual([]);
+  });
+
+  it("adopts an install from before revision folders without a download", async () => {
+    const files = { "config.json": "{}", "model.onnx": "w".repeat(300) };
+    const m = manifest(files);
+    // What a build without revision folders left: `<name>/` and its record.
+    const legacy = join(root, m.name);
+    mkdirSync(legacy, { recursive: true });
+    for (const [name, text] of Object.entries(files)) writeFileSync(join(legacy, name), text);
+    writeFileSync(join(legacy, VERIFIED_FILE), JSON.stringify(Object.fromEntries(m.files.map((f) => [f.name, f.sha256]))));
+    expect(modelStatus(root, m).present).toBe(false);
+
+    const fetchImpl = serving(files);
+    await downloadModel(root, m, { fetchImpl });
+    expect(fetchImpl.hits).toEqual([]);
+    expect(modelStatus(root, m).present).toBe(true);
+    // The old folder stays for the build that still reads it.
+    expect(readdirSync(legacy).sort()).toEqual([VERIFIED_FILE, "config.json", "model.onnx"]);
+  });
+
+  it("keeps its own revision and the newest other one, and prunes older ones", async () => {
+    const versions = ["a", "b", "c"].map((v) => ({ "config.json": "{}", "model.onnx": v.repeat(200) }));
+    const manifests = versions.map((v) => manifest(v));
+    for (const [i, m] of manifests.entries()) {
+      await downloadModel(root, m, { fetchImpl: serving(versions[i]!) });
+      await new Promise((resolve) => setTimeout(resolve, 15)); // distinct record times
+    }
+    // c was fetched last: it keeps itself and b (the newest other), not a.
+    expect(modelStatus(root, manifests[2]!).present).toBe(true);
+    expect(modelStatus(root, manifests[1]!).present).toBe(true);
+    expect(existsSync(modelDir(root, manifests[0]!))).toBe(false);
   });
 
   it("a file changed on disk after it was verified (same size) is caught at load, loses its record, and is re-fetched alone", async () => {

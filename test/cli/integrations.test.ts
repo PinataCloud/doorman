@@ -117,7 +117,7 @@ afterEach(() => {
 /** Another Doorman (the app, or `doorman watch`) holding the heartbeat. */
 function appRunning(): void {
   mkdirSync(join(dataDir, "doorman", "guard"), { recursive: true });
-  writeFileSync(join(dataDir, "doorman", "guard", "app.json"), JSON.stringify({ at: new Date().toISOString(), pid: process.pid + 1, version: "9.9.9" }));
+  writeFileSync(join(dataDir, "doorman", "guard", "app.json"), JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, version: "9.9.9" }));
 }
 
 describe("doorman mcp", () => {
@@ -298,15 +298,17 @@ describe("the classifier model downloads on its own", () => {
     active: string | null;
     auto_download: { status: string; model?: string; error?: string };
   }
-  const lock = () => join(dataDir, "models", ".auto-download.lock");
+  const lock = () => join(dataDir, "doorman", "locks", "model-download.json");
   const record = () => readJson<{ failures: number; error?: string }>(join(dataDir, "models", ".auto-download.json"));
   let spawned: string[][];
-  /** The fake child is this test process: a live pid, so its lock holds. */
+  /** The fake child is the test runner's parent: alive, so its lock holds,
+   * and — like a real child — not the process running the next command. */
+  const child = process.ppid;
   const spawnHere = () => {
     spawned = [];
     ioExtra.spawnDetached = (args: readonly string[]) => {
       spawned.push([...args]);
-      return process.pid;
+      return child;
     };
   };
 
@@ -336,7 +338,7 @@ describe("the classifier model downloads on its own", () => {
     // A download the person asks for doesn't race it over the same files.
     const manual = await dm(["model", "download"]);
     expect(manual.code).toBe(1);
-    expect(manual.err).toContain(`already downloading in the background (pid ${process.pid})`);
+    expect(manual.err).toContain(`Another doorman command is already downloading the model (pid ${child})`);
   });
 
   it("starts nothing with the classifier off, while the app owns the data, or for the model commands", async () => {

@@ -197,9 +197,11 @@ turn a feature on, and every write keeps a `.bak` beside the file:
 Data lives under `~/Library/Application Support/Doorman/` (`%APPDATA%\Doorman`
 on Windows, `~/.config/Doorman` on Linux): `store/` (the turn store,
 findings, titles, cursors and the Keychain-encrypted evidence vault),
-`prefs.json`, `models/` (one directory per downloaded model, each with a
-`.verified.json` recording the sha256 every file was checked against) and
-`doorman/` (the guard and MCP bundles).
+`prefs.json`, `models/` (one directory per downloaded model revision,
+`<name>@<pins>`, each with a `.verified.json` recording the sha256 every file
+was checked against) and `doorman/` (the guard and MCP bundles, and the locks
+the app and the [CLI](cli/README.md) use to take turns writing,
+`main/lib/data-owner.ts`).
 
 ## Develop
 

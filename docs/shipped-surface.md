@@ -45,6 +45,9 @@ Inside `app.asar`:
   (`Apache-2.0`), the two runtime dependencies. No scripts or dev dependencies.
 - `build/main/**` — the compiled main process, guard bundle, MCP server and
   gateway. Compiled with `removeComments`, so no source commentary ships.
+  Includes `build-info.json` (`scripts/stamp-build.mjs`): the commit hash and
+  commit time the build was made from, which the app and the CLI compare to
+  tell whose guard bundle is newer.
 - `renderer/` — `index.html`, `app.css`, `tokens.css` and one precompiled,
   comment-free `app.min.js` (`scripts/build-renderer.mjs`). The in-page JSX
   compiler (`assets/vendor/babel.js`) is a development-only file and is

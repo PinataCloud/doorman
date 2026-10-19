@@ -379,6 +379,42 @@ type LegacyPrefs = Partial<Prefs> & {
   notify_weekly_digest?: boolean;
 };
 
+/**
+ * Every key this build's Prefs and its stored policy have. The app and the CLI
+ * are separate builds that update separately and share prefs.json, so a file
+ * may carry keys a NEWER build added; sanitizePrefs keeps those as they are
+ * instead of dropping them when this build writes the file. Listing a key here
+ * is what makes it "known" — the checks below fail to compile when a key of
+ * the type is missing from its list.
+ */
+const PREF_KEYS = [
+  "retention_days", "notify_findings", "notify_spend_digest", "spend_digest_period", "notify_startup_digest",
+  "notify_held", "notify_coaching", "mcp_answers", "vscode_extension", "mcp_recognized", "notify_blocked_alerted",
+  "last_run_version", "reopen_after_update", "tray_display", "appearance", "policy", "guard_wanted",
+  "rule_packs_enabled", "security_level", "saved_rule_sets", "mcp_recognized_at", "notify_security_digest",
+  "security_digest_period", "show_false_positives", "confidence_bands", "onboarding_open", "defaults_v",
+] as const satisfies readonly (keyof Prefs)[];
+const POLICY_KEYS = [
+  "version", "modes", "disabled", "ignore", "confirm", "custom_rules", "mcp_permissions", "mcp_armed_escalation",
+  "approved_mcp_servers", "armed_escalation", "second_opinion", "injection_classifier", "wallets",
+] as const satisfies readonly (keyof GuardPolicy)[];
+type Unlisted<T, K extends readonly PropertyKey[]> = Exclude<keyof T, K[number]>;
+const PREF_KEYS_COMPLETE: [Unlisted<Prefs, typeof PREF_KEYS>] extends [never] ? true : Unlisted<Prefs, typeof PREF_KEYS> = true;
+const POLICY_KEYS_COMPLETE: [Unlisted<GuardPolicy, typeof POLICY_KEYS>] extends [never] ? true : Unlisted<GuardPolicy, typeof POLICY_KEYS> = true;
+void PREF_KEYS_COMPLETE;
+void POLICY_KEYS_COMPLETE;
+/** Keys a migration folded away: known, and gone on purpose. */
+const RETIRED_PREF_KEYS = ["notify_daily_digest", "notify_weekly_digest"] as const;
+const KNOWN_PREF_KEYS: ReadonlySet<string> = new Set([...PREF_KEYS, ...RETIRED_PREF_KEYS]);
+const KNOWN_POLICY_KEYS: ReadonlySet<string> = new Set(POLICY_KEYS);
+
+/** A newer build's keys, carried over as they are. */
+function carryUnknownKeys(raw: object, into: object, known: ReadonlySet<string>): void {
+  for (const [key, value] of Object.entries(raw)) {
+    if (!known.has(key) && value !== undefined) (into as Record<string, unknown>)[key] = value;
+  }
+}
+
 /** Has this file already seen the generation that moved `key`? */
 function ownsDefault(raw: LegacyPrefs, key: string): boolean {
   const seen = typeof raw.defaults_v === "number" ? raw.defaults_v : 1;
@@ -901,6 +937,8 @@ export function sanitizePrefs(raw: LegacyPrefs): Prefs {
     const derived = levelOfModes(base.policy.modes);
     if (derived !== null) base.security_level = derived;
   }
+  carryUnknownKeys(raw, base, KNOWN_PREF_KEYS);
+  if (raw.policy && typeof raw.policy === "object") carryUnknownKeys(raw.policy, base.policy, KNOWN_POLICY_KEYS);
   return base;
 }
 

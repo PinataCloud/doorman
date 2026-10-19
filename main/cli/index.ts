@@ -97,8 +97,9 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     env.stderr.write(`doorman ${command.name}: expected ${commandHelp(command)[0]!.replace("Usage: ", "")}\n`);
     return 2;
   }
+  const ctx = new CliContext(env);
+  ctx.commandName = command.name;
   try {
-    const ctx = new CliContext(env);
     // The classifier's model, if it is on and not here yet: fetched by a
     // detached child while this command runs (auto-download.ts).
     maybeStartModelDownload(ctx, command.name);
@@ -113,6 +114,9 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     }
     env.stderr.write(`doorman: ${err instanceof Error ? (verbose ? (err.stack ?? err.message) : err.message) : String(err)}\n`);
     return 1;
+  } finally {
+    // An app waiting to start goes ahead the moment this command is done.
+    ctx.releaseWrite();
   }
 }
 

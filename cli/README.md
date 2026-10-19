@@ -41,10 +41,23 @@ The CLI uses the desktop app's own data directory (macOS:
 Windows: `%APPDATA%\Doorman`; `DOORMAN_APPDATA_DIR` overrides), so the CLI and
 the app see one store, one policy and one guard.
 
-Only one of them changes things at a time. While the app (or `doorman watch`)
-is running, read commands work on a copy of the store, and commands that change
-the policy, hooks or settings ask you to make the change in the app or quit it
-first.
+Only one of them changes things at a time, and they can run side by side or
+one after the other without stepping on each other:
+
+- While the app (or `doorman watch`) is running, read commands work on a copy
+  of the store, and commands that change the policy, hooks, settings or the
+  classifier model ask you to make the change in the app or quit it first.
+- When the app starts while a command is writing, it waits for that command,
+  and a long scan stops at its next file and leaves the rest to the app.
+  `doorman watch` hands over to a starting app by itself.
+- Two `doorman` commands at once: the second reads a copy, or asks you to run
+  its change again when the first one finishes.
+- One classifier download at a time: whichever of the two starts second waits
+  for the other's download and uses it.
+- The app and the CLI update separately, so they may be different versions.
+  Each keeps the classifier weights it pins in its own folder, neither replaces
+  a newer version's guard with an older one or reports it as tampered, and
+  neither drops settings the other added.
 
 The app keeps the raw evidence behind each finding encrypted in the macOS
 Keychain. The CLI doesn't open it, so `doorman findings show --reveal` reads

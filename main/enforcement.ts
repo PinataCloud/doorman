@@ -39,6 +39,7 @@ import { GUARD_COMMAND_MARKER, hookTimeoutSeconds, isGuardCommand, type GuardPol
 import { DEFAULT_HOST, HOSTS, documentReadable } from "./guard/hosts/index.js";
 import { hermesHome, hermesHost, withoutLegacyAllowlistEntries } from "./guard/hosts/hermes.js";
 import type { GuardHostDescriptor, HostArtifact } from "./guard/hosts/types.js";
+import { buildInfo } from "./lib/build-info.js";
 import { assessGuardIntegrity, type GuardIntegrityReport } from "./lib/guard-integrity.js";
 import {
   heartbeatPath,
@@ -309,10 +310,65 @@ export function guardHostSummaries(): GuardHostSummary[] {
   }));
 }
 
-/** Copy the compiled guard bundle into userData (idempotent, cheap). */
-export function refreshGuardBundle(userDataDir: string): void {
+/**
+ * Which Doorman build copied the guard bundle in, and what each file's hash was
+ * then: `<guard dir>/bundle.json`. The app and the CLI are separate builds that
+ * share this one bundle, and either may be the newer; the stamp is how each
+ * recognises the other's bundle as a Doorman one — not tampering — and how an
+ * older build knows not to replace a newer build's guard with its own.
+ *
+ * A bundle file edited after it was copied matches neither this build's
+ * shipped files nor the stamp, so it is reported as before. (Like the rest of
+ * the guard's files, the stamp sits in a user-writable folder: it guards
+ * against a guard that drifted, not against someone rewriting both.)
+ */
+export interface GuardBundleStamp {
+  writer: "app" | "cli";
+  /** The writer's build revision (lib/build-info.ts): its commit time. */
+  revision: number;
+  commit?: string;
+  files: Record<string, string>;
+}
+
+const BUNDLE_STAMP = "bundle.json";
+
+export function readGuardBundleStamp(userDataDir: string): GuardBundleStamp | undefined {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(guardDir(userDataDir), BUNDLE_STAMP), "utf8"));
+    if (!raw || typeof raw !== "object") return undefined;
+    const r = raw as Partial<GuardBundleStamp>;
+    if ((r.writer !== "app" && r.writer !== "cli") || typeof r.revision !== "number" || !r.files || typeof r.files !== "object") return undefined;
+    const files: Record<string, string> = {};
+    for (const [name, hash] of Object.entries(r.files)) if (typeof hash === "string") files[name] = hash;
+    return { writer: r.writer, revision: r.revision, ...(typeof r.commit === "string" ? { commit: r.commit } : {}), files };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The stamp's files are all on disk exactly as stamped. */
+function stampIntact(userDataDir: string, stamp: GuardBundleStamp): boolean {
+  const target = guardDir(userDataDir);
+  const names = Object.keys(stamp.files);
+  return names.length > 0 && names.every((name) => fileHash(join(target, name)) === stamp.files[name]);
+}
+
+/** What this process is, for the stamp: the Electron app, or the CLI under node. */
+function bundleWriter(): GuardBundleStamp["writer"] {
+  return process.versions.electron ? "app" : "cli";
+}
+
+/**
+ * Copy the compiled guard bundle into userData (idempotent, cheap) — unless a
+ * NEWER Doorman build's bundle is there intact: that one stays, so the app and
+ * the CLI never downgrade each other's guard. Returns whether it copied.
+ */
+export function refreshGuardBundle(userDataDir: string): boolean {
   const target = guardDir(userDataDir);
   mkdirSync(target, { recursive: true });
+  const own = buildInfo();
+  const stamp = readGuardBundleStamp(userDataDir);
+  if (stamp && stamp.revision > own.revision && stampIntact(userDataDir, stamp)) return false;
   // __dirname is build/main (or its packaged equivalent); the compiled guard
   // sits right next to this module.
   const from = join(__dirname, "guard");
@@ -326,6 +382,16 @@ export function refreshGuardBundle(userDataDir: string): void {
     copyFileSync(join(from, file), temp);
     renameSync(temp, destination);
   }
+  const files: Record<string, string> = {};
+  for (const file of GUARD_FILES) {
+    const hash = fileHash(join(target, file));
+    if (hash !== undefined) files[file] = hash;
+  }
+  const next: GuardBundleStamp = { writer: bundleWriter(), revision: own.revision, ...(own.commit ? { commit: own.commit } : {}), files };
+  const stampTemp = join(target, `${BUNDLE_STAMP}.doorman.tmp`);
+  writeFileSync(stampTemp, `${JSON.stringify(next, null, 2)}\n`);
+  renameSync(stampTemp, join(target, BUNDLE_STAMP));
+  return true;
 }
 
 export function writeGuardPolicy(userDataDir: string, policy: GuardPolicy): void {
@@ -814,14 +880,23 @@ function fileHash(path: string): string | undefined {
   }
 }
 
-/** The shipped bundle's hashes (the app's own compiled guard/) and the copied
- * bundle's (userData) — what the integrity check compares. */
+/** The hashes the copied bundle (userData) should have, and the ones it has —
+ * what the integrity check compares. Expected is this build's own shipped
+ * guard/, or — when another Doorman build (the app, the CLI) copied its bundle
+ * in and it is intact as that build stamped it — that build's: then nothing
+ * drifted, it is just the other build's guard. */
 export function guardBundleHashes(userDataDir: string): {
   shipped: Record<string, string>;
   copied: Record<string, string | undefined>;
 } {
   const source = join(__dirname, "guard");
   const target = guardDir(userDataDir);
+  // Another build's: a different revision. A stamp claiming THIS revision
+  // must match this build's own files, so it falls through to them.
+  const stamp = readGuardBundleStamp(userDataDir);
+  if (stamp && stamp.revision !== buildInfo().revision && stampIntact(userDataDir, stamp)) {
+    return { shipped: { ...stamp.files }, copied: Object.fromEntries(Object.keys(stamp.files).map((f) => [f, fileHash(join(target, f))])) };
+  }
   const shipped: Record<string, string> = {};
   const copied: Record<string, string | undefined> = {};
   for (const file of GUARD_FILES) {

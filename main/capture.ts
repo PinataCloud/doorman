@@ -160,6 +160,10 @@ export interface EngineDeps {
    * the verdict cache is keyed by. Absent: the policy's selection. */
   injectionModelInUse?(): InjectionModelId;
   log(message: string): void;
+  /** Asked between files while scanning: true ends the scan there, keeping the
+   * cursors of what was read — a CLI command an app that is starting up waits
+   * for (lib/data-owner.ts). */
+  shouldStop?(): boolean;
 }
 
 interface FileCursor {
@@ -903,6 +907,7 @@ export class CaptureEngine {
       else onDisk.add(id);
     }
     for (const path of listing.paths) {
+      if (this.stopRequested()) break;
       const stat = this.documentCursor(path);
       if (!stat) continue;
       this.filesSeen += 1;
@@ -971,6 +976,21 @@ export class CaptureEngine {
     return [...this.planWindows.values()].sort((a, b) => (a.at < b.at ? 1 : -1));
   }
 
+  /** shouldStop, asked at most every quarter second and sticky once true. */
+  private stopping = false;
+  private stopAskedAt = 0;
+  private stopRequested(): boolean {
+    if (this.stopping) return true;
+    const ask = this.deps.shouldStop;
+    if (!ask) return false;
+    const now = Date.now();
+    if (now - this.stopAskedAt < 250) return false;
+    this.stopAskedAt = now;
+    this.stopping = ask();
+    if (this.stopping) this.deps.log("another Doorman is taking over the store: stopping this scan at the files read so far");
+    return this.stopping;
+  }
+
   async scan(): Promise<void> {
     if (this.scanning) {
       this.scanQueued = true;
@@ -982,11 +1002,12 @@ export class CaptureEngine {
       this.filesSeen = 0;
       let changed = false;
       changed = (await this.scanRoot(this.deps.claudeProjectsDir, "claude-code", cutoffMs)) || changed;
-      changed = (await this.scanRoot(this.deps.codexSessionsDir, "codex", cutoffMs)) || changed;
+      if (!this.stopRequested()) changed = (await this.scanRoot(this.deps.codexSessionsDir, "codex", cutoffMs)) || changed;
       // Every REGISTERED host that is actually on this machine, through the
       // same cursor/parse/detect pipeline. A descriptor that throws costs its
       // own documents and nothing else.
       for (const source of this.presentSources()) {
+        if (this.stopRequested()) break;
         try {
           changed = (await this.scanSource(source, cutoffMs)) || changed;
         } catch (err) {
@@ -1043,6 +1064,7 @@ export class CaptureEngine {
     }
     let changed = false;
     for (const rel of entries) {
+      if (this.stopRequested()) break;
       const path = join(root, rel);
       let stat;
       try {
