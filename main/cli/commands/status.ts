@@ -7,6 +7,7 @@ import { hiddenConfidenceBands } from "../../state.js";
 import { modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
 import type { CliCommand } from "../command.js";
 import { runningModel } from "./model.js";
+import { cachedUpdateStatus } from "../update-check.js";
 
 export const statusCommand: CliCommand = {
   name: "status",
@@ -33,7 +34,10 @@ export const statusCommand: CliCommand = {
       handle.close();
     }
     const level = levelOfModes(policy.modes) ?? "custom";
+    // From the last daily check; status itself never waits on the network.
+    const update = cachedUpdateStatus(ctx, ctx.io.packageName ?? "@pinata/doorman", ctx.io.version);
     const data = {
+      cli: { version: ctx.io.version, ...(update.latest !== undefined ? { latest: update.latest } : {}), update_available: update.update_available },
       data_dir: ctx.dataDir,
       running: running ?? null,
       guard: { wanted: prefs.guard_wanted, installed: guarded, not_installed: unguarded },
@@ -52,6 +56,7 @@ export const statusCommand: CliCommand = {
     const text = [
       `${s.bold("Doorman")}  ${s.dim(ctx.dataDir)}`,
       `  app        ${running ? s.green(`${running.version?.startsWith("cli-") ? "doorman watch running" : "running"}${running.pid !== undefined ? ` (pid ${running.pid})` : ""}`) : s.dim("not running")}`,
+      `  cli        ${ctx.io.version}${update.update_available ? s.yellow(`  (${update.latest} available: doorman update)`) : ""}`,
       `  guard      ${guarded.length > 0 ? s.green(guarded.join(", ")) : s.yellow("not installed")}${unguarded.length > 0 ? s.dim(`  · not guarded: ${unguarded.join(", ")}`) : ""}`,
       `  level      ${level}`,
       `  model      ${runs.text}`,

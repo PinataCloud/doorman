@@ -17,6 +17,7 @@ import { readPrefsFile, writePrefsFile } from "../lib/prefs-file.js";
 import { Store, type Prefs } from "../state.js";
 import { loadClassifier, modelPlan } from "./classifier.js";
 import { CliError, styles, type Styles } from "./output.js";
+import type { NpmRunner } from "./commands/update.js";
 
 export interface CliEnvironment {
   env: NodeJS.ProcessEnv;
@@ -32,8 +33,15 @@ export interface CliEnvironment {
   /** Start `doorman <args>` detached from this process, returning its pid
    * (the background model download). Absent = never start one: tests. */
   spawnDetached?(args: readonly string[]): number | undefined;
-  /** What model downloads fetch with; absent = the global fetch. */
+  /** What model downloads and the update check fetch with; absent = the global fetch. */
   fetch?: FetchLike;
+  /** The npm package this CLI is (its update check asks the registry about
+   * it); absent = `@pinata/doorman`. */
+  packageName?: string;
+  /** The directory the package is installed in; absent = beside build/main. */
+  packageDir?: string;
+  /** Runs npm for `doorman update`; absent = the real npm. */
+  runNpm?: NpmRunner;
 }
 
 /** Whoever answers held calls right now: the desktop app, or `doorman watch`. */
