@@ -7,20 +7,25 @@ import type { CliCommand } from "./command.js";
 import { COMMANDS } from "./commands/index.js";
 import { CliContext, defaultEnvironment, type CliEnvironment } from "./context.js";
 import { CliError, table } from "./output.js";
+import { startUpdateCheck } from "./update-check.js";
 
-/** The CLI's own version: `cli/package.json` in the repo, the root
+const DEFAULT_PACKAGE = "@pinata/doorman";
+
+/** The CLI's own package: `cli/package.json` in the repo, the root
  * `package.json` in the published package (both three levels above build/main/cli). */
-function packageVersion(): string {
+function packageInfo(): { name: string; version: string } {
   const root = join(__dirname, "..", "..", "..");
   for (const path of [join(root, "cli", "package.json"), join(root, "package.json")]) {
     try {
       const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
-      if (raw && typeof raw === "object" && "version" in raw && typeof raw.version === "string") return raw.version;
+      if (raw && typeof raw === "object" && "version" in raw && typeof raw.version === "string") {
+        return { name: "name" in raw && typeof raw.name === "string" ? raw.name : DEFAULT_PACKAGE, version: raw.version };
+      }
     } catch {
       // the other location
     }
   }
-  return "0.0.0";
+  return { name: DEFAULT_PACKAGE, version: "0.0.0" };
 }
 
 /** The longest command name the arguments start with (`guard install` before `guard`). */
@@ -58,12 +63,13 @@ function commandHelp(command: CliCommand): string[] {
 
 /** Runs one invocation and returns the exit code; never throws. */
 export async function main(argv: readonly string[], io?: CliEnvironment): Promise<number> {
-  const version = io?.version ?? packageVersion();
+  const pkg = io ? { name: io.packageName ?? DEFAULT_PACKAGE, version: io.version } : packageInfo();
+  const version = pkg.version;
   const json = argv.includes("--json");
   const verbose = argv.includes("--verbose");
   const help = argv.includes("--help") || argv.includes("-h");
   const args = argv.filter((a) => a !== "--json" && a !== "--verbose" && a !== "--help" && a !== "-h");
-  const env = io ?? defaultEnvironment(version, verbose);
+  const env = io ?? { ...defaultEnvironment(version, verbose), packageName: pkg.name };
   const write = (lines: readonly string[]) => env.stdout.write(lines.length > 0 ? `${lines.join("\n")}\n` : "");
 
   if (args[0] === "--version" || args[0] === "-v") {
@@ -99,6 +105,10 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   }
   const ctx = new CliContext(env);
   ctx.commandName = command.name;
+  // Whether a newer CLI is out: asked at most once a day, while the command
+  // runs, and said on stderr after its output (update-check.ts).
+  const updateNotice = command.name === "update" ? undefined : startUpdateCheck(ctx, env.packageName ?? DEFAULT_PACKAGE, env.version);
+  let code: number;
   try {
     // The classifier's model, if it is on and not here yet: fetched by a
     // detached child while this command runs (auto-download.ts).
@@ -106,18 +116,22 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     const result = await command.run(ctx, { values: parsed.values, positionals: parsed.positionals });
     if (json) env.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
     else write(result.text);
-    return result.exitCode ?? 0;
+    code = result.exitCode ?? 0;
   } catch (err) {
     if (err instanceof CliError) {
       env.stderr.write(`doorman: ${err.message}\n`);
-      return err.exitCode;
+      code = err.exitCode;
+    } else {
+      env.stderr.write(`doorman: ${err instanceof Error ? (verbose ? (err.stack ?? err.message) : err.message) : String(err)}\n`);
+      code = 1;
     }
-    env.stderr.write(`doorman: ${err instanceof Error ? (verbose ? (err.stack ?? err.message) : err.message) : String(err)}\n`);
-    return 1;
   } finally {
     // An app waiting to start goes ahead the moment this command is done.
     ctx.releaseWrite();
   }
+  const notice = await updateNotice?.();
+  if (notice) env.stderr.write(`\n${ctx.style.yellow(notice)}\n`);
+  return code;
 }
 
 if (require.main === module) {

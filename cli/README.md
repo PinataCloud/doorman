@@ -30,6 +30,7 @@ doorman status
 | `doorman doctor` | Check the guard, MCP and editor wiring, and repair it |
 | `doorman model` | The on-device injection classifier ([Llama-Doorman-22M](https://huggingface.co/PinataCloud/Llama-Doorman-22M)): status, download, check text |
 | `doorman config` | Settings shared with the app (retention, confidence bands and more) |
+| `doorman update` | Install a newer Doorman CLI with npm; `--check` only says whether one is out |
 
 Every command takes `--json` for machine-readable output and `--help` for its
 options.
@@ -63,16 +64,31 @@ The app keeps the raw evidence behind each finding encrypted in the macOS
 Keychain. The CLI doesn't open it, so `doorman findings show --reveal` reads
 the masked evidence back from the transcripts instead.
 
+## Updates
+
+Like the app, the CLI looks for a newer version on its own: at most once a
+day it asks the npm registry for the latest `@pinata/doorman`, and when one is
+out it says so on stderr after the command's output. `doorman status` shows it
+too. `doorman update` installs it with `npm install --global`; a copy run
+through npx or installed in a project tells you the command to run there
+instead.
+
+The check never delays a command by more than a moment, and an offline machine
+asks once a day. It is off under CI and when stderr is not a terminal, so
+scripts never see the notice. Set `DOORMAN_NO_UPDATE_CHECK=1` (or
+`NO_UPDATE_NOTIFIER=1`) to turn it off.
+
 ## Privacy
 
 Doorman reads the agents' transcript files on this machine and stores what it
 finds under its data directory. It has no account, no server and no telemetry.
-The only download is the injection-classifier model, from Hugging Face with
-every file pinned by sha256, and nothing else. Like the app, the CLI fetches it
-on its own: the first command that finds it missing starts the download in the
-background (about 96 MB) and carries on, and `doorman model` shows its
-progress. Set `DOORMAN_INJECTION_CLASSIFIER=off` to turn the classifier, and
-with it the download, off.
+It makes two requests on its own, and neither carries anything about you or
+your machine: the daily update check above, and the injection-classifier
+model, from Hugging Face with every file pinned by sha256. Like the app, the
+CLI fetches the model on its own: the first command that finds it missing
+starts the download in the background (about 96 MB) and carries on, and
+`doorman model` shows its progress. Set `DOORMAN_INJECTION_CLASSIFIER=off` to
+turn the classifier, and with it the download, off.
 
 ## License
 

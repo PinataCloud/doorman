@@ -161,15 +161,26 @@ Audited from the built `dist/cli-package` (2026-10-16, 0.1.0): 150 files,
   (from `cli/package.json`; its one dependency, `@huggingface/tokenizers`, is
   pinned to the app's version).
 
-Network: the same as the app minus the updater. The only request the CLI
-makes on its own is the classifier model download (Hugging Face,
-sha256-pinned): like the app, it starts by itself while the classifier is on
-and the model is missing, as a detached `doorman model download --auto` child
-of whichever command noticed (`main/cli/auto-download.ts`);
-the second-opinion call stays loopback-only. URLs in the code beyond
-`huggingface.co`, `127.0.0.1` and schema ids are the vendor consoles linked in
-credential-rotation guidance (GitHub, OpenAI, AWS, Stripe…), shown as text and
-never fetched. The secret grep below came back empty for the package.
+Network: the same as the app, with npm in place of the app's updater. The CLI
+makes two requests on its own:
+
+- **Update check** (`main/cli/update-check.ts`): at most once a day, a GET to
+  `https://registry.npmjs.org/<its package name>/latest` that carries nothing
+  about the machine; the answer is cached in `<data>/cli-update.json`. Off when
+  `DOORMAN_NO_UPDATE_CHECK` or `NO_UPDATE_NOTIFIER` is set, under `CI`, and
+  when stderr is not a terminal. `DOORMAN_NPM_REGISTRY` points it at another
+  registry. Installing runs only on `doorman update`, through the person's own
+  `npm install --global`.
+- **Classifier model download** (Hugging Face, sha256-pinned): like the app,
+  it starts by itself while the classifier is on and the model is missing, as
+  a detached `doorman model download --auto` child of whichever command
+  noticed (`main/cli/auto-download.ts`).
+
+The second-opinion call stays loopback-only. URLs in the code beyond
+`huggingface.co`, `registry.npmjs.org`, `127.0.0.1` and schema ids are the
+vendor consoles linked in credential-rotation guidance (GitHub, OpenAI, AWS,
+Stripe…), shown as text and never fetched. The secret grep below came back
+empty for the package.
 
 What it writes: the app's own data directory (shared, see `cli/README.md`)
 and, only when asked (`guard install`, `mcp server install`, `gateway route`,
