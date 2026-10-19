@@ -26,6 +26,8 @@ let appData: string;
 let dataDir: string;
 let saved: { HOME?: string; DOORMAN_APPDATA_DIR?: string };
 let extraEnv: Record<string, string>;
+/** More of the CLI's environment: the background spawn, fetch and the clock. */
+let ioExtra: Record<string, unknown>;
 
 interface Run {
   code: number;
@@ -51,6 +53,7 @@ async function dm(argv: string[], stdin = ""): Promise<Run> {
     stdin: Readable.from([stdin]),
     now: () => Date.now(),
     verbose: false,
+    ...ioExtra,
   });
   return { code, out, err, json: <T,>() => JSON.parse(out) as T };
 }
@@ -81,6 +84,7 @@ beforeEach(() => {
   appData = join(root, "appdata");
   dataDir = join(appData, "Doorman");
   extraEnv = {};
+  ioExtra = {};
   saved = { HOME: process.env.HOME, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
   // The guard, MCP and doctor code resolves hook documents from homedir().
   process.env.HOME = home;
@@ -113,7 +117,7 @@ afterEach(() => {
 /** Another Doorman (the app, or `doorman watch`) holding the heartbeat. */
 function appRunning(): void {
   mkdirSync(join(dataDir, "doorman", "guard"), { recursive: true });
-  writeFileSync(join(dataDir, "doorman", "guard", "app.json"), JSON.stringify({ at: new Date().toISOString(), pid: process.pid + 1, version: "9.9.9" }));
+  writeFileSync(join(dataDir, "doorman", "guard", "app.json"), JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, version: "9.9.9" }));
 }
 
 describe("doorman mcp", () => {
@@ -284,6 +288,118 @@ describe("doorman model", () => {
 
       expect((await dm(["model", "remove", "--model", "doorman-1"])).code).toBe(0);
       expect((await dm(["model", "--json"])).json<ModelStatusJson>().models[0]?.installed).toBe(false);
+    },
+    60_000,
+  );
+});
+
+describe("the classifier model downloads on its own", () => {
+  interface AutoJson {
+    active: string | null;
+    auto_download: { status: string; model?: string; error?: string };
+  }
+  const lock = () => join(dataDir, "doorman", "locks", "model-download.json");
+  const record = () => readJson<{ failures: number; error?: string }>(join(dataDir, "models", ".auto-download.json"));
+  let spawned: string[][];
+  /** The fake child is the test runner's parent: alive, so its lock holds,
+   * and — like a real child — not the process running the next command. */
+  const child = process.ppid;
+  const spawnHere = () => {
+    spawned = [];
+    ioExtra.spawnDetached = (args: readonly string[]) => {
+      spawned.push([...args]);
+      return child;
+    };
+  };
+
+  it("a fresh install says no model runs yet, instead of naming the fallback", async () => {
+    const r = await dm(["model"]);
+    expect(r.out).toMatch(/running\s+none\s+\(no model downloaded yet: doorman model download\)/);
+    expect(r.out).not.toMatch(/running\s+stock/);
+    expect((await dm(["model", "--json"])).json<AutoJson>().active).toBeNull();
+    expect((await dm(["status"])).out).toMatch(/model\s+none/);
+    expect((await dm(["model", "select", "stock"])).out).toContain("Until then no model runs.");
+  });
+
+  it("the first command starts the download in the background, and only one at a time", async () => {
+    spawnHere();
+    expect((await dm(["status"])).code).toBe(0);
+    expect(spawned).toEqual([["model", "download", "--auto"]]);
+    expect(existsSync(lock())).toBe(true);
+    await dm(["findings"]);
+    expect(spawned).toHaveLength(1);
+
+    const view = await dm(["model"]);
+    expect(view.out).toMatch(/running\s+none\s+\(downloading doorman-1 in the background, 0 B of 96\.0 MB\)/);
+    expect((await dm(["model", "--json"])).json<AutoJson>().auto_download).toMatchObject({ status: "running", model: "doorman-1" });
+    const check = await dm(["model", "check", "hello"]);
+    expect(check.code).toBe(1);
+    expect(check.err).toContain("still downloading in the background");
+    // A download the person asks for doesn't race it over the same files.
+    const manual = await dm(["model", "download"]);
+    expect(manual.code).toBe(1);
+    expect(manual.err).toContain(`Another doorman command is already downloading the model (pid ${child})`);
+  });
+
+  it("starts nothing with the classifier off, while the app owns the data, or for the model commands", async () => {
+    spawnHere();
+    extraEnv = { DOORMAN_INJECTION_CLASSIFIER: "off" };
+    await dm(["status"]);
+    expect((await dm(["model"])).out).toMatch(/running\s+none\s+\(the classifier is off\)/);
+    extraEnv = {};
+
+    const { heartbeatPath } = require(join(build, "guard", "handshake.js")) as { heartbeatPath(dir: string): string };
+    const { guardDir } = require(join(build, "enforcement.js")) as { guardDir(dataDir: string): string };
+    mkdirSync(guardDir(dataDir), { recursive: true });
+    const heartbeat = heartbeatPath(guardDir(dataDir));
+    writeFileSync(heartbeat, `${JSON.stringify({ at: new Date().toISOString(), pid: 1, version: "0.2.0" })}\n`);
+    await dm(["status"]);
+    rmSync(heartbeat);
+
+    await dm(["model", "select", "doorman-1"]);
+    await dm(["model", "remove"]);
+    expect(spawned).toEqual([]);
+  });
+
+  it("the background child records a failure, releases the lock and spaces out the retry", async () => {
+    spawnHere();
+    extraEnv = { DOORMAN_INJECTION_CLASSIFIER_SOURCE: "https://models.example/doorman-1/" };
+    const asked: string[] = [];
+    ioExtra.fetch = async (url: string) => {
+      asked.push(url);
+      return { ok: false, status: 503, body: null };
+    };
+    const child = await dm(["model", "download", "--auto", "--json"]);
+    expect(child.code).toBe(1);
+    // doorman-1 first, then the stock model it falls back to.
+    expect(asked[0]).toBe("https://models.example/doorman-1/config.json");
+    expect(asked.some((u) => u.includes("huggingface.co/gravitee-io/"))).toBe(true);
+    expect(existsSync(lock())).toBe(false);
+    expect(record()).toMatchObject({ failures: 1 });
+    expect(record().error).toContain("HTTP 503");
+    expect((await dm(["model"])).out).toMatch(/the background download failed \(doorman-1: config\.json: HTTP 503\)/);
+
+    await dm(["status"]); // within a minute of the failure: not yet
+    expect(spawned).toHaveLength(0);
+    ioExtra.now = () => Date.now() + 61_000;
+    await dm(["status"]);
+    expect(spawned).toHaveLength(1);
+  });
+
+  it.skipIf(!existsSync(SHOT_MODEL))(
+    "the background child installs doorman-1, and the next command runs it",
+    async () => {
+      const source = join(root, "source");
+      cpSync(SHOT_MODEL, source, { recursive: true, filter: (p) => !p.endsWith(".verified.json") });
+      extraEnv = { DOORMAN_INJECTION_CLASSIFIER_SOURCE: source };
+      expect((await dm(["model", "download", "--auto"])).code).toBe(0);
+      expect(record()).toMatchObject({ failures: 0 });
+      const after = (await dm(["model", "--json"])).json<AutoJson>();
+      expect(after.active).toBe("doorman-1");
+      expect(after.auto_download.status).toBe("idle");
+      spawnHere();
+      await dm(["status"]); // nothing missing: nothing to start
+      expect(spawned).toEqual([]);
     },
     60_000,
   );

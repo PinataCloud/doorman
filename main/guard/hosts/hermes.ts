@@ -239,10 +239,14 @@ function blockEnd(lines: string[], from: number, indent: number): number {
 }
 
 const isItemLine = (trimmed: string): boolean => trimmed.startsWith("- ") || trimmed === "-";
+/** A document marker (`---`, `...`), optionally commented. */
+const isMarker = (line: string): boolean => /^(?:---|\.\.\.)(?:\s+#.*)?\s*$/.test(line);
 
-/** Where a sequence under a key at `keyIndent` ends: the first structural
- * line shallower than the key, or at the key's column that is not a `- `. */
-function sequenceEnd(lines: string[], from: number, keyIndent: number): number {
+/** Where the value of a key at `keyIndent` ends: the first structural line
+ * shallower than the key, or at the key's column that is not a `- `. YAML lets
+ * a block sequence sit flush with its key (`toolsets:\n- hermes-cli`) — what
+ * PyYAML and ruamel, i.e. Hermes's own writer, emit for every list. */
+function valueEnd(lines: string[], from: number, keyIndent: number): number {
   for (let i = from; i < lines.length; i++) {
     const line = lines[i]!;
     if (transparent(line)) continue;
@@ -264,8 +268,6 @@ function tightEnd(lines: string[], start: number, end: number): number {
 }
 
 function readLayout(docText: string): Layout {
-  const head = docText.trimStart();
-  if (head.startsWith("{") || head.startsWith("[")) throw new Error(NOT_TOUCHING);
   const lines = docText.split("\n");
   const layout: Layout = {
     lines,
@@ -277,20 +279,12 @@ function readLayout(docText: string): Layout {
     itemIndent: -1,
     items: [],
   };
-  // Top level: every column-0 line must be a key, a comment, a blank or a
-  // document marker — anything else is a document we don't understand.
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (transparent(line) || line === "---" || line === "...") continue;
-    if (indentOf(line) > 0) continue;
-    const m = KEY_LINE.exec(line.trimEnd());
-    if (!m) throw new Error(NOT_TOUCHING);
-    if (m[1] === "hooks") {
-      if (layout.hooksAt >= 0) throw new Error(NOT_TOUCHING); // duplicate key
-      // `hooks: {}` / `hooks: []` / `hooks: ~` — not a block we can extend.
-      if (m[2] !== undefined && !m[2].startsWith("#")) throw new Error(NOT_TOUCHING);
-      layout.hooksAt = i;
-    }
+  for (const { at, key, value } of assertTopLevel(lines)) {
+    if (key !== "hooks") continue;
+    if (layout.hooksAt >= 0) throw new Error(NOT_TOUCHING); // duplicate key
+    // `hooks: {}` / `hooks: []` / `hooks: ~` — not a block we can extend.
+    if (value !== undefined) throw new Error(NOT_TOUCHING);
+    layout.hooksAt = at;
   }
   if (layout.hooksAt < 0) return layout;
 
@@ -318,7 +312,7 @@ function readLayout(docText: string): Layout {
   layout.childIndent = childIndent ?? 2;
   if (layout.eventAt < 0) return layout;
 
-  layout.eventEnd = sequenceEnd(lines, layout.eventAt + 1, layout.childIndent);
+  layout.eventEnd = valueEnd(lines, layout.eventAt + 1, layout.childIndent);
   // Items: `- ` lines at one shared indentation, at or deeper than the key
   // (YAML allows a sequence at the same column as its parent key).
   for (let i = layout.eventAt + 1; i < layout.eventEnd; i++) {
@@ -398,14 +392,40 @@ interface KeyHit {
   end: number;
 }
 
-/** Assert the document's top level is readable (keys, comments, blanks, markers). */
-function assertTopLevel(lines: string[]): void {
+/** The top-level keys, in order — after asserting the top level is a block
+ * mapping this model can follow: keys, comments, blanks, document markers,
+ * and column-0 `- ` lines only as an indentless sequence under the value-less
+ * key above them. A flow root, a root sequence or any other column-0 line
+ * throws. */
+function assertTopLevel(lines: string[]): { at: number; key: string; value: string | undefined }[] {
   const first = lines.find((l) => !transparent(l));
   if (first !== undefined && (first.trimStart().startsWith("{") || first.trimStart().startsWith("["))) throw new Error(NOT_TOUCHING);
-  for (const line of lines) {
-    if (transparent(line) || line === "---" || line === "..." || indentOf(line) > 0) continue;
-    if (!KEY_LINE.test(line.trimEnd())) throw new Error(NOT_TOUCHING);
+  const keys: { at: number; key: string; value: string | undefined }[] = [];
+  // May a column-0 `- ` appear here? Right after a value-less key, and after
+  // an item of its sequence (with that item's deeper lines) — nowhere else.
+  let sequenceOpen = false;
+  let inItem = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (transparent(line) || isMarker(line)) continue;
+    if (indentOf(line) > 0) {
+      if (!inItem) sequenceOpen = false; // the key's value is a deeper block
+      continue;
+    }
+    const t = line.trimEnd();
+    if (isItemLine(t)) {
+      if (!sequenceOpen) throw new Error(NOT_TOUCHING);
+      inItem = true;
+      continue;
+    }
+    const m = KEY_LINE.exec(t);
+    if (!m) throw new Error(NOT_TOUCHING);
+    const value = m[2] !== undefined && !m[2].startsWith("#") ? m[2] : undefined;
+    keys.push({ at: i, key: m[1]!, value });
+    sequenceOpen = value === undefined;
+    inItem = false;
   }
+  return keys;
 }
 
 /** The child key `key` directly under the mapping whose block spans
@@ -423,7 +443,7 @@ function findKey(lines: string[], from: number, end: number, childIndent: number
     if (!m) throw new Error(NOT_TOUCHING);
     if (m[1]!.replace(/^["']|["']$/g, "") !== key) continue;
     const value = m[2] !== undefined && !m[2].startsWith("#") ? m[2] : undefined;
-    const blockEndAt = blockEnd(lines, i + 1, indent);
+    const blockEndAt = valueEnd(lines, i + 1, indent);
     return { at: i, indent, value, end: tightEnd(lines, i + 1, blockEndAt) };
   }
   return undefined;
@@ -450,6 +470,8 @@ const rootScope = (lines: string[]): Scope => ({ at: -1, from: 0, end: lines.len
 
 function scopeOf(lines: string[], hit: KeyHit): Scope {
   if (hit.value !== undefined) throw new Error(NOT_TOUCHING); // `key: {}` / `key: ~`
+  const first = lines.slice(hit.at + 1, hit.end).find((l) => !transparent(l));
+  if (first !== undefined && isItemLine(first.trim())) throw new Error(NOT_TOUCHING); // a sequence, not a mapping
   const step = 2;
   return { at: hit.at, from: hit.at + 1, end: hit.end, childIndent: childIndentIn(lines, hit.at, hit.end, hit.indent + step) };
 }

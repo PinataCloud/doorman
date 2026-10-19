@@ -39,6 +39,8 @@ import { GUARD_COMMAND_MARKER, hookTimeoutSeconds, isGuardCommand, type GuardPol
 import { DEFAULT_HOST, HOSTS, documentReadable } from "./guard/hosts/index.js";
 import { hermesHome, hermesHost, withoutLegacyAllowlistEntries } from "./guard/hosts/hermes.js";
 import type { GuardHostDescriptor, HostArtifact } from "./guard/hosts/types.js";
+import { buildInfo } from "./lib/build-info.js";
+import { LAUNCHER, launcherHash, launcherOnDiskHash, nodeCommandPrefix, readRuntimes, usesLauncher, writeLauncher } from "./lib/node-launcher.js";
 import { assessGuardIntegrity, type GuardIntegrityReport } from "./lib/guard-integrity.js";
 import {
   heartbeatPath,
@@ -71,6 +73,8 @@ export const GUARD_FILES = [
   "decision.js",
   "handshake.js",
   "hold.js",
+  // Comment-preserving JSONC reader/editor for Gemini/Qwen/Droid/OpenClaw documents.
+  "jsonc.js",
   // The host registry travels with the bundle — the guard resolves its host
   // (and that host's output contract) at runtime, inside the copy.
   "hosts/claude-family.js",
@@ -131,6 +135,16 @@ export function writeDocumentAtomically(path: string, text: string): void {
 }
 
 export function guardCommand(userDataDir: string, host: string = DEFAULT_HOST.id): string {
+  // Not a bare `node`: the launcher beside the guard runs it on a runtime
+  // Doorman knows is here (lib/node-launcher.ts).
+  const base = `${nodeCommandPrefix(guardDir(userDataDir))} "${join(guardDir(userDataDir), "guard.js")}"`;
+  return host === DEFAULT_HOST.id ? base : `${base} --host ${host}`;
+}
+
+/** The command builds before the launcher wrote — still a working guard
+ * wherever `node` is on the PATH, so not reported as tampering; the next
+ * install (or app launch) rewrites it to guardCommand's. */
+function legacyGuardCommand(userDataDir: string, host: string): string {
   const base = `node "${join(guardDir(userDataDir), "guard.js")}"`;
   return host === DEFAULT_HOST.id ? base : `${base} --host ${host}`;
 }
@@ -309,10 +323,67 @@ export function guardHostSummaries(): GuardHostSummary[] {
   }));
 }
 
-/** Copy the compiled guard bundle into userData (idempotent, cheap). */
-export function refreshGuardBundle(userDataDir: string): void {
+/**
+ * Which Doorman build copied the guard bundle in, and what each file's hash was
+ * then: `<guard dir>/bundle.json`. The app and the CLI are separate builds that
+ * share this one bundle, and either may be the newer; the stamp is how each
+ * recognises the other's bundle as a Doorman one — not tampering — and how an
+ * older build knows not to replace a newer build's guard with its own.
+ *
+ * A bundle file edited after it was copied matches neither this build's
+ * shipped files nor the stamp, so it is reported as before. (Like the rest of
+ * the guard's files, the stamp sits in a user-writable folder: it guards
+ * against a guard that drifted, not against someone rewriting both.)
+ */
+export interface GuardBundleStamp {
+  writer: "app" | "cli";
+  /** The writer's build revision (lib/build-info.ts): its commit time. */
+  revision: number;
+  commit?: string;
+  files: Record<string, string>;
+}
+
+const BUNDLE_STAMP = "bundle.json";
+
+export function readGuardBundleStamp(userDataDir: string): GuardBundleStamp | undefined {
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(guardDir(userDataDir), BUNDLE_STAMP), "utf8"));
+    if (!raw || typeof raw !== "object") return undefined;
+    const r = raw as Partial<GuardBundleStamp>;
+    if ((r.writer !== "app" && r.writer !== "cli") || typeof r.revision !== "number" || !r.files || typeof r.files !== "object") return undefined;
+    const files: Record<string, string> = {};
+    for (const [name, hash] of Object.entries(r.files)) if (typeof hash === "string") files[name] = hash;
+    return { writer: r.writer, revision: r.revision, ...(typeof r.commit === "string" ? { commit: r.commit } : {}), files };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The stamp's files are all on disk exactly as stamped. */
+function stampIntact(userDataDir: string, stamp: GuardBundleStamp): boolean {
+  const target = guardDir(userDataDir);
+  const names = Object.keys(stamp.files);
+  return names.length > 0 && names.every((name) => fileHash(join(target, name)) === stamp.files[name]);
+}
+
+/** What this process is, for the stamp: the Electron app, or the CLI under node. */
+function bundleWriter(): GuardBundleStamp["writer"] {
+  return process.versions.electron ? "app" : "cli";
+}
+
+/**
+ * Copy the compiled guard bundle into userData (idempotent, cheap) — unless a
+ * NEWER Doorman build's bundle is there intact: that one stays, so the app and
+ * the CLI never downgrade each other's guard. Returns whether it copied.
+ */
+export function refreshGuardBundle(userDataDir: string): boolean {
   const target = guardDir(userDataDir);
   mkdirSync(target, { recursive: true });
+  // This build's runtime goes into the launcher whoever's bundle stays.
+  writeLauncher(target);
+  const own = buildInfo();
+  const stamp = readGuardBundleStamp(userDataDir);
+  if (stamp && stamp.revision > own.revision && stampIntact(userDataDir, stamp)) return false;
   // __dirname is build/main (or its packaged equivalent); the compiled guard
   // sits right next to this module.
   const from = join(__dirname, "guard");
@@ -326,6 +397,16 @@ export function refreshGuardBundle(userDataDir: string): void {
     copyFileSync(join(from, file), temp);
     renameSync(temp, destination);
   }
+  const files: Record<string, string> = {};
+  for (const file of GUARD_FILES) {
+    const hash = fileHash(join(target, file));
+    if (hash !== undefined) files[file] = hash;
+  }
+  const next: GuardBundleStamp = { writer: bundleWriter(), revision: own.revision, ...(own.commit ? { commit: own.commit } : {}), files };
+  const stampTemp = join(target, `${BUNDLE_STAMP}.doorman.tmp`);
+  writeFileSync(stampTemp, `${JSON.stringify(next, null, 2)}\n`);
+  renameSync(stampTemp, join(target, BUNDLE_STAMP));
+  return true;
 }
 
 export function writeGuardPolicy(userDataDir: string, policy: GuardPolicy): void {
@@ -409,10 +490,41 @@ function nothingToInstallInto(): string {
   return `${who} was found on this machine (no ${paths}), so there is nothing to install the guard into.`;
 }
 
-export function installGuard(
-  userDataDir: string,
-  policy: GuardPolicy,
-): { ok: true; codex_restart_required: boolean } | { ok: false; error: string } {
+/** A host the install (or removal) could not reach, and the host's own reason
+ * — its merge's refusal ("~/.hermes/config.yaml is … ; not touching it") or
+ * the write that failed. */
+export interface GuardHostFailure {
+  id: string;
+  label: string;
+  error: string;
+}
+
+/**
+ * What installGuard did. `ok` means the guard is enforcing in at least one
+ * agent; `failures` lists every present host it could not reach — those keep
+ * whatever they had before (an older entry, or none), untouched.
+ */
+export type GuardInstallOutcome =
+  | { ok: true; codex_restart_required: boolean; failures: GuardHostFailure[] }
+  | { ok: false; error: string; failures?: GuardHostFailure[] };
+
+/** One sentence per failing host, named — what `guard_sync_error` carries.
+ * No closing period, so whoever shows it can end the sentence. */
+export function describeGuardFailures(failures: readonly GuardHostFailure[]): string {
+  return failures.map((f) => `${f.label}: ${f.error.replace(/\.+$/, "")}`).join(". ");
+}
+
+/** The problem to show for an install outcome, or undefined when every present
+ * host took the guard. A partial install is a problem too: an agent the guard
+ * couldn't reach runs an older policy, or none. */
+export function guardInstallProblem(outcome: GuardInstallOutcome): string | undefined {
+  if (!outcome.ok) return outcome.error;
+  return outcome.failures.length > 0 ? describeGuardFailures(outcome.failures) : undefined;
+}
+
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+export function installGuard(userDataDir: string, policy: GuardPolicy): GuardInstallOutcome {
   try {
     // The effective per-hook timeout: it must EXCEED the hold window, or the
     // host kills the guard mid-hold and a killed hook fails open (which would
@@ -431,31 +543,46 @@ export function installGuard(
       // nowhere while the UI reads "enforcing".
       return { ok: false, error: nothingToInstallInto() };
     }
-    // Parse and build EVERY document before writing any of them. A malformed
-    // Codex file must not leave the switch half-on by changing Claude first.
-    const planned = present.map((state) => ({
-      state,
-      next: state.host.merge(
-        state.doc,
-        guardCommand(userDataDir, state.host.id),
-        policy.confirm.hold_seconds,
-        timeout,
-      ),
-    }));
-    // Companion documents (a host's consent allowlist) and plugin artefacts
-    // (a host's plugin directory) belong to the same all-or-nothing plan: a
-    // companion that refuses its document fails the install before anything
-    // is written, exactly like a malformed hook document does.
+    // Plan each host on its own: its hook document(s), its companion documents
+    // (a consent allowlist) and its plugin artefacts, all parsed and built
+    // before anything of that host is written. A host whose plan refuses —
+    // a hook document or companion its merge can't follow — is skipped whole
+    // and reported, so it is never left half-on (a companion entry with no
+    // hook, a hook pointing at a plugin that isn't there). It no longer takes
+    // the other hosts down with it: one Hermes config the YAML reader can't
+    // follow used to leave Claude, Codex and every other agent unguarded.
     const home = homedir();
-    const presentHosts = [...new Set(present.map((s) => s.host))];
-    const companions = presentHosts.flatMap((host) =>
-      (host.companions ?? []).map((companion) => {
-        const path = companion.path(home, process.env);
-        const doc = readDocument(path);
-        return { path, doc, next: companion.merge(doc, guardCommand(userDataDir, host.id)) };
-      }),
-    );
-    const artifacts = presentHosts.flatMap((host) => hostArtifacts(host));
+    const failures: GuardHostFailure[] = [];
+    type PlannedDocument = { path: string; doc: string | undefined; next: string };
+    const plans: {
+      host: GuardHostDescriptor;
+      hooks: PlannedDocument[];
+      companions: PlannedDocument[];
+      artifacts: HostArtifact[];
+    }[] = [];
+    for (const host of [...new Set(present.map((s) => s.host))]) {
+      try {
+        const command = guardCommand(userDataDir, host.id);
+        const hooks = present
+          .filter((s) => s.host === host)
+          .map((s) => ({
+            path: s.docPath,
+            doc: s.doc,
+            next: host.merge(s.doc, command, policy.confirm.hold_seconds, timeout),
+          }));
+        const companions = (host.companions ?? []).map((companion) => {
+          const path = companion.path(home, process.env);
+          const doc = readDocument(path);
+          return { path, doc, next: companion.merge(doc, command) };
+        });
+        plans.push({ host, hooks, companions, artifacts: hostArtifacts(host) });
+      } catch (err) {
+        failures.push({ id: host.id, label: host.label, error: errorText(err) });
+      }
+    }
+    // No host could take the guard: write nothing (not even the policy, as
+    // before) and keep the switch off rather than read "enforcing".
+    if (plans.length === 0) return { ok: false, error: describeGuardFailures(failures), failures };
     refreshGuardBundle(userDataDir);
     writeGuardPolicy(userDataDir, policy);
     // Write only what changed: this runs on every boot and policy sync, and a
@@ -465,29 +592,45 @@ export function installGuard(
     // were just refreshed; the hook documents live in the real home.
     if (!hookWritesAllowed()) return { ok: false, error: SANDBOX_READ_ONLY };
     let codexChanged = false;
-    for (const { state, next } of planned) {
-      if (next === state.doc) continue;
-      mkdirSync(dirname(state.docPath), { recursive: true });
-      writeDocumentAtomically(state.docPath, next);
-      if (state.host.id === "codex") codexChanged = true;
+    let installed = 0;
+    const writeChanged = ({ path, doc, next }: PlannedDocument): boolean => {
+      if (next === doc) return false;
+      mkdirSync(dirname(path), { recursive: true });
+      writeDocumentAtomically(path, next);
+      return true;
+    };
+    for (const plan of plans) {
+      try {
+        // What the entry points at (plugin files, consent) first, the hook
+        // entry last: a write that fails midway leaves inert files behind,
+        // never an entry pointing at nothing.
+        for (const artifact of plan.artifacts) writeArtifact(artifact);
+        for (const companion of plan.companions) writeChanged(companion);
+        for (const hook of plan.hooks) {
+          if (writeChanged(hook) && plan.host.id === "codex") codexChanged = true;
+        }
+        installed += 1;
+      } catch (err) {
+        failures.push({ id: plan.host.id, label: plan.host.label, error: errorText(err) });
+        continue;
+      }
+      // One-time upgrade hygiene (2026-09-10): the Hermes shell-hook install
+      // left a consent entry for a command that is no longer configured; the
+      // plugin path needs none. Best-effort, our entries only.
+      if (plan.host.id === hermesHost.id) {
+        try {
+          const allowlist = `${hermesHome(home, process.env)}/shell-hooks-allowlist.json`;
+          const cleaned = withoutLegacyAllowlistEntries(readDocument(allowlist));
+          if (cleaned !== undefined) writeDocumentAtomically(allowlist, cleaned);
+        } catch {
+          // a stale consent entry for a command nobody runs is inert
+        }
+      }
     }
-    for (const companion of companions) {
-      if (companion.next === companion.doc) continue;
-      mkdirSync(dirname(companion.path), { recursive: true });
-      writeDocumentAtomically(companion.path, companion.next);
-    }
-    for (const artifact of artifacts) writeArtifact(artifact);
-    // One-time upgrade hygiene (2026-09-10): the Hermes shell-hook install
-    // left a consent entry for a command that is no longer configured; the
-    // plugin path needs none. Best-effort, our entries only.
-    if (presentHosts.some((h) => h.id === hermesHost.id)) {
-      const allowlist = `${hermesHome(home, process.env)}/shell-hooks-allowlist.json`;
-      const cleaned = withoutLegacyAllowlistEntries(readDocument(allowlist));
-      if (cleaned !== undefined) writeDocumentAtomically(allowlist, cleaned);
-    }
-    return { ok: true, codex_restart_required: codexChanged };
+    if (installed === 0) return { ok: false, error: describeGuardFailures(failures), failures };
+    return { ok: true, codex_restart_required: codexChanged, failures };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: errorText(err) };
   }
 }
 
@@ -500,6 +643,8 @@ export function installGuard(
  * Returns the failure instead of swallowing it: a settings.json the merge
  * refuses to touch (malformed JSON) means the guard on disk is now drifting
  * from the policy the app displays, and the caller has to be able to say so.
+ * A host the re-merge couldn't reach is that failure too, named, even while
+ * the others took the new policy.
  */
 export function syncGuard(
   userDataDir: string,
@@ -508,7 +653,8 @@ export function syncGuard(
   try {
     if (isGuardInstalled()) {
       const outcome = installGuard(userDataDir, policy);
-      return outcome.ok ? { ok: true } : outcome;
+      const problem = guardInstallProblem(outcome);
+      return problem === undefined ? { ok: true } : { ok: false, error: problem };
     }
     writeGuardPolicy(userDataDir, policy);
     return { ok: true };
@@ -517,25 +663,38 @@ export function syncGuard(
   }
 }
 
+/**
+ * Take our entry out of every host, each on its own: a host whose document
+ * can't be rewritten is reported and the rest are still removed. Within one
+ * host the hook document goes first; its companions and plugin artefacts are
+ * only removed once it has, so a failure never strands an entry pointing at
+ * nothing. Not ok while any host still carries the guard.
+ */
 export function uninstallGuard(): { ok: true } | { ok: false; error: string } {
   try {
     if (!hookWritesAllowed()) return { ok: false, error: SANDBOX_READ_ONLY };
-    for (const state of guardHostStates()) {
-      const next = state.host.remove(state.doc);
-      if (next !== undefined) writeDocumentAtomically(state.docPath, next);
-    }
     const home = homedir();
+    const states = guardHostStates();
+    const failures: GuardHostFailure[] = [];
     for (const host of HOSTS) {
-      for (const companion of host.companions ?? []) {
-        const path = companion.path(home, process.env);
-        const next = companion.remove(readDocument(path));
-        if (next !== undefined) writeDocumentAtomically(path, next);
+      try {
+        for (const state of states.filter((s) => s.host === host)) {
+          const next = host.remove(state.doc);
+          if (next !== undefined) writeDocumentAtomically(state.docPath, next);
+        }
+        for (const companion of host.companions ?? []) {
+          const path = companion.path(home, process.env);
+          const next = companion.remove(readDocument(path));
+          if (next !== undefined) writeDocumentAtomically(path, next);
+        }
+        removeArtifacts(hostArtifacts(host));
+      } catch (err) {
+        failures.push({ id: host.id, label: host.label, error: errorText(err) });
       }
-      removeArtifacts(hostArtifacts(host));
     }
-    return { ok: true };
+    return failures.length === 0 ? { ok: true } : { ok: false, error: describeGuardFailures(failures) };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: errorText(err) };
   }
 }
 
@@ -814,14 +973,32 @@ function fileHash(path: string): string | undefined {
   }
 }
 
-/** The shipped bundle's hashes (the app's own compiled guard/) and the copied
- * bundle's (userData) — what the integrity check compares. */
+/** The hashes the copied bundle (userData) should have, and the ones it has —
+ * what the integrity check compares. Expected is this build's own shipped
+ * guard/, or — when another Doorman build (the app, the CLI) copied its bundle
+ * in and it is intact as that build stamped it — that build's: then nothing
+ * drifted, it is just the other build's guard. */
 export function guardBundleHashes(userDataDir: string): {
   shipped: Record<string, string>;
   copied: Record<string, string | undefined>;
 } {
   const source = join(__dirname, "guard");
   const target = guardDir(userDataDir);
+  // Another build's: a different revision. A stamp claiming THIS revision
+  // must match this build's own files, so it falls through to them.
+  // The launcher is checked like a bundle file once a build that writes it
+  // has run here: it must be exactly what its recorded runtimes render.
+  const launcher = (into: { shipped: Record<string, string>; copied: Record<string, string | undefined> }) => {
+    if (usesLauncher() && existsSync(join(target, "runtimes.json"))) {
+      into.shipped[LAUNCHER] = launcherHash(readRuntimes(target));
+      into.copied[LAUNCHER] = launcherOnDiskHash(target);
+    }
+    return into;
+  };
+  const stamp = readGuardBundleStamp(userDataDir);
+  if (stamp && stamp.revision !== buildInfo().revision && stampIntact(userDataDir, stamp)) {
+    return launcher({ shipped: { ...stamp.files }, copied: Object.fromEntries(Object.keys(stamp.files).map((f) => [f, fileHash(join(target, f))])) });
+  }
   const shipped: Record<string, string> = {};
   const copied: Record<string, string | undefined> = {};
   for (const file of GUARD_FILES) {
@@ -832,7 +1009,7 @@ export function guardBundleHashes(userDataDir: string): {
     shipped[file] = hash;
     copied[file] = fileHash(join(target, file));
   }
-  return { shipped, copied };
+  return launcher({ shipped, copied });
 }
 
 /**
@@ -868,7 +1045,10 @@ export function checkGuardIntegrity(
         expected_command: expected,
         unreadable,
         entry_present: state.installed,
-        entry_exact: !unreadable && state.installed && state.host.installed(state.doc, expected),
+        entry_exact:
+          !unreadable &&
+          state.installed &&
+          (state.host.installed(state.doc, expected) || state.host.installed(state.doc, legacyGuardCommand(userDataDir, state.host.id))),
         // The two halves the marker cannot see: a plugin host's files beside
         // the document, and a companion document's consent entry. Compared
         // against exactly what installGuard would write, so "would a

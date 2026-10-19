@@ -148,7 +148,15 @@ turn a feature on, and every write keeps a `.bak` beside the file:
   `~/.kiro/hooks/doorman.json`. Plugin hosts also get a plugin directory
   (`~/.openclaw/extensions/doorman-guard/`, Hermes's
   `plugins/doorman-guard/`). The entry runs
-  `node "<userData>/doorman/guard/guard.js"`, so it survives app updates.
+  `"<userData>/doorman/guard/node-runtime" "<userData>/doorman/guard/guard.js"`,
+  so it survives app updates. `node-runtime` is a small launcher Doorman
+  writes (`main/lib/node-launcher.ts`) that runs the guard on a Node.js runtime
+  known to be on the machine: the CLI's, else the app's own (its executable
+  with `ELECTRON_RUN_AS_NODE`), and only then `node` from the PATH. So the
+  guard runs on machines without Node.js, where agents such as Claude Code's
+  native install and Codex don't need it — a hook that can't start is one
+  every agent lets through. Doorman's MCP server and the MCP gateway start the
+  same way. (Windows still runs a bare `node` for now.)
 - **The MCP server**: an entry in each MCP host's config that points at
   `<userData>/doorman/mcp/doorman-mcp.js` (`main/mcp-install.ts`).
 - **The VS Code extension** (`pinata.doorman`): installed through
@@ -197,9 +205,11 @@ turn a feature on, and every write keeps a `.bak` beside the file:
 Data lives under `~/Library/Application Support/Doorman/` (`%APPDATA%\Doorman`
 on Windows, `~/.config/Doorman` on Linux): `store/` (the turn store,
 findings, titles, cursors and the Keychain-encrypted evidence vault),
-`prefs.json`, `models/` (one directory per downloaded model, each with a
-`.verified.json` recording the sha256 every file was checked against) and
-`doorman/` (the guard and MCP bundles).
+`prefs.json`, `models/` (one directory per downloaded model revision,
+`<name>@<pins>`, each with a `.verified.json` recording the sha256 every file
+was checked against) and `doorman/` (the guard and MCP bundles, and the locks
+the app and the [CLI](cli/README.md) use to take turns writing,
+`main/lib/data-owner.ts`).
 
 ## Develop
 

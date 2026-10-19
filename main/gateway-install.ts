@@ -22,6 +22,7 @@
  * store the original command under a marker so restore is exact.
  */
 
+import { nodeProgramForScript } from "./lib/node-launcher.js";
 import { hookWritesAllowed, SANDBOX_READ_ONLY } from "./lib/sandbox.js";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { join } from "node:path";
@@ -370,7 +371,7 @@ export function routeServer(
     return { ok: false, error: `couldn't read the config file: ${String(err)}` };
   }
   refreshGatewayBundle(userDataDir);
-  const outcome = routeServerThroughGateway(before, configPath, serverName, gatewayScript(userDataDir));
+  const outcome = routeServerThroughGateway(before, configPath, serverName, gatewayScript(userDataDir), nodeProgramForScript(gatewayScript(userDataDir)));
   if (!outcome.ok) {
     return outcome.reason === "already" ? { ok: true, changed: false } : { ok: false, error: REASON_TEXT[outcome.reason] };
   }
@@ -391,7 +392,7 @@ export function retargetGatewayConfig(userDataDir: string, configPath: string): 
     return { ok: false, error: `couldn't read the config file: ${String(err)}` };
   }
   refreshGatewayBundle(userDataDir);
-  const outcome = retargetGatewayRoutes(before, configPath, gatewayScript(userDataDir));
+  const outcome = retargetGatewayRoutes(before, configPath, gatewayScript(userDataDir), nodeProgramForScript(gatewayScript(userDataDir)));
   if (!outcome.ok) {
     return outcome.reason === "already" ? { ok: true, changed: false } : { ok: false, error: REASON_TEXT[outcome.reason] };
   }

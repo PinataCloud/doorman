@@ -30,6 +30,7 @@ import type {
   HostEmit,
   HostExitSemantics,
 } from "./types.js";
+import { readHostJson, writeHostJson, type JsoncDialect } from "../jsonc.js";
 
 /** The message an empty reason falls back to — the same words Claude Code's
  * own descriptor prints, because a person reads it in their session. */
@@ -54,7 +55,8 @@ export const FAMILY_HANDLER_NAME = "Doorman";
  *    every trigger, the trigger named per entry (Kiro CLI 3.x).
  *  - `toml`: a `[[hooks]]` table array with `event`, `matcher?`, `command`,
  *    `timeout` (Kimi Code). Byte-preserving: we append our table and remove
- *    exactly our lines; nothing else is reformatted.
+ *    exactly our lines (plus an inert root `hooks = []`, which would collide
+ *    with the table array); nothing else is reformatted.
  */
 export type FamilyDocumentStyle = "grouped" | "flat" | "kiro" | "toml";
 
@@ -98,6 +100,12 @@ export interface ClaudeFamilySpec {
   /** The path spelled in the "not touching it" error — the user-level document. */
   invalidDocument: string;
   documentFormat?: HostDocumentFormat;
+  /** For a JSON style: what the host's own parser accepts beyond strict JSON
+   * (comments; maybe trailing commas). Set → the descriptor's documentFormat
+   * is `jsonc` (`json5` when the dialect says so), the document is read in
+   * that dialect, and a commented one is edited in place so its comments
+   * survive. Absent → strict JSON, exactly as before. */
+  jsonDialect?: JsoncDialect;
   style: FamilyDocumentStyle;
   /** The event the entry is registered under ("PreToolUse", "BeforeTool"…). */
   event: string;
@@ -143,23 +151,18 @@ function timeoutValue(spec: ClaudeFamilySpec, holdSeconds: number, timeoutSecond
   return spec.timeoutUnit === "milliseconds" ? seconds * 1000 : seconds;
 }
 
-function parseJsonDocument(docText: string | undefined, invalidDocument: string): Record<string, unknown> {
+function parseJsonDocument(spec: ClaudeFamilySpec, docText: string | undefined): Record<string, unknown> {
   if (!docText || docText.trim() === "") return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(docText);
-  } catch {
-    // Never destroy a document we cannot read: refuse loudly instead.
-    throw new Error(`${invalidDocument} is not valid JSON; not touching it`);
-  }
+  // Never destroy a document we cannot read: refuse loudly instead.
+  const parsed = readHostJson(docText, spec.jsonDialect, spec.invalidDocument);
   if (!isRecord(parsed)) return {};
   return parsed;
 }
 
-function tryParseJson(docText: string | undefined): Record<string, unknown> | undefined {
+function tryParseJson(spec: ClaudeFamilySpec, docText: string | undefined): Record<string, unknown> | undefined {
   if (!docText || docText.trim() === "") return undefined;
   try {
-    const parsed: unknown = JSON.parse(docText);
+    const parsed = readHostJson(docText, spec.jsonDialect, spec.invalidDocument);
     return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined;
@@ -195,7 +198,7 @@ function mergeGrouped(
   command: string,
   timeout: number,
 ): string {
-  const settings = parseJsonDocument(docText, spec.invalidDocument);
+  const settings = parseJsonDocument(spec, docText);
   const before = JSON.stringify(settings);
   const hooks = hooksObject(settings);
   const groups: Group[] = Array.isArray(hooks[spec.event]) ? (hooks[spec.event] as Group[]) : [];
@@ -253,11 +256,11 @@ function mergeGrouped(
   hooks[spec.event] = next;
   settings.hooks = hooks;
   if (docText !== undefined && JSON.stringify(settings) === before) return docText;
-  return `${JSON.stringify(settings, null, 2)}\n`;
+  return writeHostJson(docText, settings, spec.jsonDialect, spec.invalidDocument);
 }
 
 function removeGrouped(spec: ClaudeFamilySpec, docText: string | undefined): string | undefined {
-  const settings = tryParseJson(docText);
+  const settings = tryParseJson(spec, docText);
   if (!settings) return undefined;
   const hooks = settings.hooks;
   if (!isRecord(hooks) || !Array.isArray(hooks[spec.event])) return undefined;
@@ -276,11 +279,11 @@ function removeGrouped(spec: ClaudeFamilySpec, docText: string | undefined): str
   if (next.length > 0) hooks[spec.event] = next;
   else delete hooks[spec.event];
   if (Object.keys(hooks).length === 0) delete settings.hooks;
-  return `${JSON.stringify(settings, null, 2)}\n`;
+  return writeHostJson(docText, settings, spec.jsonDialect, spec.invalidDocument);
 }
 
 function installedGrouped(spec: ClaudeFamilySpec, docText: string | undefined, command: string): boolean {
-  const settings = tryParseJson(docText);
+  const settings = tryParseJson(spec, docText);
   if (!settings) return false;
   const hooks = settings.hooks;
   if (!isRecord(hooks) || !Array.isArray(hooks[spec.event])) return false;
@@ -311,7 +314,7 @@ function mergeFlat(
   command: string,
   timeout: number,
 ): string {
-  const settings = parseJsonDocument(docText, spec.invalidDocument);
+  const settings = parseJsonDocument(spec, docText);
   const before = JSON.stringify(settings);
   const hooks = hooksObject(settings);
   const entries: FlatHandler[] = Array.isArray(hooks[spec.event]) ? (hooks[spec.event] as FlatHandler[]) : [];
@@ -339,11 +342,11 @@ function mergeFlat(
   hooks[spec.event] = next;
   settings.hooks = hooks;
   if (docText !== undefined && JSON.stringify(settings) === before) return docText;
-  return `${JSON.stringify(settings, null, 2)}\n`;
+  return writeHostJson(docText, settings, spec.jsonDialect, spec.invalidDocument);
 }
 
 function removeFlat(spec: ClaudeFamilySpec, docText: string | undefined): string | undefined {
-  const settings = tryParseJson(docText);
+  const settings = tryParseJson(spec, docText);
   if (!settings) return undefined;
   const hooks = settings.hooks;
   if (!isRecord(hooks) || !Array.isArray(hooks[spec.event])) return undefined;
@@ -353,11 +356,11 @@ function removeFlat(spec: ClaudeFamilySpec, docText: string | undefined): string
   if (kept.length > 0) hooks[spec.event] = kept;
   else delete hooks[spec.event];
   if (Object.keys(hooks).length === 0) delete settings.hooks;
-  return `${JSON.stringify(settings, null, 2)}\n`;
+  return writeHostJson(docText, settings, spec.jsonDialect, spec.invalidDocument);
 }
 
 function installedFlat(spec: ClaudeFamilySpec, docText: string | undefined, command: string): boolean {
-  const settings = tryParseJson(docText);
+  const settings = tryParseJson(spec, docText);
   if (!settings) return false;
   const hooks = settings.hooks;
   if (!isRecord(hooks) || !Array.isArray(hooks[spec.event])) return false;
@@ -390,7 +393,7 @@ function mergeKiro(
   command: string,
   timeout: number,
 ): string {
-  const settings = parseJsonDocument(docText, spec.invalidDocument);
+  const settings = parseJsonDocument(spec, docText);
   if (settings.hooks !== undefined && !Array.isArray(settings.hooks)) {
     // Our own file, in Kiro's schema: `hooks` is an array of triggers. Any
     // other shape is not a Kiro hooks document, and we don't overwrite it.
@@ -422,21 +425,21 @@ function mergeKiro(
   const ordered: Record<string, unknown> = { version: KIRO_VERSION, ...settings, hooks: next };
   if (typeof settings.version === "string") ordered.version = settings.version;
   if (docText !== undefined && JSON.stringify(ordered) === before) return docText;
-  return `${JSON.stringify(ordered, null, 2)}\n`;
+  return writeHostJson(docText, ordered, spec.jsonDialect, spec.invalidDocument);
 }
 
-function removeKiro(docText: string | undefined): string | undefined {
-  const settings = tryParseJson(docText);
+function removeKiro(spec: ClaudeFamilySpec, docText: string | undefined): string | undefined {
+  const settings = tryParseJson(spec, docText);
   if (!settings || !Array.isArray(settings.hooks)) return undefined;
   const entries = settings.hooks as KiroHook[];
   const kept = entries.filter((e) => !isOurCommand(kiroCommandOf(e)));
   if (kept.length === entries.length) return undefined;
   settings.hooks = kept;
-  return `${JSON.stringify(settings, null, 2)}\n`;
+  return writeHostJson(docText, settings, spec.jsonDialect, spec.invalidDocument);
 }
 
-function installedKiro(docText: string | undefined, command: string): boolean {
-  const settings = tryParseJson(docText);
+function installedKiro(spec: ClaudeFamilySpec, docText: string | undefined, command: string): boolean {
+  const settings = tryParseJson(spec, docText);
   if (!settings || !Array.isArray(settings.hooks)) return false;
   return (settings.hooks as KiroHook[]).some(
     (e) => isRecord(e) && e.enabled !== false && kiroCommandOf(e) === command,
@@ -447,110 +450,236 @@ function installedKiro(docText: string | undefined, command: string): boolean {
 // TOML `[[hooks]]` table array — Kimi Code. Byte-preserving line surgery.
 // ---------------------------------------------------------------------------
 
-const TOML_TABLE_RE = /^\s*\[\[?\s*([A-Za-z0-9_.\-"']+)\s*\]\]?\s*(#.*)?$/;
-const TOML_KEY_RE = /^\s*([A-Za-z0-9_\-]+|"[^"]*"|'[^']*')\s*=\s*(.+?)\s*$/;
+/** One key-path segment: bare, basic-quoted or literal-quoted (TOML 1.0). */
+const TOML_SEGMENT = String.raw`(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*"|'[^']*')`;
+/** A dotted key path — `a`, `"kimi-code/k3".display_name`, `providers . "x:y"`. */
+const TOML_PATH = String.raw`${TOML_SEGMENT}(?:\s*\.\s*${TOML_SEGMENT})*`;
+const TOML_SEGMENT_RE = new RegExp(TOML_SEGMENT, "g");
+const TOML_TABLE_RE = new RegExp(String.raw`^\s*\[\s*(${TOML_PATH})\s*\]\s*(?:#.*)?$`);
+const TOML_ARRAY_TABLE_RE = new RegExp(String.raw`^\s*\[\[\s*(${TOML_PATH})\s*\]\]\s*(?:#.*)?$`);
+const TOML_KEY_RE = new RegExp(String.raw`^\s*(${TOML_PATH})\s*=\s*(\S.*?)\s*$`);
+
+const TOML_ESCAPES: Record<string, string> = { b: "\b", t: "\t", n: "\n", f: "\f", r: "\r", '"': '"', "\\": "\\" };
+
+/** A basic string's body with its escapes resolved (unknown escapes kept as written). */
+function tomlUnescape(body: string): string {
+  return body.replace(/\\(?:u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8})|(.))/g, (all, u4?: string, u8?: string, ch?: string) => {
+    const hex = u4 ?? u8;
+    if (hex !== undefined) {
+      const cp = parseInt(hex, 16);
+      return cp <= 0x10ffff ? String.fromCodePoint(cp) : all;
+    }
+    return TOML_ESCAPES[ch!] ?? all;
+  });
+}
+
+/** A matched key path's segments, unquoted: `[["hooks"]]` and `[[ hooks ]]` both name `hooks`. */
+function tomlKeyPath(text: string): string[] {
+  return [...text.matchAll(TOML_SEGMENT_RE)].map(([seg]) =>
+    seg.startsWith('"') ? tomlUnescape(seg.slice(1, -1)) : seg.startsWith("'") ? seg.slice(1, -1) : seg,
+  );
+}
+
+/** Where a value scan stands at the end of a line: bracket depth and an open multi-line string. */
+interface TomlValueScan {
+  depth: number;
+  multiline?: '"""' | "'''";
+}
 
 /**
- * A light TOML reader: enough to know where each `[[hooks]]` table starts and
- * ends, what its `command` is, and whether the document is TOML at all. A line
- * that is neither blank, a comment, a table header nor `key = value` makes the
- * document malformed — the same "refuse rather than overwrite" posture the JSON
- * hosts take with JSON.parse. Multi-line values (arrays, strings) are accepted
- * only when they close before the next table header; a bracket-balanced
- * continuation is folded into its key.
+ * Advance `scan` over one line of a value. Strings are skipped (a `#`, `[` or
+ * `]` inside one is content), a comment ends the line. False when a one-line
+ * string never closes — that is not TOML.
  */
-interface TomlTable {
-  /** Line index of the header, or -1 for the root table. */
+function scanTomlValue(text: string, scan: TomlValueScan): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (scan.multiline) {
+      if (scan.multiline === '"""' && ch === "\\") i++;
+      else if (ch === scan.multiline[0]) {
+        let run = 1;
+        while (text[i + run] === ch) run++;
+        // Up to two quotes right before the delimiter are content: `""""` closes.
+        if (run >= 3) scan.multiline = undefined;
+        i += run - 1;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      if (text.startsWith(ch.repeat(3), i)) {
+        scan.multiline = ch === '"' ? '"""' : "'''";
+        i += 2;
+        continue;
+      }
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch) j += ch === '"' && text[j] === "\\" ? 2 : 1;
+      if (j >= text.length) return false;
+      i = j;
+      continue;
+    }
+    if (ch === "#") break;
+    if (ch === "[" || ch === "{") scan.depth++;
+    else if (ch === "]" || ch === "}") scan.depth--;
+  }
+  return true;
+}
+
+/** One `[[hooks]]` element, with any `[hooks.x]` sub-tables that directly follow it. */
+interface TomlHooksTable {
+  /** Line index of the `[[hooks]]` header. */
   start: number;
-  /** Exclusive end line index. */
+  /**
+   * Exclusive end of its last header or key/value line. Blank and comment
+   * lines after it stay with whatever follows — they are not ours to take.
+   */
   end: number;
-  name: string;
-  isArray: boolean;
+  /** Raw value text by key path (segments joined by NUL; sub-table keys prefixed). */
   keys: Map<string, string>;
 }
 
-function readToml(docText: string, invalidDocument: string): { lines: string[]; tables: TomlTable[] } {
+interface TomlDocument {
+  /** The document split on `\n` (a CRLF line keeps its `\r`). */
+  lines: string[];
+  eol: "\n" | "\r\n";
+  hooks: TomlHooksTable[];
+  /** A root-table `hooks = []` — inert, and in the way of `[[hooks]]`: lines [start, end). */
+  emptyRootHooks?: { start: number; end: number };
+  /** First line that defines `hooks` other than as `[[hooks]]` tables (or as an empty root array). */
+  hooksConflict?: number;
+}
+
+/**
+ * A light TOML reader: enough to know where each `[[hooks]]` table starts and
+ * ends, what its `command` is, whether anything else claims the root `hooks`
+ * key, and whether the document is TOML at all. A line that is neither blank,
+ * a comment, a table header nor `key.path = value` makes the document
+ * malformed — the same "refuse rather than overwrite" posture the JSON hosts
+ * take with JSON.parse. Multi-line values (arrays, `"""`/`'''` strings) are
+ * folded into their key: nothing inside one is read as a header or a key.
+ *
+ * A `[hooks.x]` / `[[hooks.x]]` header directly inside a `[[hooks]]` table
+ * belongs to that element. Anywhere else — or a `[hooks]` table, or a root
+ * `hooks` key that is not `[]` — `hooks` is not a table array we can append
+ * to, and is reported as `hooksConflict`.
+ */
+function readToml(docText: string, invalidDocument: string): TomlDocument {
   const lines = docText.split("\n");
-  const tables: TomlTable[] = [];
-  let current: TomlTable = { start: -1, end: lines.length, name: "", isArray: false, keys: new Map() };
-  let openValue: { key: string; depth: number } | undefined;
+  const hooks: TomlHooksTable[] = [];
+  let emptyRootHooks: TomlDocument["emptyRootHooks"];
+  let hooksConflict: number | undefined;
   const bad = (i: number): never => {
     throw new Error(`${invalidDocument} is not valid TOML (line ${i + 1}); not touching it`);
   };
-  const bracketDepth = (text: string): number => {
-    let depth = 0;
-    let quote: string | undefined;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i]!;
-      if (quote) {
-        if (ch === "\\" && quote === '"') i++;
-        else if (ch === quote) quote = undefined;
-        continue;
-      }
-      if (ch === '"' || ch === "'") quote = ch;
-      else if (ch === "#") break;
-      else if (ch === "[" || ch === "{") depth++;
-      else if (ch === "]" || ch === "}") depth--;
-    }
-    return depth;
+  let inRoot = true;
+  /** The `[[hooks]]` element the current section belongs to, if any. */
+  let element: TomlHooksTable | undefined;
+  /** The current section's key path inside `element` (`[hooks.x]` → `["x"]`). */
+  let prefix: string[] = [];
+  /** A value still open at the end of the previous line. */
+  let open: { scan: TomlValueScan; line: number; text: string; rootHooks: boolean } | undefined;
+  const finish = (value: NonNullable<typeof open>, last: number): void => {
+    if (!value.rootHooks) return;
+    const bare = value.text
+      .split("\n")
+      .map((l) => l.replace(/#.*$/, ""))
+      .join("")
+      .replace(/\s+/g, "");
+    if (bare === "[]" && emptyRootHooks === undefined) emptyRootHooks = { start: value.line, end: last + 1 };
+    else hooksConflict ??= value.line;
   };
   for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i]!;
-    const line = raw.trim();
-    if (openValue) {
-      openValue.depth += bracketDepth(raw);
-      if (openValue.depth <= 0) openValue = undefined;
+    const raw = lines[i]!.replace(/\r$/, "");
+    if (open) {
+      if (!scanTomlValue(raw, open.scan)) bad(i);
+      open.text += `\n${raw}`;
+      if (element) element.end = i + 1;
+      if (open.scan.depth <= 0 && !open.scan.multiline) {
+        finish(open, i);
+        open = undefined;
+      }
       continue;
     }
+    const line = raw.trim();
     if (line === "" || line.startsWith("#")) continue;
-    const header = TOML_TABLE_RE.exec(raw);
+    const arrayHeader = TOML_ARRAY_TABLE_RE.exec(raw);
+    const header = arrayHeader ?? TOML_TABLE_RE.exec(raw);
     if (header) {
-      current.end = i;
-      tables.push(current);
-      current = {
-        start: i,
-        end: lines.length,
-        name: header[1]!.replace(/^["']|["']$/g, ""),
-        isArray: line.startsWith("[["),
-        keys: new Map(),
-      };
+      inRoot = false;
+      const path = tomlKeyPath(header[1]!);
+      if (path[0] !== "hooks") {
+        element = undefined;
+      } else if (arrayHeader && path.length === 1) {
+        element = { start: i, end: i + 1, keys: new Map() };
+        hooks.push(element);
+        prefix = [];
+      } else if (path.length > 1 && element) {
+        prefix = path.slice(1);
+        element.end = i + 1;
+      } else {
+        hooksConflict ??= i;
+        element = undefined;
+      }
       continue;
     }
     const kv = TOML_KEY_RE.exec(raw);
     if (!kv) bad(i);
-    const key = kv![1]!.replace(/^["']|["']$/g, "");
+    const path = tomlKeyPath(kv![1]!);
     const value = kv![2]!;
-    current.keys.set(key, value);
-    const depth = bracketDepth(value);
-    if (depth > 0) openValue = { key, depth };
+    const scan: TomlValueScan = { depth: 0 };
+    if (!scanTomlValue(value, scan)) bad(i);
+    if (element) {
+      element.keys.set([...prefix, ...path].join("\0"), value);
+      element.end = i + 1;
+    }
+    const rootHooks = inRoot && path[0] === "hooks";
+    if (rootHooks && path.length > 1) hooksConflict ??= i;
+    const pending = { scan, line: i, text: value, rootHooks: rootHooks && path.length === 1 };
+    if (scan.depth > 0 || scan.multiline) open = pending;
+    else finish(pending, i);
   }
-  if (openValue) bad(lines.length - 1);
-  current.end = lines.length;
-  tables.push(current);
-  return { lines, tables };
+  if (open) bad(lines.length - 1);
+  return { lines, eol: docText.includes("\r\n") ? "\r\n" : "\n", hooks, emptyRootHooks, hooksConflict };
 }
 
-/** A TOML basic string's contents, or undefined when the value is not one. */
+/** A TOML one-line string's contents, or undefined when the value is not one. */
 function tomlString(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  const m = /^"((?:[^"\\]|\\.)*)"\s*(#.*)?$/.exec(value) ?? /^'([^']*)'\s*(#.*)?$/.exec(value);
-  if (!m) return undefined;
-  const body = m[1]!;
-  if (value.startsWith("'")) return body;
-  return body.replace(/\\(["\\])/g, "$1");
+  const basic = /^"((?:[^"\\]|\\.)*)"\s*(#.*)?$/.exec(value);
+  if (basic) return tomlUnescape(basic[1]!);
+  return /^'([^']*)'\s*(#.*)?$/.exec(value)?.[1];
 }
 
 function tomlQuote(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function ourTomlTable(spec: ClaudeFamilySpec, command: string, timeout: number): string {
+/** Our table's fields, in order, as `[key, TOML value]`. */
+function ourTomlFields(spec: ClaudeFamilySpec, command: string, timeout: number): [string, string][] {
   // Exactly the fields Kimi Code allows — extra keys make the whole file
   // fail to load (its docs say so), which is a bypass nobody asked for.
-  const lines = ["[[hooks]]", `event = ${tomlQuote(spec.event)}`];
-  if (spec.matcher !== undefined) lines.push(`matcher = ${tomlQuote(spec.matcher)}`);
-  lines.push(`command = ${tomlQuote(command)}`, `timeout = ${timeout}`);
-  return lines.join("\n");
+  const fields: [string, string][] = [["event", tomlQuote(spec.event)]];
+  if (spec.matcher !== undefined) fields.push(["matcher", tomlQuote(spec.matcher)]);
+  fields.push(["command", tomlQuote(command)], ["timeout", String(timeout)]);
+  return fields;
+}
+
+/**
+ * The document's text without `blocks` and without trailing newlines. Each
+ * block takes the blank lines directly above it (they separated it from what
+ * came before) — or, for a block at the very top, the blank lines below it.
+ */
+function cutTomlBlocks(lines: string[], blocks: { start: number; end: number }[]): string {
+  const drop = new Array<boolean>(lines.length).fill(false);
+  for (const block of blocks) {
+    let { start, end } = block;
+    while (start > 0 && lines[start - 1]!.trim() === "") start--;
+    if (start === 0) while (end < lines.length && lines[end]!.trim() === "") end++;
+    drop.fill(true, start, end);
+  }
+  return lines
+    .filter((_, k) => !drop[k])
+    .join("\n")
+    .replace(/(?:\r?\n)+$/, "");
 }
 
 function mergeToml(
@@ -560,79 +689,59 @@ function mergeToml(
   timeout: number,
 ): string {
   const text = docText ?? "";
-  const { lines, tables } = readToml(text, spec.invalidDocument);
-  const ours = tables.filter(
-    (t) => t.isArray && t.name === "hooks" && isOurCommand(tomlString(t.keys.get("command"))),
-  );
-  const desired = ourTomlTable(spec, command, timeout);
-  const desiredKeys = new Map(
-    desired
-      .split("\n")
-      .slice(1)
-      .map((l) => TOML_KEY_RE.exec(l)!)
-      .map((m) => [m[1]!, m[2]!] as const),
-  );
-  const matchesDesired = (t: TomlTable): boolean => {
-    if (t.keys.size !== desiredKeys.size) return false;
-    for (const [k, v] of desiredKeys) {
-      const have = t.keys.get(k);
-      if (have === undefined) return false;
-      if (k === "timeout" ? have.trim() !== v : tomlString(have) !== tomlString(v)) return false;
-    }
-    return true;
-  };
-  if (ours.length === 1 && matchesDesired(ours[0]!)) return text;
-  // Remove every copy of ours (bottom-up so indices stay valid), then append
-  // the canonical table once.
-  const out = [...lines];
-  for (const t of [...ours].sort((a, b) => b.start - a.start)) {
-    let end = t.end;
-    // Also drop the blank lines directly above the header, which are ours.
-    let start = t.start;
-    while (start > 0 && out[start - 1]!.trim() === "") start--;
-    // Don't eat the trailing newline of the file into the removed region.
-    while (end > t.start && out[end - 1]!.trim() === "") end--;
-    out.splice(start, end - start);
+  const doc = readToml(text, spec.invalidDocument);
+  if (doc.hooksConflict !== undefined) {
+    // An inline `hooks = [{…}]`, a `[hooks]` table, a dotted `hooks.x`: a
+    // `[[hooks]]` appended next to it redefines the key and the whole file
+    // stops loading. Rewriting inline tables is not this reader's job.
+    throw new Error(
+      `${spec.invalidDocument} defines \`hooks\` other than as [[hooks]] tables (line ${doc.hooksConflict + 1}); not touching it`,
+    );
   }
-  let body = out.join("\n").replace(/\n+$/, "");
-  body = body === "" ? desired : `${body}\n\n${desired}`;
-  return `${body}\n`;
+  const ours = doc.hooks.filter((t) => isOurCommand(tomlString(t.keys.get("command"))));
+  const fields = ourTomlFields(spec, command, timeout);
+  const only = ours.length === 1 ? ours[0]! : undefined;
+  const upToDate =
+    only !== undefined &&
+    only.keys.size === fields.length &&
+    fields.every(([k, v]) => {
+      const have = only.keys.get(k);
+      if (have === undefined) return false;
+      return k === "timeout" ? have === v : tomlString(have) === tomlString(v);
+    });
+  if (upToDate && !doc.emptyRootHooks) return text;
+  // Take out every copy of ours (and an inert root `hooks = []`, which would
+  // collide with the table array), then append the canonical table once.
+  const blocks: { start: number; end: number }[] = [...ours];
+  if (doc.emptyRootHooks) blocks.push(doc.emptyRootHooks);
+  const { eol } = doc;
+  const desired = ["[[hooks]]", ...fields.map(([k, v]) => `${k} = ${v}`)].join(eol);
+  const body = cutTomlBlocks(doc.lines, blocks);
+  return `${body === "" ? desired : `${body}${eol}${eol}${desired}`}${eol}`;
 }
 
 function removeToml(spec: ClaudeFamilySpec, docText: string | undefined): string | undefined {
   if (!docText || docText.trim() === "") return undefined;
-  let parsed: { lines: string[]; tables: TomlTable[] };
+  let doc: TomlDocument;
   try {
-    parsed = readToml(docText, spec.invalidDocument);
+    doc = readToml(docText, spec.invalidDocument);
   } catch {
     return undefined; // nothing of ours we can safely take out of it
   }
-  const ours = parsed.tables.filter(
-    (t) => t.isArray && t.name === "hooks" && isOurCommand(tomlString(t.keys.get("command"))),
-  );
+  const ours = doc.hooks.filter((t) => isOurCommand(tomlString(t.keys.get("command"))));
   if (ours.length === 0) return undefined;
-  const out = [...parsed.lines];
-  for (const t of [...ours].sort((a, b) => b.start - a.start)) {
-    let end = t.end;
-    let start = t.start;
-    while (start > 0 && out[start - 1]!.trim() === "") start--;
-    while (end > t.start && out[end - 1]!.trim() === "") end--;
-    out.splice(start, end - start);
-  }
-  const body = out.join("\n").replace(/\n+$/, "");
-  return body === "" ? "" : `${body}\n`;
+  const body = cutTomlBlocks(doc.lines, ours);
+  return body === "" ? "" : `${body}${doc.eol}`;
 }
 
 function installedToml(spec: ClaudeFamilySpec, docText: string | undefined, command: string): boolean {
   if (!docText || docText.trim() === "") return false;
   try {
-    const { tables } = readToml(docText, spec.invalidDocument);
-    return tables.some(
-      (t) =>
-        t.isArray &&
-        t.name === "hooks" &&
-        tomlString(t.keys.get("event")) === spec.event &&
-        tomlString(t.keys.get("command")) === command,
+    const doc = readToml(docText, spec.invalidDocument);
+    // Next to any other definition of `hooks` the file does not load at all.
+    if (doc.hooksConflict !== undefined || doc.emptyRootHooks) return false;
+    return doc.hooks.some(
+      (t) => tomlString(t.keys.get("event")) === spec.event && tomlString(t.keys.get("command")) === command,
     );
   } catch {
     return false;
@@ -785,7 +894,7 @@ export function claudeFamilyHost(spec: ClaudeFamilySpec): GuardHostDescriptor {
       case "flat":
         return removeFlat(spec, docText);
       case "kiro":
-        return removeKiro(docText);
+        return removeKiro(spec, docText);
       case "toml":
         return removeToml(spec, docText);
     }
@@ -797,7 +906,7 @@ export function claudeFamilyHost(spec: ClaudeFamilySpec): GuardHostDescriptor {
       case "flat":
         return installedFlat(spec, docText, command);
       case "kiro":
-        return installedKiro(docText, command);
+        return installedKiro(spec, docText, command);
       case "toml":
         return installedToml(spec, docText, command);
     }
@@ -818,6 +927,7 @@ export function claudeFamilyHost(spec: ClaudeFamilySpec): GuardHostDescriptor {
     presencePaths: spec.presencePaths,
   };
   if (spec.documentFormat !== undefined) descriptor.documentFormat = spec.documentFormat;
+  if (spec.jsonDialect) descriptor.documentFormat = spec.jsonDialect.json5 ? "json5" : "jsonc";
   if (spec.artifacts) descriptor.artifacts = spec.artifacts;
   return descriptor;
 }

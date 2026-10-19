@@ -28,7 +28,7 @@ import {
   variantPresent,
 } from "../main/lib/vscode.js";
 import { createSourceIo } from "../main/lib/source-io.js";
-import { parseJsonc, stripJsonc } from "../main/lib/jsonc.js";
+import { parseJsonc, stripJsonc } from "../main/guard/jsonc.js";
 import { diagnose, type DoctorInput } from "../main/lib/doctor.js";
 import { resolveRegistrationDocuments } from "../main/lib/mcp-register.js";
 import { mcpConfigPaths } from "../main/lib/mcp-inventory.js";

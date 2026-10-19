@@ -11,6 +11,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { qwenHost } from "../main/guard/hosts/qwen.js";
+import { documentReadable } from "../main/guard/hosts/index.js";
+import { stripJsonc } from "../main/guard/jsonc.js";
 import { GUARD_COMMAND_MARKER } from "../main/guard/policy.js";
 
 const FIXTURES = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures/hooks/qwen");
@@ -81,6 +83,37 @@ describe("document surgery", () => {
     const removed = qwenHost.remove(doc);
     expect(removed).toBeDefined();
     expect(removed).not.toContain(GUARD_COMMAND_MARKER);
+  });
+
+  it("edits a commented, BOM-prefixed settings.json in place, keeping every comment", () => {
+    // Qwen Code strips a BOM and comments before JSON.parse, so this is a
+    // valid settings file there — and a trailing comma is not.
+    const commented = [
+      "\uFEFF// Qwen settings",
+      "{",
+      "    /* model */",
+      '    "model": { "name": "qwen3-coder" },',
+      '    "hooks": {',
+      '        "PreToolUse": [',
+      "            // a teammate's hook",
+      '            { "matcher": "run_shell_command", "hooks": [{ "type": "command", "command": "/opt/audit.sh" }] }',
+      "        ]",
+      "    } // hooks end",
+      "}",
+      "// trailing",
+      "",
+    ].join("\n");
+    expect(documentReadable(qwenHost, commented)).toBe(true);
+    const merged = qwenHost.merge(commented, COMMAND, 60, 75);
+    expect(merged.startsWith("\uFEFF// Qwen settings\n{\n    /* model */\n")).toBe(true);
+    for (const comment of commented.match(/\/\/ [^\n]*|\/\*.*?\*\//g)!) expect(merged).toContain(comment);
+    const stripped = stripJsonc(merged);
+    expect(stripped.changes).not.toContain("removed trailing commas");
+    expect(JSON.parse(stripped.text)).toEqual(JSON.parse(qwenHost.merge(stripJsonc(commented).text, COMMAND, 60, 75)));
+    expect(qwenHost.installed(merged, COMMAND)).toBe(true);
+    expect(qwenHost.merge(merged, COMMAND, 60, 75)).toBe(merged);
+    expect(qwenHost.remove(merged)).toBe(commented);
+    expect(() => qwenHost.merge('{ "model": {}, }', COMMAND, 60, 75)).toThrow(/\.qwen\/settings\.json is not valid JSON \(line 1: trailing comma\)/);
   });
 });
 

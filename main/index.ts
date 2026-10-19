@@ -44,6 +44,7 @@ import {
   SpoolWatcher,
   guardDir,
   guardHostSummaries,
+  guardInstallProblem,
   installGuard,
   isGuardInstalled,
   refreshGuardBundle,
@@ -57,7 +58,8 @@ import { McpConfigWatcher } from "./mcp-watch.js";
 import type { McpConfigServer } from "./lib/mcp-inventory.js";
 import { buildMcpInventory, discoveredMcpConfig, mcpConfigPaths } from "./lib/mcp-inventory.js";
 import { INJECTION_CLASSIFIER_LABEL, loadInjectionClassifier, runtimePresent, wasmPipeline, type InjectionClassifier } from "./lib/injection-classifier.js";
-import { PROMPT_GUARD_2_22M, PROMPT_GUARD_2_22M_DOORMAN_1, downloadModel, injectionModelManifest, modelDir, modelStatus, removeModel, reverifyModel, type DownloadProgress, type ModelManifest } from "./lib/model-assets.js";
+import { PROMPT_GUARD_2_22M, PROMPT_GUARD_2_22M_DOORMAN_1, bytesOnDisk, downloadModel, injectionModelManifest, modelDir, modelStatus, removeModel, reverifyModel, type DownloadProgress, type ModelManifest } from "./lib/model-assets.js";
+import { claimForApp, liveLock, releaseLock, takeLock, type LockRecord } from "./lib/data-owner.js";
 import { doormanModelSource, fetchInjectionModels, injectionModelsMissing, planInjectionModel, type InjectionModelFetchDeps, type InjectionModelPlan } from "./lib/injection-model-choice.js";
 import {
   ObservedWatcher,
@@ -112,6 +114,7 @@ import {
   SECURITY_LEVELS,
   type SecurityLevel,
   type GuardPolicy,
+  type InjectionModelId,
   type McpPermissionSet,
   type McpToolClass,
   defaultSecondOpinion,
@@ -493,7 +496,9 @@ function applyGuardSync(): void {
 function setGuardWanted(on: boolean): { ok: boolean; error?: string } {
   if (on) {
     const outcome = installGuard(app.getPath("userData"), livePolicy());
-    guardSyncError = outcome.ok ? undefined : outcome.error;
+    // A partial install is ON (some agents are guarded) and still a problem
+    // to show: the hosts it couldn't reach are named, one by one.
+    guardSyncError = guardInstallProblem(outcome);
     // The person wants the guard: from here a missing entry is tampering.
     if (outcome.ok) store.setPrefs({ guard_wanted: true });
     // Coverage is computed from where the guard IS — re-scan so the card
@@ -637,6 +642,12 @@ const MODEL_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000];
 
 async function startModelDownload(manifest: ModelManifest = injectionManifest()): Promise<{ ok: boolean; already?: boolean; error?: string }> {
   if (modelDownload) return { ok: true, already: true };
+  // The CLI downloads into the same folder: one download at a time. When its
+  // download is running, follow it instead and load what it brings.
+  if (!takeLock(app.getPath("userData"), "model-download", { pid: process.pid, by: "app", model: modelIdOf(manifest) })) {
+    followExternalDownload();
+    return { ok: true, already: true };
+  }
   const controller = new AbortController();
   modelDownload = { manifest, progress: { file: "", bytes_done: 0, bytes_total: manifest.files.reduce((a, f) => a + f.size, 0) }, controller };
   modelDownloadErrors.delete(manifest.name);
@@ -673,10 +684,50 @@ async function startModelDownload(manifest: ModelManifest = injectionManifest())
     return { ok: false, error };
   } finally {
     modelDownload = undefined;
+    releaseLock(app.getPath("userData"), "model-download", process.pid);
     // Finished or failed, the row is now wrong until the next fold — and on an
     // idle machine that is up to five minutes away. Say so immediately.
     scheduleRecompute();
   }
+}
+
+function modelIdOf(manifest: ModelManifest): InjectionModelId {
+  return manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? "doorman-1" : "stock";
+}
+
+/** A model download the doorman CLI is running (it started before the app). */
+function externalDownload(): LockRecord | undefined {
+  const lock = liveLock(app.getPath("userData"), "model-download");
+  return lock && lock.pid !== process.pid ? lock : undefined;
+}
+
+/** The download in flight, the app's own or the CLI's — what Settings shows. */
+function currentDownload(): { manifest: ModelManifest; progress: DownloadProgress } | undefined {
+  if (modelDownload) return modelDownload;
+  const lock = externalDownload();
+  if (!lock) return undefined;
+  const manifest = injectionModelManifest(lock.model === "stock" ? "stock" : "doorman-1");
+  return { manifest, progress: { file: "", ...bytesOnDisk(modelsRoot(), manifest) } };
+}
+
+/** While the CLI's download runs, refresh its progress; when it ends, load
+ * what it installed and fetch whatever is still missing. */
+let externalDownloadTimer: NodeJS.Timeout | undefined;
+function followExternalDownload(): void {
+  if (externalDownloadTimer) return;
+  scheduleRecompute();
+  externalDownloadTimer = setInterval(() => {
+    if (externalDownload()) {
+      scheduleRecompute();
+      return;
+    }
+    clearInterval(externalDownloadTimer);
+    externalDownloadTimer = undefined;
+    injectionClassifier = undefined;
+    scheduleRecompute();
+    ensureInjectionModel("retry");
+  }, 2_000);
+  externalDownloadTimer.unref?.();
 }
 
 /** The app's side of lib/injection-model-choice.ts's download orchestration. */
@@ -707,6 +758,11 @@ function ensureInjectionModel(reason: "boot" | "enabled" | "retry"): void {
   const cfg = livePolicy().injection_classifier ?? defaultInjectionClassifierConfig();
   if (!cfg.enabled || !runtimePresent(runtimeRoot())) return;
   if (modelDownload || !injectionModelsMissing(injectionModelFetchDeps)) return;
+  // The CLI is already fetching it: wait for that, don't download it twice.
+  if (externalDownload()) {
+    followExternalDownload();
+    return;
+  }
   if (reason === "boot" && modelAutoDownloadTried) return;
   modelAutoDownloadTried = true;
   // Turning the switch on is a person asking now: it starts over from the first
@@ -1602,6 +1658,7 @@ function modelAssistNow(): ModelAssistState {
   const runtime = runtimePresent(runtimeRoot());
   const error = modelDownloadErrors.get(manifest.name);
   const doormanError = modelDownloadErrors.get(PROMPT_GUARD_2_22M_DOORMAN_1.name);
+  const download = currentDownload();
   return {
     injection_classifier: {
       enabled: ic.enabled,
@@ -1610,7 +1667,7 @@ function modelAssistNow(): ModelAssistState {
       version: manifest.version,
       installed: status.present,
       runtime_present: runtime,
-      ...(modelDownload ? { downloading: { bytes_done: modelDownload.progress.bytes_done, bytes_total: modelDownload.progress.bytes_total } } : {}),
+      ...(download ? { downloading: { bytes_done: download.progress.bytes_done, bytes_total: download.progress.bytes_total } } : {}),
       ...(error ? { download_error: error } : {}),
       model_choice: {
         selected: plan.selected,
@@ -1618,7 +1675,7 @@ function modelAssistNow(): ModelAssistState {
         ...(plan.fallback ? { fallback: plan.fallback } : {}),
         ...(plan.fallback === "download_failed" && doormanError ? { selected_error: doormanError } : {}),
         ...(injectionModelFromEnv() ? { env: true } : {}),
-        ...(modelDownload?.manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? { selected_downloading: true } : {}),
+        ...(download?.manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? { selected_downloading: true } : {}),
       },
     },
     second_opinion: { enabled: so.enabled, model: so.model },
@@ -1650,7 +1707,7 @@ function onIntegrityReport(report: GuardIntegrityReport, previous: GuardIntegrit
       notifyGuardTampered(description, {
         onReinstall: () => {
           const outcome = installGuard(app.getPath("userData"), livePolicy());
-          guardSyncError = outcome.ok ? undefined : outcome.error;
+          guardSyncError = guardInstallProblem(outcome);
           integrity.check();
           scheduleRecompute();
         },
@@ -2044,7 +2101,7 @@ function registerIpc(): void {
       selected_model: plan.selected,
       effective_model: plan.effective,
       ...(plan.fallback ? { fallback: plan.fallback } : {}),
-      ...(modelDownload ? { downloading: modelDownload.progress } : {}),
+      ...(currentDownload() ? { downloading: currentDownload()!.progress } : {}),
       ...(error ? { download_error: error } : {}),
     };
     if (!base.runtime_present) return { ...base, available: false, error: "the WASM runtime is missing from this build" };
@@ -2058,6 +2115,9 @@ function registerIpc(): void {
   });
   ipcMain.handle("radar:injection-classifier-download", () => startModelDownload());
   ipcMain.handle("radar:injection-classifier-remove", () => {
+    // Not under the CLI's running download: it would rename its files into a
+    // folder that just went away.
+    if (externalDownload()) return { ok: false, error: "the doorman CLI is downloading the model; remove it once that finishes" };
     modelDownload?.controller.abort();
     removeModel(modelsRoot(), injectionManifest());
     injectionClassifier = undefined;
@@ -2411,6 +2471,12 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     registerProtocol();
+
+    // The data directory is shared with the doorman CLI: mark it as the app's
+    // before anything here writes to it, and let a CLI command that is writing
+    // right now finish first (a long scan stops at its next file). From here
+    // on the CLI sees the app and works on a copy (lib/data-owner.ts).
+    await claimForApp(app.getPath("userData"), { log: (m) => console.warn(`[doorman] ${m}`) });
 
     // brand-dev-shell.mjs already points the bundle at our .icns, so the Dock
     // is right from launch. This still sets the tile explicitly because it uses
@@ -2833,8 +2899,10 @@ if (!app.requestSingleInstanceLock()) {
     // guard off and on.
     if (isGuardInstalled()) {
       const outcome = installGuard(app.getPath("userData"), livePolicy());
+      // Hosts the re-merge couldn't reach are named in Settings, not only the log.
+      guardSyncError = guardInstallProblem(outcome);
+      if (guardSyncError !== undefined) console.warn("[doorman] couldn't re-merge the guard at boot:", guardSyncError);
       if (!outcome.ok) {
-        console.warn("[doorman] couldn't re-merge the guard at boot:", outcome.error);
         try {
           refreshGuardBundle(app.getPath("userData"));
           writeGuardPolicy(app.getPath("userData"), livePolicy());
@@ -2975,6 +3043,8 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("before-quit", () => {
+    // The CLI may write again (after the heartbeat below is cleared too).
+    releaseLock(app.getPath("userData"), "app", process.pid);
     engine?.stop();
     spool?.stop();
     mcpWatch?.stop();

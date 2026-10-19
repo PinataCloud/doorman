@@ -22,7 +22,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
@@ -136,8 +136,87 @@ export function manifestBytes(manifest: ModelManifest): number {
   return manifest.files.reduce((sum, f) => sum + f.size, 0);
 }
 
+/**
+ * One folder per pinned REVISION: `<name>@<12 hex of its pins>`. The desktop
+ * app and the CLI update separately and share this folder tree, so two builds
+ * pinning different weights must each keep their own instead of re-fetching
+ * over each other's on every switch. Files the revisions share (the tokenizer,
+ * the licence) are hard links, so the second revision costs only what changed.
+ */
 export function modelDir(modelsRoot: string, manifest: ModelManifest): string {
-  return join(modelsRoot, manifest.name);
+  return join(modelsRoot, `${manifest.name}@${modelRevision(manifest)}`);
+}
+
+export function modelRevision(manifest: ModelManifest): string {
+  const pins = manifest.files.map((f) => `${f.name}:${f.sha256}`).join("\n");
+  return createHash("sha256").update(pins).digest("hex").slice(0, 12);
+}
+
+/** Every other folder of this model: older and newer revisions, and the
+ * revision-less folder builds before revision folders wrote. */
+function otherRevisionDirs(modelsRoot: string, manifest: ModelManifest): string[] {
+  const own = modelDir(modelsRoot, manifest);
+  let names: string[];
+  try {
+    names = readdirSync(modelsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n === manifest.name || n.startsWith(`${manifest.name}@`))
+    .map((n) => join(modelsRoot, n))
+    .filter((dir) => dir !== own);
+}
+
+/** Take every pinned file another folder already holds verified against the
+ * same pin — this model's other revisions, or another model's identical
+ * tokenizer — as a hard link (a copy where links can't go). Free and offline;
+ * what loads is re-hashed before it runs either way (reverifyModel). */
+function adoptFromOtherFolders(modelsRoot: string, manifest: ModelManifest, dir: string, verified: Record<string, string>): boolean {
+  let others: string[];
+  try {
+    others = readdirSync(modelsRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => join(modelsRoot, d.name))
+      .filter((d) => d !== dir);
+  } catch {
+    return false;
+  }
+  let adopted = false;
+  for (const file of manifest.files) {
+    if (fileHeld(dir, file, verified)) continue;
+    for (const other of others) {
+      const source = join(other, file.name);
+      if (readVerified(other)[file.name] !== file.sha256 || !existsSync(source) || statSync(source).size !== file.size) continue;
+      const target = join(dir, file.name);
+      rmSync(target, { force: true });
+      try {
+        linkSync(source, target);
+      } catch {
+        copyFileSync(source, target);
+      }
+      verified[file.name] = file.sha256;
+      adopted = true;
+      break;
+    }
+  }
+  return adopted;
+}
+
+/** Keep this revision and the newest other one (the other product's, at most)
+ * — never a growing pile of retired weights. */
+function pruneOldRevisions(modelsRoot: string, manifest: ModelManifest): void {
+  const stamped = otherRevisionDirs(modelsRoot, manifest).map((dir) => {
+    let at = 0;
+    try {
+      at = statSync(join(dir, VERIFIED_FILE)).mtimeMs;
+    } catch {
+      // never verified anything: oldest
+    }
+    return { dir, at };
+  });
+  stamped.sort((a, b) => b.at - a.at);
+  for (const { dir } of stamped.slice(1)) rmSync(dir, { recursive: true, force: true });
 }
 
 export interface ModelStatus {
@@ -187,6 +266,26 @@ export function modelStatus(modelsRoot: string, manifest: ModelManifest): ModelS
   const verified = readVerified(dir);
   const missing = manifest.files.filter((file) => !fileHeld(dir, file, verified)).map((file) => file.name);
   return { present: missing.length === 0, missing, bytes_total: manifestBytes(manifest) };
+}
+
+/** How much of the model is on disk: its verified files plus what a download
+ * has streamed into part files so far — the progress a process can show for a
+ * download another one is running (the app for the CLI's, and the reverse). */
+export function bytesOnDisk(modelsRoot: string, manifest: ModelManifest): { bytes_done: number; bytes_total: number } {
+  const dir = modelDir(modelsRoot, manifest);
+  const missing = new Set(modelStatus(modelsRoot, manifest).missing);
+  let done = 0;
+  for (const file of manifest.files) {
+    if (!missing.has(file.name)) done += file.size;
+    else {
+      try {
+        done += Math.min(statSync(join(dir, `${file.name}.part`)).size, file.size);
+      } catch {
+        // not started yet
+      }
+    }
+  }
+  return { bytes_done: done, bytes_total: manifestBytes(manifest) };
 }
 
 export async function sha256File(path: string): Promise<string> {
@@ -293,9 +392,13 @@ export async function downloadModel(
     verified[file.name] = file.sha256;
     adopted = true;
   }
+  if (adoptFromOtherFolders(modelsRoot, manifest, dir, verified)) adopted = true;
   if (adopted) writeVerified(dir, verified);
   const todo = manifest.files.filter((file) => !fileHeld(dir, file, verified));
-  if (todo.length === 0) return modelStatus(modelsRoot, manifest);
+  if (todo.length === 0) {
+    pruneOldRevisions(modelsRoot, manifest);
+    return modelStatus(modelsRoot, manifest);
+  }
   const source = explicit ?? (manifest.base_url === "" ? undefined : { kind: "url" as const, base: manifest.base_url });
   if (!source) throw new Error(`${manifest.name} has no public download yet — name a source (DOORMAN_INJECTION_CLASSIFIER_SOURCE)`);
   // A local directory goes through the same FetchLike seam, so an install from
@@ -348,6 +451,7 @@ export async function downloadModel(
     writeVerified(dir, verified);
     done += written;
   }
+  pruneOldRevisions(modelsRoot, manifest);
   return modelStatus(modelsRoot, manifest);
 }
 

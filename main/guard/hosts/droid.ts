@@ -37,6 +37,10 @@
  * `old_string`); `Read{file_path}` → Read; `FetchUrl{url}` → WebFetch;
  * `ApplyPatch{file_path, patch}`, `LS`, `Glob`, `Grep`, `WebSearch` pass
  * through. MCP tools are already `mcp__<server>__<tool>` [1].
+ *
+ * COMMENTS. Droid reads settings.json as JSONC (verified 2026-10-19), so
+ * comments are legal; a trailing comma is accepted too, as JSONC readers
+ * tolerate it. A commented document is edited in place.
  */
 
 import { join } from "node:path";
@@ -57,6 +61,7 @@ export const droidHost: GuardHostDescriptor = claudeFamilyHost({
     ];
   },
   invalidDocument: "~/.factory/settings.json",
+  jsonDialect: { trailingCommas: true },
   style: "grouped",
   event: "PreToolUse",
   acceptedEvents: ["PreToolUse"],

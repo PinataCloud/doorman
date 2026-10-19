@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { ReadStream } from "node:tty";
 import { ApprovalWatcher, GuardHeartbeat, SpoolWatcher, guardHostStates, syncGuard } from "../../enforcement.js";
 import { heartbeatFresh, heartbeatPath, type ApprovalRequest, type ApprovalVerdict } from "../../guard/handshake.js";
+import { appOwner } from "../../lib/data-owner.js";
 import { HOSTS } from "../../guard/hosts/index.js";
 import { approvalContextNote, approvalPolicyChange, approvalSummary } from "../../lib/approvals.js";
 import { localDetectorLabel } from "../../lib/findings.js";
@@ -67,6 +68,9 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     const who = other.version?.startsWith("cli-") ? "`doorman watch`" : "Doorman";
     throw new CliError(`${who}${other.pid !== undefined ? ` (pid ${other.pid})` : ""} is already answering held calls.`);
   }
+  // Watch writes the store (the guard's spool) and the policy for as long as
+  // it runs: it needs the data to itself, not a copy.
+  ctx.requireWritable("Answer held calls");
   const s = ctx.style;
   const out = ctx.io.stderr;
   const tty = "isTTY" in out && out.isTTY === true;
@@ -273,8 +277,10 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     approvals.stop();
     spool.drain();
     spool.stop();
-    // Remove the heartbeat only while it is ours: after a takeover it is the app's.
-    if (!takeover && readHeartbeat()?.pid === process.pid) heartbeat.clear();
+    // Remove the heartbeat only while it is ours: after the app's takeover it
+    // is the app's. An app that is still starting hasn't written one yet, so
+    // ours goes — no guard may think this stopped watch still answers.
+    if (readHeartbeat()?.pid === process.pid) heartbeat.clear();
     else heartbeat.stop();
     handle.close();
     if (!auto) {
@@ -308,6 +314,14 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     const beat = readHeartbeat();
     if (beat?.fresh && beat.pid !== undefined && beat.pid !== process.pid) {
       say(s.yellow(`Doorman (pid ${beat.pid}) took over answering held calls. Stopping.`));
+      stop("taken over by Doorman", true);
+      return;
+    }
+    // The app is starting: it waits for this watch to let go of the data
+    // before it writes anything, then answers held calls itself.
+    const starting = appOwner(ctx.dataDir);
+    if (starting) {
+      say(s.yellow(`Doorman (pid ${starting.pid}) is starting and takes over answering held calls. Stopping.`));
       stop("taken over by Doorman", true);
       return;
     }

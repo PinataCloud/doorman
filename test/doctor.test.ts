@@ -14,6 +14,7 @@ import { GUARD_FILES } from "../main/enforcement.js";
 import { GUARD_COMMAND_MARKER, mergeCodexGuardHook, mergeGuardHook } from "../main/guard/policy.js";
 import { hermesHost } from "../main/guard/hosts/hermes.js";
 import { openclawHost } from "../main/guard/hosts/openclaw.js";
+import { geminiHost } from "../main/guard/hosts/gemini.js";
 
 /**
  * The doctor is held to documents written by the REAL guard merge, not to
@@ -249,6 +250,23 @@ describe("unreadable hook documents", () => {
     // With a readable backup beside it, the offer says so.
     writeFileSync(`${settingsPath}.bak`, "{}\n");
     expect(byId(diagnose(input(home, { guardWanted: true, guardDir })), "guard.document:claude").detail).toContain("would be restored");
+  });
+
+  it("never 'repairs' a document whose host reads comments — Gemini's commented settings, OpenClaw's JSON5", () => {
+    const home = freshMachine();
+    const guardDir = guardDirFor(home);
+    guardBoth(home, guardDir);
+    const command = `node "${join(guardDir, "guard.js")}"`;
+    // Valid for Gemini CLI (it strips comments), guarded in place.
+    mkdirSync(join(home, ".gemini"), { recursive: true });
+    const gemini = geminiHost.merge('// mine\n{\n  "theme": "GitHub" /* for now */\n}\n', `${command} --host gemini`, 60);
+    writeFileSync(join(home, ".gemini", "settings.json"), gemini);
+    // Valid for OpenClaw (its JSON5 fallback), though not something the guard edits.
+    mkdirSync(join(home, ".openclaw"), { recursive: true });
+    writeFileSync(join(home, ".openclaw", "openclaw.json"), "{\n  // mine\n  agents: { defaults: { model: 'opus' } },\n}\n");
+    const report = diagnose(input(home, { guardWanted: true, guardDir }));
+    expect(report.checks.filter((c) => c.fix === "repair-json" || c.fix === "restore-json")).toEqual([]);
+    expect(report.checks.some((c) => c.id.startsWith("guard.document:"))).toBe(false);
   });
 });
 

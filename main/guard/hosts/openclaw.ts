@@ -145,6 +145,7 @@ import type { GuardHookInput } from "../decision.js";
 import { HOOK_TIMEOUT_SLACK_SECONDS } from "../policy.js";
 import { DEFAULT_REASON } from "./claude.js";
 import type { GuardHostDescriptor, HostArtifact, HostDocument, HostEmit } from "./types.js";
+import { readHostJson, writeHostJson, type JsoncDialect } from "../jsonc.js";
 
 /** The plugin's id — the `plugins.entries` key, the manifest id and the
  * artefact directory name. Byte-stable: OpenClaw keys consent on it. */
@@ -153,6 +154,13 @@ export const OPENCLAW_PLUGIN_ID = "doorman-guard";
 const CONFIG_FILENAME = "openclaw.json";
 const INVALID_DOCUMENT = "~/.openclaw/openclaw.json";
 const EVENT = "before_tool_call";
+
+/** OpenClaw parses openclaw.json as JSON, then falls back to JSON5 (verified
+ * 2026-10-19): comments and trailing commas are legal and edited in place.
+ * JSON5-only syntax (unquoted keys, single quotes, hex…) is legal for OpenClaw
+ * too, but the guard can't edit it without rewriting the file — so it is
+ * refused by name rather than called invalid. */
+const DIALECT: JsoncDialect = { trailingCommas: true, json5: true };
 
 /** `OPENCLAW_STATE_DIR` (or the legacy `CLAWDBOT_STATE_DIR`) exactly as the
  * CLI resolves it, else `~/.openclaw`. */
@@ -175,15 +183,22 @@ const str = (value: unknown): string | undefined =>
 
 function parseConfig(docText: string | undefined): Record<string, unknown> {
   if (!docText || docText.trim() === "") return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(docText);
-  } catch {
-    // Never destroy a config we cannot read: refuse loudly instead.
-    throw new Error(`${INVALID_DOCUMENT} is not valid JSON; not touching it`);
-  }
+  // Never destroy a config we cannot read: refuse loudly instead.
+  const parsed = readHostJson(docText, DIALECT, INVALID_DOCUMENT);
   if (!isRecord(parsed)) return {};
   return parsed;
+}
+
+/** The config, or undefined when it is blank, unreadable or not an object —
+ * for uninstall and the installed check, which never refuse. */
+function tryParseConfig(docText: string | undefined): Record<string, unknown> | undefined {
+  if (!docText || docText.trim() === "") return undefined;
+  try {
+    const parsed = readHostJson(docText, DIALECT, INVALID_DOCUMENT);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The per-call budget in milliseconds: the hold window plus the same slack
@@ -222,21 +237,14 @@ function mergeOpenclaw(
   settings.plugins = plugins;
 
   if (docText !== undefined && JSON.stringify(settings) === before) return docText;
-  return `${JSON.stringify(settings, null, 2)}\n`;
+  return writeHostJson(docText, settings, DIALECT, INVALID_DOCUMENT);
 }
 
 function removeOpenclaw(docText: string | undefined): string | undefined {
-  if (!docText || docText.trim() === "") return undefined;
-  let settings: Record<string, unknown>;
-  try {
-    const parsed: unknown = JSON.parse(docText);
-    if (!isRecord(parsed)) return undefined;
-    settings = parsed;
-  } catch {
-    // Uninstall is best-effort: a document we cannot parse has nothing of ours
-    // we can safely take out of it.
-    return undefined;
-  }
+  // Uninstall is best-effort: a document we cannot parse has nothing of ours
+  // we can safely take out of it.
+  const settings = tryParseConfig(docText);
+  if (!settings) return undefined;
   const plugins = settings.plugins;
   if (!isRecord(plugins)) return undefined;
   let removed = false;
@@ -257,18 +265,12 @@ function removeOpenclaw(docText: string | undefined): string | undefined {
   }
   if (!removed) return undefined;
   if (Object.keys(plugins).length === 0) delete settings.plugins;
-  return `${JSON.stringify(settings, null, 2)}\n`;
+  return writeHostJson(docText, settings, DIALECT, INVALID_DOCUMENT);
 }
 
 function installedOpenclaw(docText: string | undefined, command: string): boolean {
-  if (!docText || docText.trim() === "") return false;
-  let settings: unknown;
-  try {
-    settings = JSON.parse(docText);
-  } catch {
-    return false;
-  }
-  if (!isRecord(settings) || !isRecord(settings.plugins) || !isRecord(settings.plugins.entries)) return false;
+  const settings = tryParseConfig(docText);
+  if (!settings || !isRecord(settings.plugins) || !isRecord(settings.plugins.entries)) return false;
   const entry = settings.plugins.entries[OPENCLAW_PLUGIN_ID];
   if (!isRecord(entry) || entry.enabled !== true || !isRecord(entry.config)) return false;
   return entry.config.command === command;
@@ -472,13 +474,60 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Past whitespace and comments from \`i\`. */
+function skipTrivia(text, i) {
+  for (;;) {
+    while (i < text.length && /\\s/.test(text[i])) i++;
+    if (text.startsWith("//", i)) {
+      const end = text.indexOf("\\n", i);
+      i = end === -1 ? text.length : end;
+    } else if (text.startsWith("/*", i)) {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 2;
+    } else {
+      return i;
+    }
+  }
+}
+
+/** openclaw.json as OpenClaw reads it: JSON, where comments and trailing
+ * commas are legal (string-aware — a "//" inside a value survives). */
+export function parseConfigText(raw) {
+  const text = raw.replace(/^\\uFEFF/, "");
+  try {
+    return JSON.parse(text);
+  } catch {
+    // commented — strip, then parse
+  }
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j + 1;
+    } else if (text.startsWith("//", i) || text.startsWith("/*", i)) {
+      out += " ";
+      i = skipTrivia(text, i);
+    } else if (ch === "," && "}]".includes(text[skipTrivia(text, i + 1)] || "x")) {
+      i++;
+    } else {
+      out += ch;
+      i++;
+    }
+  }
+  return JSON.parse(out);
+}
+
 /** The entry's config: api.pluginConfig first, then openclaw.json itself. */
 export function readPluginConfig(api, env = process.env) {
   const own = api && isRecord(api.pluginConfig) ? api.pluginConfig : undefined;
   if (own && typeof own.command === "string" && own.command !== "") return own;
   try {
     const state = (env.OPENCLAW_STATE_DIR && env.OPENCLAW_STATE_DIR.trim()) || join(homedir(), ".openclaw");
-    const parsed = JSON.parse(readFileSync(join(state, "openclaw.json"), "utf8"));
+    const parsed = parseConfigText(readFileSync(join(state, "openclaw.json"), "utf8"));
     const entry = parsed && parsed.plugins && parsed.plugins.entries && parsed.plugins.entries[PLUGIN_ID];
     const config = entry && isRecord(entry.config) ? entry.config : undefined;
     if (config && typeof config.command === "string" && config.command !== "") return config;
@@ -720,6 +769,7 @@ export const openclawHost: GuardHostDescriptor = {
   // No fixedTimeoutSeconds: merge() writes `timeoutMs` into the entry itself.
 
   presencePaths: [".openclaw"],
-  documentFormat: "json",
+  // JSON, falling back to JSON5 — see DIALECT.
+  documentFormat: "json5",
   artifacts: artifactsOpenclaw,
 };

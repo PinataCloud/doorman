@@ -45,6 +45,9 @@ Inside `app.asar`:
   (`Apache-2.0`), the two runtime dependencies. No scripts or dev dependencies.
 - `build/main/**` — the compiled main process, guard bundle, MCP server and
   gateway. Compiled with `removeComments`, so no source commentary ships.
+  Includes `build-info.json` (`scripts/stamp-build.mjs`): the commit hash and
+  commit time the build was made from, which the app and the CLI compare to
+  tell whose guard bundle is newer.
 - `renderer/` — `index.html`, `app.css`, `tokens.css` and one precompiled,
   comment-free `app.min.js` (`scripts/build-renderer.mjs`). The in-page JSX
   compiler (`assets/vendor/babel.js`) is a development-only file and is
@@ -158,7 +161,10 @@ Audited from the built `dist/cli-package` (2026-10-16, 0.1.0): 150 files,
   pinned to the app's version).
 
 Network: the same as the app minus the updater. The only request the CLI
-makes on its own is `doorman model download` (Hugging Face, sha256-pinned);
+makes on its own is the classifier model download (Hugging Face,
+sha256-pinned): like the app, it starts by itself while the classifier is on
+and the model is missing, as a detached `doorman model download --auto` child
+of whichever command noticed (`main/cli/auto-download.ts`);
 the second-opinion call stays loopback-only. URLs in the code beyond
 `huggingface.co`, `127.0.0.1` and schema ids are the vendor consoles linked in
 credential-rotation guidance (GitHub, OpenAI, AWS, Stripe…), shown as text and

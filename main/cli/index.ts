@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { maybeStartModelDownload } from "./auto-download.js";
 import type { CliCommand } from "./command.js";
 import { COMMANDS } from "./commands/index.js";
 import { CliContext, defaultEnvironment, type CliEnvironment } from "./context.js";
@@ -96,8 +97,13 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     env.stderr.write(`doorman ${command.name}: expected ${commandHelp(command)[0]!.replace("Usage: ", "")}\n`);
     return 2;
   }
+  const ctx = new CliContext(env);
+  ctx.commandName = command.name;
   try {
-    const result = await command.run(new CliContext(env), { values: parsed.values, positionals: parsed.positionals });
+    // The classifier's model, if it is on and not here yet: fetched by a
+    // detached child while this command runs (auto-download.ts).
+    maybeStartModelDownload(ctx, command.name);
+    const result = await command.run(ctx, { values: parsed.values, positionals: parsed.positionals });
     if (json) env.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
     else write(result.text);
     return result.exitCode ?? 0;
@@ -108,6 +114,9 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     }
     env.stderr.write(`doorman: ${err instanceof Error ? (verbose ? (err.stack ?? err.message) : err.message) : String(err)}\n`);
     return 1;
+  } finally {
+    // An app waiting to start goes ahead the moment this command is done.
+    ctx.releaseWrite();
   }
 }
 

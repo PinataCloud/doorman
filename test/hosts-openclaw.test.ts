@@ -26,6 +26,8 @@ import {
   openclawPluginDir,
   openclawStateDir,
 } from "../main/guard/hosts/openclaw.js";
+import { documentReadable } from "../main/guard/hosts/index.js";
+import { stripJsonc } from "../main/guard/jsonc.js";
 import { GUARD_COMMAND_MARKER } from "../main/guard/policy.js";
 
 const FIXTURES = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures/hooks/openclaw");
@@ -153,6 +155,46 @@ describe("config surgery", () => {
     expect(openclawHost.remove(undefined)).toBeUndefined();
     expect(openclawHost.remove("{ not json")).toBeUndefined();
     expect(() => openclawHost.merge("{ not json", COMMAND, HOLD)).toThrow(/not valid JSON/);
+  });
+
+  it("edits a commented openclaw.json in place — comments and trailing commas are OpenClaw's own dialect", () => {
+    const commented = [
+      "// OpenClaw config",
+      "{",
+      '  "agents": { "defaults": { "model": "anthropic/claude-opus" } }, /* main agent */',
+      '  "plugins": {',
+      '    "allow": [',
+      "      // vetted plugins only",
+      '      "other",',
+      "    ],",
+      '    "entries": {',
+      '      "other": { "enabled": true }, // theirs',
+      "    },",
+      "  },",
+      "  // nothing after this",
+      "}",
+      "// trailing",
+      "",
+    ].join("\n");
+    expect(documentReadable(openclawHost, commented)).toBe(true);
+    const merged = openclawHost.merge(commented, COMMAND, HOLD);
+    for (const comment of commented.match(/\/\/ [^\n]*|\/\*.*?\*\//g)!) expect(merged).toContain(comment);
+    expect(JSON.parse(stripJsonc(merged).text)).toEqual(
+      JSON.parse(openclawHost.merge(stripJsonc(commented).text, COMMAND, HOLD)),
+    );
+    expect(openclawHost.installed(merged, COMMAND)).toBe(true);
+    expect(openclawHost.merge(merged, COMMAND, HOLD)).toBe(merged);
+    expect(openclawHost.remove(merged)).toBe(commented);
+  });
+
+  it("refuses JSON5-only syntax by name, rather than calling a working config broken", () => {
+    const json5 = "{\n  // OpenClaw reads this\n  agents: { defaults: { model: 'opus' } },\n}\n";
+    expect(() => openclawHost.merge(json5, COMMAND, HOLD)).toThrow(
+      "~/.openclaw/openclaw.json uses JSON5 syntax (unquoted keys, single-quoted strings) the guard can't edit safely; not touching it",
+    );
+    expect(documentReadable(openclawHost, json5)).toBe(false);
+    expect(openclawHost.remove(json5)).toBeUndefined();
+    expect(openclawHost.installed(json5, COMMAND)).toBe(false);
   });
 });
 
@@ -408,6 +450,11 @@ describe("the plugin itself", () => {
     // over no config — the same document the installer wrote.
     const state = mkdtempSync(join(tmpdir(), "doorman-openclaw-state-"));
     writeFileSync(join(state, "openclaw.json"), openclawHost.merge(undefined, COMMAND, HOLD));
+    expect(mod.readPluginConfig({}, { OPENCLAW_STATE_DIR: state })?.command).toBe(COMMAND);
+    // …including a commented one, which OpenClaw reads and the installer
+    // edits in place.
+    const commented = '// mine\n{\n  "gateway": { "url": "ws://x//y" }, /* keep */\n}\n';
+    writeFileSync(join(state, "openclaw.json"), openclawHost.merge(commented, COMMAND, HOLD));
     expect(mod.readPluginConfig({}, { OPENCLAW_STATE_DIR: state })?.command).toBe(COMMAND);
     rmSync(state, { recursive: true, force: true });
   });

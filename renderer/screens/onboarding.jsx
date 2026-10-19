@@ -368,8 +368,11 @@ function OnboardingWatching({ state, pending, onSet }) {
           not own, so it can fail for reasons the person can act on — and a
           switch that settles back with no explanation reads as a bug in us
           rather than a locked file. The guard's own error, not a second
-          opinion about it. */}
-      {!on && pending == null && error ? <p className="onb-err">{error}</p> : null}
+          opinion about it. With the switch ON, the same error names the
+          agents the install couldn't reach while every other one took it. */}
+      {pending == null && error ? (
+        <p className="onb-err">{on ? "The guard couldn't be added to every agent. " + error + "." : error}</p>
+      ) : null}
     </div>
   );
 }

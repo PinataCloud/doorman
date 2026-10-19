@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { geminiHost } from "../main/guard/hosts/gemini.js";
+import { documentReadable } from "../main/guard/hosts/index.js";
+import { stripJsonc } from "../main/guard/jsonc.js";
 
 const FIXTURES = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures/hooks/gemini");
 const fixture = (name: string): Record<string, unknown> =>
@@ -380,6 +382,39 @@ describe("merge", () => {
   it("refuses a malformed settings.json rather than overwriting it", () => {
     expect(() => geminiHost.merge("{ not json", COMMAND, HOLD)).toThrow(/not valid JSON/);
     expect(() => geminiHost.merge('{"hooks": {},}', COMMAND, HOLD)).toThrow(/\.gemini\/settings\.json/);
+  });
+
+  it("edits a commented settings.json in place — Gemini CLI reads comments, so every one survives", () => {
+    const commented = [
+      "// my Gemini settings",
+      "{",
+      '  "theme": "GitHub", /* picked by hand */',
+      '  "hooks": {',
+      "    // the linter runs first",
+      '    "BeforeTool": [',
+      "      // theirs",
+      '      { "matcher": "write_.*", "hooks": [{ "type": "command", "command": "/opt/lint.sh" }] } // keep',
+      "    ]",
+      "  },",
+      '  "proxy": "http://proxy//not-a-comment"',
+      "  // the end of the object",
+      "}",
+      "// trailing",
+      "",
+    ].join("\n");
+    expect(documentReadable(geminiHost, commented)).toBe(true);
+    const merged = geminiHost.merge(commented, COMMAND, HOLD);
+    for (const comment of commented.match(/\/\/ [^\n]*|\/\*.*?\*\//g)!) expect(merged).toContain(comment);
+    // What Gemini itself reads (comments stripped, then strict JSON — no
+    // trailing comma) is the object-level merge of the uncommented document.
+    const stripped = stripJsonc(merged);
+    expect(stripped.changes).toEqual(["removed comments"]);
+    expect(JSON.parse(stripped.text)).toEqual(
+      JSON.parse(geminiHost.merge(stripJsonc(commented).text, COMMAND, HOLD)),
+    );
+    expect(geminiHost.installed(merged, COMMAND)).toBe(true);
+    expect(geminiHost.merge(merged, COMMAND, HOLD)).toBe(merged);
+    expect(geminiHost.remove(merged)).toBe(commented);
   });
 
   it("treats an empty file as a fresh document", () => {

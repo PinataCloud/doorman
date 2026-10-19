@@ -10,6 +10,8 @@ import {
 } from "../main/lib/mcp-register.js";
 
 const SCRIPT = "/Users/dev/Library/Application Support/Doorman/doorman/mcp/doorman-mcp.js";
+/** Not a bare `node`: the launcher beside the guard (lib/node-launcher.ts). */
+const NODE = process.platform === "win32" ? "node" : "/Users/dev/Library/Application Support/Doorman/doorman/guard/node-runtime";
 const vscode = MCP_REGISTRATION_TARGETS.find((t) => t.host === "vscode-copilot")!;
 const copilot = MCP_REGISTRATION_TARGETS.find((t) => t.host === "copilot-cli")!;
 
@@ -29,9 +31,9 @@ describe("MCP registration surgery", () => {
 
   it("writes each host its own entry shape under its own root key", () => {
     const vs = JSON.parse(mergeRegistration(undefined, vscode, SCRIPT));
-    expect(vs).toEqual({ servers: { doorman: { type: "stdio", command: "node", args: [SCRIPT] } } });
+    expect(vs).toEqual({ servers: { doorman: { type: "stdio", command: NODE, args: [SCRIPT] } } });
     const cli = JSON.parse(mergeRegistration(undefined, copilot, SCRIPT));
-    expect(cli).toEqual({ mcpServers: { doorman: { type: "local", command: "node", args: [SCRIPT], tools: ["*"] } } });
+    expect(cli).toEqual({ mcpServers: { doorman: { type: "local", command: NODE, args: [SCRIPT], tools: ["*"] } } });
   });
 
   it("is idempotent, and re-points a stale copy of ours instead of adding a second", () => {

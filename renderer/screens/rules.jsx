@@ -79,7 +79,7 @@ function RulesScreen({ state, onGoSettings }) {
       {state.radar.guard_sync_error ? (
         <div className="callout bad" style={{ marginBottom: "var(--s4)" }}>
           The guard's hook entries couldn't be updated: {state.radar.guard_sync_error}. The modes below are what the
-          app WANTS; the guard on disk may be running an older policy.
+          app WANTS; wherever the update didn't land, the guard on disk may be running an older policy, or none.
         </div>
       ) : null}
       <LevelCard state={state} frozen={frozen} installed={installed} />

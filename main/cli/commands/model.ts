@@ -1,6 +1,7 @@
 import { syncGuard } from "../../enforcement.js";
 import { normalizeInjectionClassifierConfig, defaultInjectionClassifierConfig, type InjectionModelId } from "../../guard/policy.js";
 import { runtimePresent } from "../../lib/injection-classifier.js";
+import type { InjectionModelPlan } from "../../lib/injection-model-choice.js";
 import {
   downloadModel,
   injectionModelManifest,
@@ -13,10 +14,12 @@ import {
   type ModelManifest,
 } from "../../lib/model-assets.js";
 import { injectionModelSourceFromEnv } from "../../lib/policy-env.js";
+import { releaseLock, takeLock, type LockRecord } from "../../lib/data-owner.js";
+import { activeDownload, autoDownloadView, runAutoDownload, type AutoDownloadView } from "../auto-download.js";
 import { doormanSource, loadClassifier, modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
-import type { CliCommand } from "../command.js";
+import type { CliCommand, ParsedArgs } from "../command.js";
 import type { CliContext } from "../context.js";
-import { CliError } from "../output.js";
+import { CliError, type CommandResult, type Styles } from "../output.js";
 
 const MODELS: readonly InjectionModelId[] = ["doorman-1", "stock"];
 
@@ -53,6 +56,36 @@ const FALLBACK_TEXT: Record<string, string> = {
   not_installed: "doorman-1 isn't downloaded yet: doorman model download",
 };
 
+/**
+ * The model that actually runs — null when none can: the classifier is off,
+ * the runtime is missing, or the planned model (the selected one, or the stock
+ * fallback) isn't on disk — and the words for it. The plan alone says which
+ * model WOULD run; in a fresh CLI install neither is downloaded yet.
+ */
+export function runningModel(
+  ctx: CliContext,
+  plan: InjectionModelPlan,
+  enabled: boolean,
+  runtime: boolean,
+  s: Styles,
+): { active: InjectionModelId | null; download: AutoDownloadView; text: string } {
+  const download = autoDownloadView(ctx);
+  const installed = modelStatus(modelsRoot(ctx.dataDir), injectionModelManifest(plan.effective)).present;
+  if (enabled && runtime && installed) {
+    return { active: plan.effective, download, text: `${plan.effective}${plan.fallback ? s.yellow(`  (${FALLBACK_TEXT[plan.fallback]})`) : ""}` };
+  }
+  const why = !enabled
+    ? "the classifier is off"
+    : !runtime
+      ? "the classifier runtime is missing"
+      : download.status === "running"
+        ? `${download.by === "app" ? "the app is downloading" : "downloading"} ${download.model}${download.by === "app" ? "" : " in the background"}, ${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}`
+        : download.status === "failed"
+          ? `the background download failed (${download.error}); retry now: doorman model download`
+          : "no model downloaded yet: doorman model download";
+  return { active: null, download, text: `none  ${s.yellow(`(${why})`)}` };
+}
+
 const statusRun: CliCommand["run"] = async (ctx) => {
   const policy = ctx.policy();
   const enabled = (policy.injection_classifier ?? defaultInjectionClassifierConfig()).enabled;
@@ -60,10 +93,11 @@ const statusRun: CliCommand["run"] = async (ctx) => {
   const runtime = runtimePresent(runtimeDir());
   const models = MODELS.map((m) => modelView(ctx, m));
   const s = ctx.style;
+  const running = runningModel(ctx, plan, enabled, runtime, s);
   const text = [
     `${s.bold("Injection classifier")}  ${enabled ? s.green("on") : s.yellow("off")}`,
     `  selected  ${plan.selected}`,
-    `  running   ${plan.effective}${plan.fallback ? s.yellow(`  (${FALLBACK_TEXT[plan.fallback]})`) : ""}`,
+    `  running   ${running.text}`,
     `  runtime   ${runtime ? s.green("present") : s.red(`missing (${runtimeDir()})`)}`,
   ];
   for (const m of models) {
@@ -76,6 +110,8 @@ const statusRun: CliCommand["run"] = async (ctx) => {
       selected: plan.selected,
       effective: plan.effective,
       ...(plan.fallback ? { fallback: plan.fallback } : {}),
+      active: running.active,
+      auto_download: running.download,
       runtime_present: runtime,
       doorman_source: doormanSource(ctx.io.env) ?? null,
       models,
@@ -129,36 +165,73 @@ function progressReporter(ctx: CliContext, manifest: ModelManifest): { update(p:
 const downloadCommand: CliCommand = {
   name: "model download",
   summary: "Download and verify a classifier model (sha256-pinned, as the app does)",
-  usage: "[--model doorman-1|stock]",
-  options: { model: { type: "string" } },
+  usage: "[--model doorman-1|stock] [--auto]",
+  options: { model: { type: "string" }, auto: { type: "boolean" } },
   details: [
     "Default: the selected model. doorman-1 comes from DOORMAN_INJECTION_CLASSIFIER_SOURCE when set",
     "(a URL or an absolute directory), else its pinned Hugging Face revision. Every file is checked",
     "against its pinned size and sha256 before it is kept. Progress goes to stderr.",
+    "",
+    "You rarely need this: while the classifier is on, the first command that finds its model missing",
+    "starts this download in the background (DOORMAN_INJECTION_CLASSIFIER=off stops that).",
+    "--auto  what that background download runs: whatever the plan needs (doorman-1, else the stock",
+    "        model it falls back to), quietly, recording the outcome so failed attempts are spaced out",
   ],
   async run(ctx, args) {
-    const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).selected;
-    const manifest = injectionModelManifest(model);
-    // doorman-1 comes from the environment's source when one is named;
-    // every other model from its manifest (the app's startModelDownload).
-    const source = manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? injectionModelSourceFromEnv(ctx.io.env) : undefined;
-    const before = modelStatus(modelsRoot(ctx.dataDir), manifest).present;
-    const progress = progressReporter(ctx, manifest);
-    try {
-      await downloadModel(modelsRoot(ctx.dataDir), manifest, { ...(source === undefined ? {} : { source }), onProgress: (p) => progress.update(p) });
-    } catch (err) {
-      progress.done();
-      throw new CliError(`Couldn't download ${model}: ${err instanceof Error ? err.message : String(err)}`);
+    if (args.values.auto === true) {
+      const r = await runAutoDownload(ctx);
+      return { data: r, text: r.ok ? [] : [`Couldn't download: ${r.error}`], exitCode: r.ok ? 0 : 1 };
     }
-    progress.done();
-    const view = modelView(ctx, model);
-    if (!view.installed) throw new CliError(`${model} downloaded but didn't verify; run it again.`);
-    return {
-      data: view,
-      text: [before ? `${model} was already installed and verified.` : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`],
-    };
+    // Never two downloads into the same folder: the app (which fetches its
+    // own while it runs), the background one, or another command's.
+    refuseWhileOwned(ctx, "download it");
+    if (!takeLock(ctx.dataDir, "model-download", { pid: process.pid, by: "cli", command: "model download" }, ctx.io.now())) {
+      throw new CliError(alreadyDownloading(activeDownload(ctx)));
+    }
+    try {
+      return await downloadNow(ctx, args);
+    } finally {
+      releaseLock(ctx.dataDir, "model-download", process.pid);
+    }
   },
 };
+
+/** While the app (or `doorman watch`) runs it owns the models folder too. */
+function refuseWhileOwned(ctx: CliContext, action: string): void {
+  const other = ctx.running();
+  if (!other) return;
+  const who = other.pid !== undefined ? ` (pid ${other.pid})` : "";
+  throw new CliError(`Doorman is running${who}, and it keeps the classifier's model itself; ${action} in the app, or quit it and run this again.`);
+}
+
+function alreadyDownloading(lock: LockRecord | undefined): string {
+  const who = lock?.by === "app" ? "The app is" : "Another doorman command is";
+  return `${who} already downloading the model${lock ? ` (pid ${lock.pid})` : ""}; \`doorman model\` shows its progress.`;
+}
+
+/** The download the person asked for, with progress on stderr. */
+async function downloadNow(ctx: CliContext, args: ParsedArgs): Promise<CommandResult> {
+  const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).selected;
+  const manifest = injectionModelManifest(model);
+  // doorman-1 comes from the environment's source when one is named;
+  // every other model from its manifest (the app's startModelDownload).
+  const source = manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? injectionModelSourceFromEnv(ctx.io.env) : undefined;
+  const before = modelStatus(modelsRoot(ctx.dataDir), manifest).present;
+  const progress = progressReporter(ctx, manifest);
+  try {
+    await downloadModel(modelsRoot(ctx.dataDir), manifest, { ...(source === undefined ? {} : { source }), onProgress: (p) => progress.update(p) });
+  } catch (err) {
+    progress.done();
+    throw new CliError(`Couldn't download ${model}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  progress.done();
+  const view = modelView(ctx, model);
+  if (!view.installed) throw new CliError(`${model} downloaded but didn't verify; run it again.`);
+  return {
+    data: view,
+    text: [before ? `${model} was already installed and verified.` : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`],
+  };
+}
 
 const removeCommand: CliCommand = {
   name: "model remove",
@@ -166,6 +239,9 @@ const removeCommand: CliCommand = {
   usage: "[--model doorman-1|stock]",
   options: { model: { type: "string" } },
   async run(ctx, args) {
+    refuseWhileOwned(ctx, "remove it");
+    const download = activeDownload(ctx);
+    if (download) throw new CliError(alreadyDownloading(download).replace("; `doorman model` shows its progress.", ": remove it once that finishes."));
     const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).effective;
     const manifest = injectionModelManifest(model);
     const root = modelsRoot(ctx.dataDir);
@@ -195,7 +271,8 @@ const selectCommand: CliCommand = {
     const text = [`Selected ${model}.`];
     if (plan.selected !== model) text.push(ctx.style.yellow(`DOORMAN_INJECTION_CLASSIFIER_MODEL overrides it here: ${plan.selected} is selected.`));
     if (!modelStatus(modelsRoot(ctx.dataDir), injectionModelManifest(plan.selected)).present) {
-      text.push(`${plan.selected} isn't downloaded yet: doorman model download. Until then ${plan.effective} runs.`);
+      const fallback = modelStatus(modelsRoot(ctx.dataDir), injectionModelManifest(plan.effective)).present ? `${plan.effective} runs` : "no model runs";
+      text.push(`${plan.selected} isn't downloaded yet; it downloads in the background with your next doorman command (or now: doorman model download). Until then ${fallback}.`);
     }
     return { data: { selected: plan.selected, effective: plan.effective, injection_classifier }, text };
   },
@@ -224,7 +301,13 @@ const checkCommand: CliCommand = {
     if (!classifier) {
       if (changed.length > 0) throw new CliError(`${manifest.name}: ${changed.join(", ")} no longer match their pins. Run \`doorman model download\` to replace them.`);
       if (!runtimePresent(runtimeDir())) throw new CliError(`The classifier runtime is missing (${runtimeDir()}).`);
-      if (!modelStatus(modelsRoot(ctx.dataDir), manifest).present) throw new CliError(`No model downloaded. Run \`doorman model download\` first.`);
+      if (!modelStatus(modelsRoot(ctx.dataDir), manifest).present) {
+        const download = autoDownloadView(ctx);
+        if (download.status === "running") {
+          throw new CliError(`The model is still downloading${download.by === "app" ? " in the app" : " in the background"} (${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}); try again once it finishes.`);
+        }
+        throw new CliError(`No model downloaded. Run \`doorman model download\` first.`);
+      }
       throw new CliError(`${manifest.name} is present but failed to load; run with --verbose to see why.`);
     }
     const verdict = await classifier.classify(text);

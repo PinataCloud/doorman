@@ -122,10 +122,11 @@ export function hostLabels(): string[] {
 /**
  * Can this document be read in the host's own format? The installer, the
  * doctor and the integrity watcher used to `JSON.parse` every hook document;
- * a host whose document is YAML or TOML (documentFormat) answers through its
- * own merge() instead — the descriptor refuses a malformed document by
- * throwing, which is the same signal. An absent document is readable (there is
- * nothing to misread); a JSON document is readable when JSON.parse says so.
+ * a host whose document is YAML, TOML or commented JSON (documentFormat
+ * `yaml`/`toml`/`jsonc`/`json5`) answers through its own merge() instead — the
+ * descriptor refuses a document its host can't read by throwing, which is the
+ * same signal. An absent document is readable (there is nothing to misread);
+ * a strict JSON document is readable when JSON.parse says so.
  */
 export function documentReadable(host: GuardHostDescriptor, docText: string | undefined): boolean {
   if (docText === undefined) return true;

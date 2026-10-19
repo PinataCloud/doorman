@@ -134,7 +134,9 @@ describe("doorman data commands", () => {
   function appRunning(): void {
     const path = heartbeatPath(guardDir(join(appData, "Doorman")));
     mkdirSync(join(path, ".."), { recursive: true });
-    writeFileSync(path, JSON.stringify({ at: new Date().toISOString(), pid: process.pid + 1, version: "9.9.9" }));
+    // A live process that isn't this one: a heartbeat whose pid is gone is a
+    // crashed app's, and no longer counts.
+    writeFileSync(path, JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, version: "9.9.9" }));
   }
 
   it("scan reports what was new, then nothing the second time", async () => {

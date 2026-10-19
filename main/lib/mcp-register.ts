@@ -32,6 +32,7 @@
  * written into a location whose owner is not installed.
  */
 
+import { nodeProgramForScript } from "./node-launcher.js";
 import { DEFAULT_VARIANT, VSCODE_VARIANTS, profiles } from "./vscode.js";
 
 export const MCP_SERVER_KEY = "doorman";
@@ -89,7 +90,7 @@ export const MCP_REGISTRATION_TARGETS: readonly McpRegistrationTarget[] = [
     label: "VS Code",
     path: (home) => `${trimSlash(home)}/Library/Application Support/Code/User/mcp.json`,
     root: "servers",
-    entry: (script) => ({ type: "stdio", command: "node", args: [script] }),
+    entry: (script) => ({ type: "stdio", command: nodeProgramForScript(script), args: [script] }),
     // The whole family, so a machine on Insiders or VSCodium is not reported
     // as having no VS Code at all (lib/vscode.ts is the canonical list).
     presencePaths: VSCODE_VARIANTS.map((v) => `${v.supportRel}/User`),
@@ -115,7 +116,7 @@ export const MCP_REGISTRATION_TARGETS: readonly McpRegistrationTarget[] = [
       return `${override ?? `${trimSlash(home)}/.copilot`}/mcp-config.json`;
     },
     root: "mcpServers",
-    entry: (script) => ({ type: "local", command: "node", args: [script], tools: ["*"] }),
+    entry: (script) => ({ type: "local", command: nodeProgramForScript(script), args: [script], tools: ["*"] }),
     presencePaths: [".copilot"],
   },
 ];
