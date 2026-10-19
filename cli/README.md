@@ -54,8 +54,12 @@ the masked evidence back from the transcripts instead.
 
 Doorman reads the agents' transcript files on this machine and stores what it
 finds under its data directory. It has no account, no server and no telemetry.
-The only downloads are the injection-classifier model (`doorman model
-download`, from Hugging Face, every file pinned by sha256) and nothing else.
+The only download is the injection-classifier model, from Hugging Face with
+every file pinned by sha256, and nothing else. Like the app, the CLI fetches it
+on its own: the first command that finds it missing starts the download in the
+background (about 96 MB) and carries on, and `doorman model` shows its
+progress. Set `DOORMAN_INJECTION_CLASSIFIER=off` to turn the classifier, and
+with it the download, off.
 
 ## License
 

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import { doormanDataDir } from "../lib/data-dir.js";
 import type { FindingRow } from "../lib/findings.js";
 import type { InjectionClassifier } from "../lib/injection-classifier.js";
 import { livePolicy } from "../lib/live-policy.js";
+import type { FetchLike } from "../lib/model-assets.js";
 import { readPrefsFile, writePrefsFile } from "../lib/prefs-file.js";
 import { Store, type Prefs } from "../state.js";
 import { loadClassifier, modelPlan } from "./classifier.js";
@@ -26,6 +28,11 @@ export interface CliEnvironment {
   stdin: NodeJS.ReadableStream & { isTTY?: boolean };
   now(): number;
   verbose: boolean;
+  /** Start `doorman <args>` detached from this process, returning its pid
+   * (the background model download). Absent = never start one: tests. */
+  spawnDetached?(args: readonly string[]): number | undefined;
+  /** What model downloads fetch with; absent = the global fetch. */
+  fetch?: FetchLike;
 }
 
 /** Whoever answers held calls right now: the desktop app, or `doorman watch`. */
@@ -202,5 +209,18 @@ export function defaultEnvironment(version: string, verbose: boolean): CliEnviro
     stdin: process.stdin,
     now: () => Date.now(),
     verbose,
+    spawnDetached(args) {
+      // This file's own entry point (build/main/cli/index.js), run by the same
+      // node: the child gets the same data directory from the same environment.
+      const child = spawn(process.execPath, [join(__dirname, "index.js"), ...args], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        env: process.env,
+      });
+      child.on("error", () => {}); // a failed start is retried by a later command
+      child.unref();
+      return child.pid;
+    },
   };
 }
