@@ -295,7 +295,7 @@ export function probeNotificationDelivery(
       id: "doorman-startup-digest",
       title: "Doorman — watching",
       ...(status ? { subtitle: status.subtitle } : {}),
-      body: status?.body ?? "Watching this Mac's coding agents.",
+      body: status?.body ?? "Watching this computer's coding agents.",
       silent: true,
     });
     notification.on("show", () => {

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:doorman:schemas:detections-export.v1",
   "title": "Doorman detections export",
-  "description": "Every detection the Security Radar shows on this Mac, with the rules that raised them. Masked: no raw values.",
+  "description": "Every detection the Security Radar shows on this computer, with the rules that raised them. Masked: no raw values.",
   "type": "object",
   "required": [
     "schema",
@@ -73,7 +73,7 @@
   "$defs": {
     "detection": {
       "title": "Doorman detection",
-      "description": "One Security Radar finding on this Mac: which rule fired, how sure it was, the mode it was in, what enforcement did, when, where, and the masked evidence.",
+      "description": "One Security Radar finding on this computer: which rule fired, how sure it was, the mode it was in, what enforcement did, when, where, and the masked evidence.",
       "type": "object",
       "required": [
         "schema_version",
@@ -364,7 +364,7 @@
         "burned_usd": {
           "type": "number",
           "minimum": 0,
-          "description": "agent_loop only: what the repeated turns cost, priced on this Mac (an estimate; the app shows tokens instead)."
+          "description": "agent_loop only: what the repeated turns cost, priced on this computer (an estimate; the app shows tokens instead)."
         },
         "burned_tokens": {
           "type": "integer",

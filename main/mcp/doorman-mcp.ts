@@ -118,7 +118,7 @@ export const TOOLS = [
   {
     name: "doorman_session_spend",
     description:
-      "What Doorman has metered so far: model calls and their input/output token counts by model, plus how many calls carried no token counts. Token counts only — no dollar figures. Filter by session id or working directory; defaults to the last 24 hours across every agent on this Mac.",
+      "What Doorman has metered so far: model calls and their input/output token counts by model, plus how many calls carried no token counts. Token counts only — no dollar figures. Filter by session id or working directory; defaults to the last 24 hours across every agent on this computer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -136,7 +136,7 @@ export const TOOLS = [
 ] as const;
 
 export const SERVER_INSTRUCTIONS =
-  "Doorman guards tool calls on this Mac. Before a shell command that reads credentials, reaches the network or changes infrastructure, and before writing a file that may hold a secret, call doorman_check_tool_call and follow its remedy. If a tool call was blocked or held, call doorman_explain_last_block instead of retrying or working around it; the person decides in the Doorman app.";
+  "Doorman guards tool calls on this computer. Before a shell command that reads credentials, reaches the network or changes infrastructure, and before writing a file that may hold a secret, call doorman_check_tool_call and follow its remedy. If a tool call was blocked or held, call doorman_explain_last_block instead of retrying or working around it; the person decides in the Doorman app.";
 
 type ToolResult = { text: string; isError?: boolean };
 
@@ -232,7 +232,7 @@ export function explainLastBlock(args: Record<string, unknown>, paths: McpPaths,
     return {
       text: sessionId || cwd
         ? "Doorman has held or blocked nothing for that session or directory. If a call failed, the cause was not the guard."
-        : "Doorman has held or blocked nothing recently on this Mac.",
+        : "Doorman has held or blocked nothing recently on this computer.",
     };
   }
   const policy = readPolicy(paths, io);
@@ -313,7 +313,7 @@ export function sessionSpend(args: Record<string, unknown>, paths: McpPaths, io:
       unmetered += 1;
     }
   }
-  const scope = sessionId ? `session ${sessionId}` : cwd ? `${cwd} (last ${hours}h)` : `every agent on this Mac (last ${hours}h)`;
+  const scope = sessionId ? `session ${sessionId}` : cwd ? `${cwd} (last ${hours}h)` : `every agent on this computer (last ${hours}h)`;
   if (byModel.size === 0 && unmetered === 0) return { text: `Doorman has metered nothing for ${scope}.` };
   const totalIn = [...byModel.values()].reduce((sum, r) => sum + r.input, 0);
   const totalOut = [...byModel.values()].reduce((sum, r) => sum + r.output, 0);

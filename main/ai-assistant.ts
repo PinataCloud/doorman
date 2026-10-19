@@ -88,7 +88,7 @@ export function findingContext(
     ...(row.rule_mode ? [`Rule mode when last seen: ${row.rule_mode}`] : []),
     ...(row.secrets && row.secrets.length > 0
       ? [
-          `Redacted values (fingerprints only — the values stay on this Mac): ${row.secrets
+          `Redacted values (fingerprints only — the values stay on this computer): ${row.secrets
             .map((s) => `${s.label || "unlabelled"}, ${s.length} chars, fp ${s.fingerprint}${s.primary ? " (the one this finding is about)" : ""}`)
             .join("; ")}`,
         ]
@@ -245,7 +245,7 @@ export function sessionContext(rawSummary: SessionSummary, rawFindings: readonly
 /** The custom-rule authoring subject: what exists, and the shape a new one takes. */
 export function rulesAuthoringContext(customRules: readonly CustomRule[], packsEnabled: readonly string[]): AiContext {
   const lines = [
-    `Custom rules on this Mac: ${customRules.length}${customRules.length > 0 ? ` — ${customRules.map((r) => `${r.id} (${r.mode}, ${r.severity})`).join(", ")}` : ""}`,
+    `Custom rules on this computer: ${customRules.length}${customRules.length > 0 ? ` — ${customRules.map((r) => `${r.id} (${r.mode}, ${r.severity})`).join(", ")}` : ""}`,
     `Rule packs enabled: ${packsEnabled.join(", ") || "none"}`,
     `A custom rule is JSON: { "id": "[a-z0-9][a-z0-9_-]{0,47}", "label": "≤80 chars", "blurb": "≤240 chars, optional", "severity": "critical|high|medium|low", "mode": "observe|warn|ask|block", "when": { "tool": regex, "command": regex, "server": regex, "target": regex, "arg": { "field.path": regex } }, "after": { "taint": one of ${CUSTOM_TAINT_KINDS.join("|")} } (optional; makes the rule a session-flow rule that only observes), "scope": { "cwd_prefix": "/abs/path" } (optional) }.`,
     `Regexes are JavaScript sources WITHOUT slashes or flags (matched case-insensitively), max 400 chars, and must not nest quantifiers like (a+)+ — the app refuses pathological patterns. Every field listed under "when" must match for the rule to fire. "tool" matches the tool name (Bash, Edit, Write, Read, WebFetch, mcp__<server>__<tool>); "command" the shell command of a Bash call; "target" a program name or file path; "server" the MCP server segment.`,
@@ -267,7 +267,7 @@ export function exceptionsAuthoringContext(
   detectorIds: readonly string[],
 ): AiContext {
   const lines = [
-    `Exceptions on this Mac: ${ignore.length}${
+    `Exceptions on this computer: ${ignore.length}${
       ignore.length > 0
         ? ` — ${ignore
             .slice(0, 12)
@@ -432,7 +432,7 @@ function coverageLines(coverage: MachineFacts["coverage"]): string[] {
     "",
     `AI TOOLS ON THIS MAC (${installed.length} found of ${coverage.tools.length} looked for)`,
     ...(installed.length > 0 ? installed.map(say) : ["  (none found)"]),
-    `  ${absent} other catalogued tool(s) were looked for and not found on this Mac.`,
+    `  ${absent} other catalogued tool(s) were looked for and not found on this computer.`,
   ];
 }
 
@@ -448,7 +448,7 @@ export function machineContext(facts: MachineFacts): AiContext {
     ? `Setup health: ${facts.setup.headline} (${facts.setup.ok} ok, ${facts.setup.warn} warning(s), ${facts.setup.fail} failing)`
     : "Setup health: not checked yet";
   const lines = [
-    `Doorman for Mac v${facts.app_version} · local only — nothing leaves this Mac`,
+    `Doorman v${facts.app_version} · local only — nothing leaves this computer`,
     setup,
     "",
     "SECURITY POSTURE",
@@ -570,13 +570,13 @@ export function integrationContext(f: IntegrationFacts): AiContext {
     return `  - ${s.label} · reads ${s.roots.map(tilde).join(", ") || "(no folder resolved)"}${env ? ` (override: ${env.join(", ")})` : ""} · ${s.metered ? "metered" : "activity only, no token counts on disk"}`;
   };
   const lines = [
-    `Doorman for Mac v${f.app_version} on ${f.platform} · local only — nothing leaves this Mac`,
+    `Doorman v${f.app_version} on ${f.platform} · local only — nothing leaves this computer`,
     "",
     "THE WAYS IN",
     `  1. TRANSCRIPT READING — the app reads each host's own session files from disk; nothing to configure when the host writes to its default folder. A host that writes elsewhere (another machine, a container) is invisible to the app. Hosts this build can read and where:`,
-    ...(present.length > 0 ? present.map(readLine) : ["  (none of the readable hosts is on this Mac)"]),
-    ...(absent.length > 0 ? [`  Also readable, not on this Mac: ${absent.map((s) => s.label).join(", ")}.`] : []),
-    `  2. THE GUARD (holding risky tool calls before they run) needs a host adapter. Adapters exist for: ${f.guard_hosts.map((h) => h.label).join(", ")}. Wired in on this Mac: ${guardIn.length > 0 ? guardIn.map((h) => h.label).join(", ") : "none"}${guardOut.length > 0 ? ` · not wired: ${guardOut.map((h) => h.label).join(", ")}` : ""}. A tool outside that list can be METERED (1) but not guarded — say so rather than promising it.`,
+    ...(present.length > 0 ? present.map(readLine) : ["  (none of the readable hosts is on this computer)"]),
+    ...(absent.length > 0 ? [`  Also readable, not on this computer: ${absent.map((s) => s.label).join(", ")}.`] : []),
+    `  2. THE GUARD (holding risky tool calls before they run) needs a host adapter. Adapters exist for: ${f.guard_hosts.map((h) => h.label).join(", ")}. Wired in on this computer: ${guardIn.length > 0 ? guardIn.map((h) => h.label).join(", ") : "none"}${guardOut.length > 0 ? ` · not wired: ${guardOut.map((h) => h.label).join(", ")}` : ""}. A tool outside that list can be METERED (1) but not guarded — say so rather than promising it.`,
     "",
     "NOT POSSIBLE, so say so: reading a host's session files from another machine, a container or CI; guarding a host with no adapter; recovering token counts a host never wrote down; anything in a browser.",
     ...coverageLines(f.coverage),

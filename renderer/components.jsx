@@ -242,7 +242,7 @@ const SEC_DETECTORS = {
   },
   infra_mutation: {
     label: "Infrastructure mutation",
-    blurb: "A command that changes live cloud or database infrastructure, not just files on this Mac.",
+    blurb: "A command that changes live cloud or database infrastructure, not just files on this computer.",
   },
   unrecognized_secret: {
     label: "Unrecognized secret",
@@ -490,7 +490,7 @@ const SECURITY_LEVELS = [
     id: "protective",
     name: "Protective",
     recommended: true,
-    blurb: "A secret leaving this Mac, in a prompt or a tool call, and personal data on its way out — held until you answer. Reading or writing credentials gets a heads-up.",
+    blurb: "A secret leaving this computer, in a prompt or a tool call, and personal data on its way out — held until you answer. Reading or writing credentials gets a heads-up.",
   },
   {
     id: "locked_down",

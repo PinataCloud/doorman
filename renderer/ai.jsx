@@ -224,7 +224,7 @@ function aiAgentPrompt({ kind, title, question, context }) {
   const q = String(question || "").trim() || (AI_SUGGESTIONS[kind] || AI_SUGGESTIONS.general)[0];
   const evidence = String(context || "").trim() || "(no evidence was available for this subject)";
   return [
-    "Doorman for Mac — a local-first security monitor for coding agents — flagged something on this machine. Help me understand it and fix it here, in this repository.",
+    "Doorman — a local-first security monitor for coding agents — flagged something on this machine. Help me understand it and fix it here, in this repository.",
     "",
     "SUBJECT: " + subject,
     "QUESTION: " + q,
@@ -394,7 +394,7 @@ function AiDrawer({ state, onOpenSession }) {
           ) : null}
         </div>
       </div>
-      <div className="ai-foot">Nothing leaves this Mac until you paste it. Masked evidence only.</div>
+      <div className="ai-foot">Nothing leaves this computer until you paste it. Masked evidence only.</div>
     </div>
   );
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:doorman:schemas:ledger-export.v1",
   "title": "Doorman Event Ledger export",
-  "description": "Agent sessions and their turns on this Mac. Masked: turn text is redacted and removed values appear as fingerprints.",
+  "description": "Agent sessions and their turns on this computer. Masked: turn text is redacted and removed values appear as fingerprints.",
   "type": "object",
   "required": [
     "schema",

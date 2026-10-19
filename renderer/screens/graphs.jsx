@@ -318,7 +318,7 @@ function GraphsScreen({ state, onOpenTask }) {
               <Kpi
                 num={fmtTokens(g.window_tokens)}
                 label="Tokens"
-                tip="Input and output tokens measured from your transcripts, whatever paid for them — the plan, API credits or an API key. Cache traffic is not counted. No dollar figure is shown: a cost derived on this Mac from a rate table is an estimate the app cannot stand behind."
+                tip="Input and output tokens measured from your transcripts, whatever paid for them — the plan, API credits or an API key. Cache traffic is not counted. No dollar figure is shown: a cost derived on this computer from a rate table is an estimate the app cannot stand behind."
                 note={<Delta current={g.window_tokens} prev={g.prev_window_tokens} suffix="vs prior" />}
               />
               <Kpi

@@ -190,7 +190,7 @@ describe("context building (the privacy boundary)", () => {
 
     const g = rulesAuthoringContext([{ id: "k", label: "K", severity: "high", mode: "ask", when: { command: "kubectl" } }], ["crypto_operations"]);
     expect(g.kind).toBe("rules");
-    expect(g.text).toContain("Custom rules on this Mac: 1 — k (ask, high)");
+    expect(g.text).toContain("Custom rules on this computer: 1 — k (ask, high)");
     expect(g.text).toContain("```json");
     expect(g.text).toContain("must not nest quantifiers");
 
@@ -201,7 +201,7 @@ describe("context building (the privacy boundary)", () => {
       ["dotenv_read", "custom:no-prod"],
     );
     expect(x.kind).toBe("exceptions");
-    expect(x.text).toContain("Exceptions on this Mac: 1 — dotenv_read /\\.env\\.local/ under /Users/x/repo/ until 2026-10-01 (approval)");
+    expect(x.text).toContain("Exceptions on this computer: 1 — dotenv_read /\\.env\\.local/ under /Users/x/repo/ until 2026-10-01 (approval)");
     expect(x.text).toContain('"detector": one of dotenv_read|custom:no-prod');
     expect(x.text).toContain("```json");
     expect(x.text).toContain("Never propose an exception for wallet_key_material");
@@ -368,7 +368,7 @@ describe("the whole-machine subject", () => {
     });
     expect(ctx.kind).toBe("machine");
     expect(ctx.title).toBe("This Mac");
-    expect(ctx.text).toContain("local only — nothing leaves this Mac");
+    expect(ctx.text).toContain("local only — nothing leaves this computer");
     expect(ctx.text).toContain("Setup health: One thing to look at (5 ok, 1 warning(s), 0 failing)");
     expect(ctx.text).toContain("Held right now, waiting for a decision: 1");
     expect(ctx.text).toContain("Tokens (input+output, cache traffic excluded): 1,000 tokens (previous window 900 tokens)");
@@ -412,7 +412,7 @@ describe("the whole-machine subject", () => {
     });
     expect(ctx.text).toContain("Setup health: not checked yet");
     expect(ctx.text).toContain("(no sessions yet)");
-    expect(ctx.text).toContain("local only — nothing leaves this Mac");
+    expect(ctx.text).toContain("local only — nothing leaves this computer");
   });
 });
 
@@ -437,14 +437,14 @@ describe("integrating a tool", () => {
     });
     expect(ctx.kind).toBe("integration");
     expect(ctx.title).toBe("Integrate a tool");
-    expect(ctx.text).toContain("local only — nothing leaves this Mac");
+    expect(ctx.text).toContain("local only — nothing leaves this computer");
     // What this Mac reads and where — home folded to ~, the override named.
     expect(ctx.text).toContain("Hermes Agent · reads ~/.hermes (override: HERMES_HOME) · metered");
     expect(ctx.text).toContain("Claude Code · reads ~/.claude/projects · metered");
     expect(ctx.text).not.toContain("/Users/x/");
-    expect(ctx.text).toContain("Also readable, not on this Mac: VS Code + Copilot.");
+    expect(ctx.text).toContain("Also readable, not on this computer: VS Code + Copilot.");
     // The guard's reach, and its limit, stated.
-    expect(ctx.text).toContain("Adapters exist for: Claude Code, Hermes Agent. Wired in on this Mac: Claude Code · not wired: Hermes Agent");
+    expect(ctx.text).toContain("Adapters exist for: Claude Code, Hermes Agent. Wired in on this computer: Claude Code · not wired: Hermes Agent");
     expect(ctx.text).toContain("NOT POSSIBLE, so say so");
     // No network rail is offered: the app reads disk and holds calls, nothing else.
     expect(ctx.text).not.toMatch(/https?:\/\//);
@@ -460,8 +460,8 @@ describe("integrating a tool", () => {
       sources: [],
       guard_hosts: [],
     });
-    expect(ctx.text).toContain("(none of the readable hosts is on this Mac)");
-    expect(ctx.text).toContain("Wired in on this Mac: none");
+    expect(ctx.text).toContain("(none of the readable hosts is on this computer)");
+    expect(ctx.text).toContain("Wired in on this computer: none");
     expect(ctx.text).not.toContain("AI TOOLS ON THIS MAC");
   });
 });

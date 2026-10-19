@@ -78,7 +78,7 @@ function traceVerdict(report) {
   if (report.total === 0) {
     return {
       tone: "ok",
-      headline: "Not found on this Mac.",
+      headline: "Not found on this computer.",
       sub: "Nothing Doorman has read contains it — " + covers + ".",
     };
   }
@@ -176,7 +176,7 @@ function traceFacts(report) {
   if (report.files.length > 0) {
     facts.push({
       tone: "warn",
-      text: "Sits in plain text in " + tracePlural(report.files.length, "transcript file") + " on this Mac.",
+      text: "Sits in plain text in " + tracePlural(report.files.length, "transcript file") + " on this computer.",
     });
   }
   return facts;
@@ -199,7 +199,7 @@ function TraceSecretBar({ onOpen, compact, pronounced }) {
       type="button"
       className={"tracebar" + (compact ? " compact" : "") + (pronounced ? " pronounced" : "")}
       onClick={onOpen}
-      title={short ? "Paste a key, token or password and see everywhere an AI tool on this Mac has touched it" : undefined}
+      title={short ? "Paste a key, token or password and see everywhere an AI tool on this computer has touched it" : undefined}
     >
       {pronounced ? (
         <span className="tracebar-ic" aria-hidden="true">
@@ -210,7 +210,7 @@ function TraceSecretBar({ onOpen, compact, pronounced }) {
       )}
       <span className="tracebar-label">Trace a secret</span>
       {short ? null : (
-        <span className="tracebar-hint">Paste a key, token or password and see everywhere an AI tool on this Mac has touched it</span>
+        <span className="tracebar-hint">Paste a key, token or password and see everywhere an AI tool on this computer has touched it</span>
       )}
       <Icon className="tracebar-go" name="chevron" size={13} strokeWidth={2} />
     </button>
@@ -327,7 +327,7 @@ function TraceSecretView({ state, seed, seedNonce, onBack, onOpenSession }) {
       ) : (
         <form className="trace-form" onSubmit={submit}>
           <p className="trace-lead">
-            Paste a key, token or password — or the last characters your provider's console shows — and see everywhere an AI tool on this Mac has touched it.
+            Paste a key, token or password — or the last characters your provider's console shows — and see everywhere an AI tool on this computer has touched it.
           </p>
           <div className="trace-row">
             <input
@@ -349,7 +349,7 @@ function TraceSecretView({ state, seed, seedNonce, onBack, onOpenSession }) {
             </button>
           </div>
           <p className="trace-privacy">
-            Matched on this Mac against the transcripts your AI tools wrote and the local turn store. The value is never stored, logged or sent — Doorman AI sees only its shape and where it went.
+            Matched on this computer against the transcripts your AI tools wrote and the local turn store. The value is never stored, logged or sent — Doorman AI sees only its shape and where it went.
           </p>
           {tooShort ? <p className="trace-note">At least 8 characters — a shorter fragment matches too much to say anything honest.</p> : null}
           {error ? <p className="evidence-note err">{error}</p> : null}

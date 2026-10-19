@@ -106,7 +106,7 @@ function ActiveSessions({ state, onGoRadar, onOpenSession }) {
     <Card title="Active sessions" hint={live.length > 0 && line ? line : undefined}>
       {live.length === 0 ? (
         <div className="cardnote" style={{ marginTop: 0 }}>
-          No agent is running on this Mac right now. Sessions appear here the moment one starts, with anything the
+          No agent is running on this computer right now. Sessions appear here the moment one starts, with anything the
           Radar has open against them.
         </div>
       ) : (

@@ -418,7 +418,7 @@ function CoverageCard({ state, onGoSettings }) {
 
   return (
     <Card
-      title="AI on this Mac"
+      title="AI on this computer"
       hint={hint}
       section="coverage"
     >
@@ -430,9 +430,9 @@ function CoverageCard({ state, onGoSettings }) {
         <span className="mode-chip none" role="listitem"><span className="dot" aria-hidden="true" /><b>{missing.length}</b> not detected</span>
       </div>
       <div className="cardnote" style={{ marginTop: 0 }}>
-        Every AI tool found on this Mac and what Doorman does for it right now — guarded means risky
+        Every AI tool found on this computer and what Doorman does for it right now — guarded means risky
         tool calls are held before they run; metered means sessions and token usage are read. A local scan
-        of each tool's own folders — nothing leaves this Mac.
+        of each tool's own folders — nothing leaves this computer.
       </div>
 
       {guarded.length > 0 ? (
@@ -545,7 +545,7 @@ function CoverageCard({ state, onGoSettings }) {
         // is not.
         <Advanced label={"Not detected (" + missing.length + ")"}>
           <div className="cardnote" style={{ marginTop: 0 }}>
-            Doorman looked for these AI tools but didn't find them on this Mac.
+            Doorman looked for these AI tools but didn't find them on this computer.
           </div>
           <div className="cover-none-body">
             <div className="cover-none-tools">
@@ -570,7 +570,7 @@ function CoverageCard({ state, onGoSettings }) {
             {foundInstead.length > 0 ? (
               <div className="cardnote" style={{ marginTop: "var(--s3)" }}>
                 {foundInstead.map((t) => t.name).join(", ")}
-                {foundInstead.length === 1 ? " is" : " are"} on this Mac — listed above.
+                {foundInstead.length === 1 ? " is" : " are"} on this computer — listed above.
               </div>
             ) : null}
             {/* Grouped by kind, so ~30 names read as six short lists instead of
@@ -658,7 +658,7 @@ function EditorExtensionCard({ state }) {
             over the network.
           </div>
           {on && hosts.length ? <div className="d">{hosts.map(hostLine).join(" · ")}</div> : null}
-          {on && !hosts.length ? <div className="d">No VS Code build found on this Mac.</div> : null}
+          {on && !hosts.length ? <div className="d">No VS Code build found on this computer.</div> : null}
         </div>
         <Switch ariaLabel="Show Doorman in the editor" on={on} onChange={(v) => setPref({ vscode_extension: v })} />
       </div>
@@ -864,10 +864,10 @@ function McpInventoryCard({ mcp, state }) {
     <Card title="MCP servers" hint={hint} section="mcp">
       <div className="cardnote" style={{ marginTop: 0 }}>
         {review
-          ? "Every MCP server this Mac's agents can call — from their configs and from transcripts. Review one with " +
+          ? "Every MCP server this computer's agents can call — from their configs and from transcripts. Review one with " +
             "Doorman AI; recognizing it, or routing it through the gateway, is a click under the answer. A recognized " +
             "server stops raising the unapproved-server rule."
-          : "Every MCP server this Mac's agents can call — from their configs and from transcripts. Route a local " +
+          : "Every MCP server this computer's agents can call — from their configs and from transcripts. Route a local " +
             "server through the gateway to scan its live tool descriptions and hold or block its calls."}
       </div>
       {servers.length === 0 ? (

@@ -8,10 +8,13 @@ export function prefsPath(userDataDir: string): string {
 }
 
 /** The raw file, unvalidated: Store's sanitizer re-checks every field, and an
- * unreadable or non-object file is "no prefs yet", never an error. */
+ * unreadable or non-object file is "no prefs yet", never an error. A leading
+ * BOM is dropped first: Windows PowerShell 5.1 (`Set-Content -Encoding UTF8`)
+ * and Notepad write one, JSON.parse throws on it, and "no prefs yet" would
+ * reset the person's settings and then overwrite the file with the defaults. */
 export function readPrefsFile(userDataDir: string): Partial<Prefs> {
   try {
-    const raw: unknown = JSON.parse(readFileSync(prefsPath(userDataDir), "utf8"));
+    const raw: unknown = JSON.parse(readFileSync(prefsPath(userDataDir), "utf8").replace(/^\uFEFF/, ""));
     if (!raw || typeof raw !== "object") return {};
     return raw;
   } catch {

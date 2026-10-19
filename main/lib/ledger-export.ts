@@ -128,7 +128,7 @@ export const LEDGER_EXPORT_SCHEMA: JsonSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: LEDGER_EXPORT_SCHEMA_ID,
   title: "Doorman Event Ledger export",
-  description: "Agent sessions and their turns on this Mac. Masked: turn text is redacted and removed values appear as fingerprints.",
+  description: "Agent sessions and their turns on this computer. Masked: turn text is redacted and removed values appear as fingerprints.",
   type: "object",
   required: ["schema", "schema_version", "generated_at", "app_version", "sessions"],
   additionalProperties: false,

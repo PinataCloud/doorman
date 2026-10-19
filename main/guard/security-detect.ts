@@ -499,8 +499,37 @@ export const SECRET_PATH_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   // templates (`.env.example`/`.sample`/`.template`/`.dist`/`.defaults`), which
   // hold placeholders, not credentials, and reading one was pure radar clutter.
   // Trailing negative lookahead rather than a suffix group, because a bare
-  // `.env` match would otherwise still fire on `.env.example`.
-  [".env file", /(?:^|[\s"'/=@(:,<>])\.env\b(?!\.(?:example|sample|template|dist|defaults)\b)/i],
+  // `.env` match would otherwise still fire on `.env.example`. A backslash is
+  // a path separator here too: `C:\proj\.env` (and its JSON-escaped
+  // `C:\\proj\\.env` in a tool argument) is the Windows spelling of the path.
+  //
+  // Second alternative: a NAMED dotenv file — `deploy.env`, `prod.env`,
+  // `app-secrets.env`, `C:\proj\staging.env` — which is the same KEY=value
+  // file under the name docker's `--env-file` and most deploy tooling use,
+  // and which the bare form never saw (`curl -F file=@deploy.env` went out
+  // silent on Windows while the `.env` spelling was held). The same shape is
+  // also a member access in code (`process.env`, `import.meta.env`,
+  // `config.env`, `self.env`), and these patterns also read inline programs
+  // (`node -e …`) and the whole argument blob of a Write, so the named form is
+  // deliberately narrower than the bare one:
+  //  · it must END the path token — no `.local` suffix, no `.HOME`, and so no
+  //    `process.env.HOME`, `deploy.env.example` or `foo.env.bar` chains (the
+  //    price: `deploy.env.local` is not caught by this alternative);
+  //  · the name may not follow `(`, so `log(process.env)` is a call, not a
+  //    path;
+  //  · its last dotted segment may not be a well-known env-object receiver
+  //    (`process`, `meta`, `config`, `self`, …) — a file genuinely named
+  //    `config.env` is missed, the cost of not firing on every
+  //    `config.env` in a codebase — or a template word (`example.env`);
+  //  · a single backslash before `n`/`r`/`t` is a JSON escape, not a Windows
+  //    separator: a `.gitignore` written as `"node_modules\n.env"` must not
+  //    become a read of `n.env`. A doubled one (`C:\\proj\\new.env`, the
+  //    JSON-escaped path) still separates.
+  // `.envrc`, `os.environ` and `$env:PATH` never reach `\.env` + token end.
+  [
+    ".env file",
+    /(?:^|[\s"'/\\=@(:,<>])\.env\b(?!\.(?:example|sample|template|dist|defaults)\b)|(?:^|[\s"'/=@:,<>]|\\\\|(?<!\\)\\(?![nrt]))\w[\w.-]{0,100}(?<!(?:^|[^\w-])(?:process|meta|deno|bun|config|conf|cfg|settings|options|opts|args|params|props|app|ctx|context|c|req|request|event|self|this|window|global|globalthis|os|sys|module|exports|runtime|locals|example|sample|template|dist|defaults?))\.env(?=$|[\s"'`;,|&<>)\\])/i,
+  ],
   // Browser profile stores — the credential source a dotenv-shaped rule
   // structurally cannot see: saved logins, session cookies and the key that
   // encrypts them, under each Chromium-family profile root and Firefox's.

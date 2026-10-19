@@ -242,7 +242,45 @@ export function heartbeatFresh(json: string | undefined, nowMs: number): boolean
   }
 }
 
-/** Is the app running and listening for approvals? */
+/**
+ * Is the process that wrote this heartbeat still there? `kill(pid, 0)` sends
+ * nothing; it only asks. ESRCH means gone; EPERM means it exists and isn't ours
+ * to signal — still alive. Node implements the same probe on Windows (where the
+ * app and `doorman watch` run under the same user anyway).
+ *
+ * The one copy: this directory may not import from outside main/guard/ (see
+ * the top of this file), so the app and the CLI import it from here.
+ */
+export function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * A heartbeat someone is still behind: fresh AND written by a process that is
+ * still running. The time window alone is not enough — a `doorman watch` (or
+ * app) killed without cleanup (Stop-Process, kill -9, a crash) leaves its last
+ * heartbeat behind, and for up to HEARTBEAT_STALE_MS the guard would hold calls
+ * for nobody. The window stays because pids are reused: an old heartbeat whose
+ * pid now names some unrelated process must still read as gone.
+ *
+ * A heartbeat with no pid is not live: every writer (enforcement.ts
+ * GuardHeartbeat) records one, and "nobody listening" is the safe reading —
+ * the call falls to the host's own prompt or the unattended rule.
+ */
+export function heartbeatLive(json: string | undefined, nowMs: number): boolean {
+  if (!heartbeatFresh(json, nowMs)) return false;
+  // heartbeatFresh parsed it already, so this cannot throw.
+  const { pid } = JSON.parse(json as string) as Partial<Heartbeat>;
+  return typeof pid === "number" && pidAlive(pid);
+}
+
+/** Is the app (or `doorman watch`) running and listening for approvals? */
 export function appListening(guardDir: string, nowMs: number = Date.now()): boolean {
   let json: string | undefined;
   try {
@@ -250,7 +288,7 @@ export function appListening(guardDir: string, nowMs: number = Date.now()): bool
   } catch {
     return false;
   }
-  return heartbeatFresh(json, nowMs);
+  return heartbeatLive(json, nowMs);
 }
 
 export function writeRequest(guardDir: string, request: ApprovalRequest): void {

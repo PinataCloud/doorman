@@ -108,3 +108,21 @@ describe("no supported agent on this machine", () => {
     expect(existsSync(enforcement.guardDir(dataDir))).toBe(false);
   });
 });
+
+describe("a hook document saved with a byte-order mark", () => {
+  it("is read, merged and keeps the person's own keys, not refused as unreadable", () => {
+    // Notepad and Windows PowerShell 5.1 (`Set-Content -Encoding UTF8`) put
+    // EF BB BF in front; JSON.parse throws on it, which used to read as
+    // "settings.json is not valid JSON; not touching it" and keep Claude unguarded.
+    writeFileSync(claudeSettings(), `\uFEFF${JSON.stringify({ model: "opus", permissions: { allow: ["Bash(ls)"] } })}\n`);
+    rmSync(join(home, ".hermes"), { recursive: true, force: true });
+
+    const outcome = enforcement.installGuard(dataDir, defaultPolicy());
+
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, failures: [] });
+    expect(enforcement.guardHostStates().find((s) => s.host.id === "claude")?.installed).toBe(true);
+    const written = JSON.parse(readFileSync(claudeSettings(), "utf8")) as Record<string, unknown>;
+    expect(written).toMatchObject({ model: "opus", permissions: { allow: ["Bash(ls)"] } });
+    expect(JSON.stringify(written.hooks)).toContain("PreToolUse");
+  });
+});

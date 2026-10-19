@@ -46,6 +46,7 @@ import {
   heartbeatPath,
   parseRequest,
   pendingDir,
+  pidAlive,
   requestPath,
   writeReply,
   type ApprovalRequest,
@@ -189,9 +190,13 @@ export function codexHooksPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(configured || join(homedir(), ".codex"), "hooks.json");
 }
 
+/** A host's document as text, minus a leading BOM: an editor on Windows saves
+ * settings.json with one, every host parser (JSON.parse) throws on it, and the
+ * installer would refuse the document as unreadable. The BOM is not written
+ * back — the hosts themselves read the file without one just as well. */
 function readDocument(path: string): string | undefined {
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync(path, "utf8").replace(/^\uFEFF/, "");
   } catch {
     return undefined;
   }
@@ -767,17 +772,6 @@ export class GuardHeartbeat {
     } catch (err) {
       this.deps.log(`couldn't write the guard heartbeat: ${String(err)}`);
     }
-  }
-}
-
-function pidAlive(pid: number): boolean {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM means it exists and isn't ours to signal — still alive.
-    return (err as { code?: string }).code === "EPERM";
   }
 }
 

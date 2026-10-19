@@ -1477,7 +1477,7 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row }) {
             (raw.truncated ? "A window of the raw text, centred on the match. " : "") +
             (raw.from === "vault"
               ? "Kept on this Mac when the finding fired, encrypted by your Keychain — never synced or exported; the saved finding stays masked. "
-              : "Read from the transcript on this Mac just now — never synced or exported; the saved finding stays masked. ") +
+              : "Read from the transcript on this computer just now — never synced or exported; the saved finding stays masked. ") +
             "The value this finding is about is highlighted."
           }
         >
@@ -1519,7 +1519,7 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row }) {
                   ? shown.partial
                     ? "Bounded by one side only — the value may continue. Click to mask it again"
                     : "Click to mask it again"
-                  : "Reveal this value in place — read on this Mac only, never sent"
+                  : "Reveal this value in place — read on this computer only, never sent"
               }
               onClick={toggleMark(i)}
               onKeyDown={(ev) => (ev.key === "Enter" || ev.key === " " ? toggleMark(i)(ev) : null)}
@@ -1535,7 +1535,7 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row }) {
           <button
             className={"copybtn" + (raw && !raw.loading && !raw.error ? " done" : "")}
             onClick={toggleRaw}
-            title="Show the original, unmasked text this finding was raised on — read on this Mac only, never synced, exported or sent."
+            title="Show the original, unmasked text this finding was raised on — read on this computer only, never synced, exported or sent."
           >
             {raw ? (raw.loading ? "READING…" : "HIDE RAW") : "VIEW RAW"}
           </button>
@@ -1641,7 +1641,7 @@ function ExposureStory({ face, group, state, account, stepRows, ask }) {
      happened, applied to one that didn't, is the card inventing work. */
   const story = account ? account.sentence : guidance.blurb || "";
   const so = !ran
-    ? "Nothing left this Mac — the call was stopped before it ran, so there is nothing to undo."
+    ? "Nothing left this computer — the call was stopped before it ran, so there is nothing to undo."
     : account
       ? account.so
       : "";
@@ -1675,7 +1675,7 @@ function ExposureStory({ face, group, state, account, stepRows, ask }) {
               {account && account.by === "local_reader" ? (
                 <span
                   className="chip fstory-src"
-                  title="A local model on this Mac read this out of the raw transcript. Every quoted part was checked against the text before it was shown; nothing here changes what the guard did."
+                  title="A local model on this computer read this out of the raw transcript. Every quoted part was checked against the text before it was shown; nothing here changes what the guard did."
                 >
                   local model
                 </span>

@@ -2433,7 +2433,7 @@ describe("every screen renders (renderer)", () => {
     ) as { count: number; label: string; body: string; identified: number; identifiedBody: string };
     expect(found.count).toBe(1);
     expect(found.label).toBe("Not detected (2)");
-    expect(found.body).toContain("looked for these AI tools but didn't find them on this Mac");
+    expect(found.body).toContain("looked for these AI tools but didn't find them on this computer");
     // Everything installed but unguarded is ONE disclosure too — "Not
     // guarded", closed by default — with "Identified" (found, no way in) as a
     // subtitle inside it, its note and rows with it.
@@ -3450,7 +3450,7 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
         { filename: "TraceReportView none" },
       ),
     );
-    expect(body).toContain("Not found on this Mac.");
+    expect(body).toContain("Not found on this computer.");
     expect(body).toContain("4120 turns and 212 transcript files from Claude Code and Codex, back to Jun 3");
     expect(body).toContain("A key pasted into a browser or a plain terminal leaves no transcript here.");
     expect(body).toContain("Redaction does not recognize this shape — a copied prompt or report would carry it verbatim.");

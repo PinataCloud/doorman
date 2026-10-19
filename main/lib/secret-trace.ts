@@ -496,7 +496,7 @@ export function traceMarkdown(r: Omit<TraceReport, "markdown">, home?: string): 
   const mask = `${"•".repeat(Math.max(4, Math.min(12, r.shape.length - r.shape.tail.length)))}${r.shape.tail}`;
   lines.push(`# Secret trace — ${mask}`);
   lines.push("");
-  lines.push(`${r.shape.label}, ${r.shape.length} characters. Traced ${day(r.coverage.scanned_at)} on this Mac.`);
+  lines.push(`${r.shape.label}, ${r.shape.length} characters. Traced ${day(r.coverage.scanned_at)} on this computer.`);
   lines.push("");
   if (r.total === 0) {
     lines.push(
@@ -531,7 +531,7 @@ export function traceMarkdown(r: Omit<TraceReport, "markdown">, home?: string): 
   );
   if (r.files.length > 0) {
     lines.push("");
-    lines.push(`Transcript files on this Mac holding it in plain text:`);
+    lines.push(`Transcript files on this computer holding it in plain text:`);
     for (const f of r.files) lines.push(`- ${f.path}`);
   }
   if (r.places.length > 0) {

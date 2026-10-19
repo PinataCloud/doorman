@@ -108,6 +108,11 @@ export interface AgentReasonInput {
   /** How a hold ended, when there was one. */
   resolution?: HoldResolution;
   policy?: Pick<GuardPolicy, "confirm">;
+  /** Whether the app or `doorman watch` was listening when the guard decided
+   * (handshake.ts appListening). Only an `ask` reads it: `false` means nobody
+   * is asking the person in Doorman. Absent → assumed listening, for callers
+   * that describe a past record rather than a call being decided now. */
+  appListening?: boolean;
 }
 
 /**
@@ -132,6 +137,13 @@ export function agentFacingReason(input: AgentReasonInput): string {
     outcome = `Nobody approved it${seconds ? ` within ${seconds}s` : ""}; ask the user to approve it in Doorman or choose another approach.`;
   } else if (input.decision === "deny") {
     outcome = "The user can review and allow this call in Doorman (Security Radar) if it is intended.";
+  } else if (input.resolution === "unattended" || input.appListening === false) {
+    // An `ask` nobody in Doorman will answer (the app and `doorman watch` are
+    // both absent, or the app vanished mid-hold): the host's own permission
+    // prompt is what decides now, so don't send the agent waiting on Doorman.
+    outcome =
+      "Doorman is not running, so it cannot ask the user about this call; it needs their OK in your own permission prompt instead. " +
+      "Wait for their answer rather than working around it.";
   } else {
     outcome = "The user is being asked in Doorman; wait for their answer rather than working around it.";
   }

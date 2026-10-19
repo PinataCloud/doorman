@@ -102,7 +102,7 @@ function guardHostsSentence(hosts, installed, platform) {
   let s = guarded.length > 0
     ? "Guarding " + listOf(guarded) + " — flagged tool calls are checked before they run."
     : "On, but not wired into any agent yet.";
-  if (missing.length > 0) s += " " + listOf(missing) + (missing.length === 1 ? " is" : " are") + " on this Mac but not wired in yet.";
+  if (missing.length > 0) s += " " + listOf(missing) + (missing.length === 1 ? " is" : " are") + " on this computer but not wired in yet.";
   if (guarded.includes("Codex")) s += " Restart Codex and trust the hook in /hooks after the first install.";
   return s;
 }
@@ -223,7 +223,7 @@ function McpAnswersCard({ state }) {
             new server.
           </div>
           {on && hosts.length ? <div className="d">{hosts.map(hostLine).join(" · ")}</div> : null}
-          {on && !hosts.length ? <div className="d">No MCP-capable agent found on this Mac yet.</div> : null}
+          {on && !hosts.length ? <div className="d">No MCP-capable agent found on this computer yet.</div> : null}
         </div>
         <Switch ariaLabel="Answer agents over MCP" on={on} onChange={(v) => setPref({ mcp_answers: v })} />
       </div>
@@ -995,7 +995,7 @@ function WalletsCard({ state }) {
       <div className="cardnote" style={{ marginTop: 0 }}>
         Tell Doorman which wallet addresses are yours. An address is public by design, but one of yours leaving in a
         prompt or a network call is a different finding from a stranger's — it gets named by the label you give it,
-        at high confidence. The address is hashed on this Mac and never stored, synced or shown again.
+        at high confidence. The address is hashed on this computer and never stored, synced or shown again.
       </div>
 
       <div className="setting" style={{ alignItems: "flex-start" }}>

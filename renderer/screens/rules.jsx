@@ -531,10 +531,10 @@ function assistTip(id, assist) {
   const ic = assist.injection_classifier || {};
   const so = assist.second_opinion || {};
   if (id === "injected_instruction" && ic.enabled) {
-    return " Every hit is re-read by " + ic.model + " on this Mac.";
+    return " Every hit is re-read by " + ic.model + " on this computer.";
   }
   if ((id === "hardcoded_credential" || id === "unrecognized_secret") && so.enabled) {
-    return " Before a hold, " + (so.model || "a local model") + " on this Mac is asked whether the value is really a credential.";
+    return " Before a hold, " + (so.model || "a local model") + " on this computer is asked whether the value is really a credential.";
   }
   return "";
 }
@@ -2049,7 +2049,7 @@ function ExceptionWizard({ form, setForm, state, error, saving, onSave, onCancel
               columns={2}
               options={[
                 { value: "project", label: "Only under a directory", note: "The call's working directory must sit under this path. What the approval panel writes." },
-                { value: "everywhere", label: "Everywhere", note: "Every project on this Mac." },
+                { value: "everywhere", label: "Everywhere", note: "Every project on this computer." },
               ]}
               onPick={(v) => set({ scoped: v === "project", ...(v === "project" && !form.cwd_prefix && seenDirs.length === 1 ? { cwd_prefix: seenDirs[0] } : {}) })}
             />
