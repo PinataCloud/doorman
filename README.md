@@ -298,6 +298,14 @@ properly (`CSC_LINK` / `CSC_KEY_PASSWORD`, or the keychain), and it notarizes
 when `APPLE_API_KEY`, `APPLE_API_KEY_ID` and `APPLE_API_ISSUER` are set.
 Windows builds are unsigned.
 
+**Windows payloads.** Build Windows installers with
+`ELECTRON_BUILDER_7Z_FILTER=BCJ` set, as the release workflow does. Without
+it, electron-builder's 7-Zip packs the arm64 executables with its ARM64
+filter, which the installer can't decode: it reports success and installs no
+`Doorman.exe` on Windows on ARM (0.4.0 shipped that way). Check an installer
+with `node scripts/verify-win-installer.mjs dist/Doorman-Setup-<version>.exe`
+(needs 7-Zip on PATH).
+
 ## Releasing
 
 `.github/workflows/release.yml` runs on a pushed `v*` tag: tests, then the Mac
