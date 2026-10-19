@@ -8,3 +8,5 @@ build-resources/icon.png
 # scripts/dev-sandbox.mjs throwaway home + profile
 .dev-sandbox/
 node_modules/
+
+.env
