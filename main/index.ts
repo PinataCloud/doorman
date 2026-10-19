@@ -2489,16 +2489,18 @@ if (!app.requestSingleInstanceLock()) {
     // on the CLI sees the app and works on a copy (lib/data-owner.ts).
     await claimForApp(app.getPath("userData"), { log: (m) => console.warn(`[doorman] ${m}`) });
 
-    // brand-dev-shell.mjs already points the bundle at our .icns, so the Dock
-    // is right from launch. This still sets the tile explicitly because it uses
-    // the grid-PADDED master (full-bleed reads oversized in the Dock) and
-    // because the script is a no-op if someone runs Electron straight out of a
-    // fresh `npm i`. The raw mark is the fallback when the master isn't built.
+    // brand-dev-shell.mjs already points the bundle at our icons, so the Dock
+    // is right from launch — and on macOS 26+ follows the Dock's icon style
+    // (Dark, Tinted), which an explicit tile would pin to the light one. So
+    // the tile is set only when the script hasn't branded this bundle (someone
+    // ran Electron straight out of a fresh `npm i`): the grid-PADDED master
+    // (full-bleed reads oversized in the Dock), else the raw mark.
     if (!app.isPackaged) {
       const padded = join(__dirname, "..", "..", "build-resources", "icon-master.png");
       const markPath = existsSync(padded) ? padded : join(assetRoot(), "doorman-mark-512.png");
+      const branded = existsSync(join(dirname(app.getPath("exe")), "..", "Resources", "Assets.car"));
       const mark = nativeImage.createFromPath(markPath);
-      if (!mark.isEmpty()) app.dock?.setIcon(mark);
+      if (!branded && !mark.isEmpty()) app.dock?.setIcon(mark);
       app.setAboutPanelOptions({
         applicationName: "Doorman",
         applicationVersion: app.getVersion(),

@@ -8,7 +8,8 @@
  * userData path, every "…Doorman" label inside our menus. It cannot fix
  * the two things macOS reads from the BUNDLE before our JavaScript exists:
  *   · the bold app-menu title, which is `CFBundleName`
- *   · the Dock icon at launch, which is `CFBundleIconFile`
+ *   · the Dock icon at launch, which is `CFBundleIconFile` — and on macOS 26+
+ *     `CFBundleIconName`, the asset catalog's icon with its Dark variant
  * Unpackaged, the bundle is `node_modules/electron/dist/Electron.app`, so those
  * two say Electron. A packaged build has always been correct (electron-builder
  * writes productName + icon.icns from electron-builder.yml) — this only closes
@@ -27,7 +28,7 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, renameSync, unlinkSync, utimesSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, readFileSync, renameSync, unlinkSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,6 +62,9 @@ const ICON_STEM = "doorman";
 const bundle = join(root, "node_modules", "electron", "dist", "Electron.app");
 const plist = join(bundle, "Contents", "Info.plist");
 const icns = join(root, "build-resources", "icon.icns");
+/** The macOS 26+ icon (scripts/make-mac-icon.mjs) — committed, so always here. */
+const car = join(root, "assets", "mac", "Assets.car");
+const ICON_NAME = "Doorman";
 
 if (process.platform !== "darwin") {
   process.exit(0);
@@ -74,10 +78,13 @@ if (!existsSync(icns)) {
   process.exit(0);
 }
 
+const sameBytes = (a, b) => existsSync(b) && readFileSync(a).equals(readFileSync(b));
+
 const plutil = (...args) => execFileSync("plutil", args, { encoding: "utf8" });
 const read = (key) => {
   try {
-    return plutil("-extract", key, "raw", "-o", "-", plist).trim();
+    // A key that isn't there yet is an answer (null), not an error to print.
+    return execFileSync("plutil", ["-extract", key, "raw", "-o", "-", plist], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch {
     return null;
   }
@@ -143,13 +150,19 @@ const already =
   read("CFBundleDisplayName") === APP_NAME &&
   read("CFBundleIdentifier") === APP_ID &&
   read("CFBundleIconFile") === ICON_STEM &&
-  existsSync(join(bundle, "Contents", "Resources", `${ICON_STEM}.icns`));
+  existsSync(join(bundle, "Contents", "Resources", `${ICON_STEM}.icns`)) &&
+  (!existsSync(car) ||
+    (read("CFBundleIconName") === ICON_NAME && sameBytes(car, join(bundle, "Contents", "Resources", "Assets.car"))));
 
 if (already) {
   process.exit(0);
 }
 
 copyFileSync(icns, join(bundle, "Contents", "Resources", `${ICON_STEM}.icns`));
+if (existsSync(car)) {
+  copyFileSync(car, join(bundle, "Contents", "Resources", "Assets.car"));
+  write("CFBundleIconName", ICON_NAME);
+}
 write("CFBundleName", APP_NAME);
 write("CFBundleDisplayName", APP_NAME);
 write("CFBundleIdentifier", APP_ID);

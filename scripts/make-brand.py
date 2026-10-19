@@ -13,6 +13,10 @@ build dependencies, so nothing in CI or in the app needs Python):
                                    slices the .icns and the Linux PNG from it
   assets/doorman-app-icon-win.png  the Windows icon: the mark itself, ringed in
                                    white, no tile — see win_icon()
+  assets/mac/Doorman.icon/         the macOS 26+ app icon, an Icon Composer
+                                   document with a Dark variant — see
+                                   mac_icon(); scripts/make-mac-icon.mjs
+                                   compiles it to assets/mac/Assets.car
   main/lib/tray-mask.ts            the mark's silhouette as an alpha mask, which
                                    main/lib/tray-glyph.ts samples into the
                                    menu-bar template image
@@ -28,6 +32,7 @@ Re-run after replacing the master:
 """
 
 import base64
+import json
 from pathlib import Path
 
 from fontTools.fontBuilder import FontBuilder
@@ -73,6 +78,16 @@ def app_icon(mark: Image.Image, size: int = 1024) -> Image.Image:
     return tile
 
 
+def ringed(art: Image.Image, reach: int, soften: float) -> Image.Image:
+    """`art` with a white ring `reach` px wide around its ink."""
+    solid = art.getchannel("A").point(lambda v: 255 if v > 40 else 0)
+    ring = solid.filter(ImageFilter.MaxFilter(2 * reach + 1)).filter(ImageFilter.GaussianBlur(soften))
+    out = Image.new("RGBA", art.size, (255, 255, 255, 0))
+    out.putalpha(ring)
+    out.alpha_composite(art)
+    return out
+
+
 def win_icon(mark: Image.Image, size: int = 1024) -> Image.Image:
     """The mark edge to edge, ringed in white, on a transparent square. Windows
     draws app icons as shapes at 16-32 px in the taskbar, title bar and Start
@@ -83,13 +98,57 @@ def win_icon(mark: Image.Image, size: int = 1024) -> Image.Image:
     inner = size - 2 * pad
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     canvas.alpha_composite(mark.resize((inner, inner), Image.LANCZOS), (pad, pad))
-    solid = canvas.getchannel("A").point(lambda v: 255 if v > 40 else 0)
-    reach = round(size * 0.035)
-    ring = solid.filter(ImageFilter.MaxFilter(2 * reach + 1)).filter(ImageFilter.GaussianBlur(size / 512))
-    out = Image.new("RGBA", (size, size), (255, 255, 255, 0))
-    out.putalpha(ring)
-    out.alpha_composite(canvas)
-    return out
+    return ringed(canvas, round(size * 0.035), size / 512)
+
+
+# The Icon Composer document (macOS 26+). The system draws the tile — the
+# squircle, the glass, the light and dark fill — and the mark is one layer on
+# it, at the same 80% the legacy tile uses. Without this the Dock's Dark icon
+# style left Doorman the one white tile in a dark Dock: macOS only darkens
+# icons that ship their own variants.
+#
+# The dark fill would swallow the mark's black jacket and cap, so the Dark
+# appearance swaps in the mark ringed in white. One layer per appearance, each
+# hidden in the other: a layer's IMAGE can't be specialized per appearance
+# (actool ignores image-name-specializations), its visibility can.
+MAC_ICON_DOCUMENT = {
+    "fill": {"automatic-gradient": "extended-srgb:1.00000,1.00000,1.00000,1.00000"},
+    "fill-specializations": [
+        {"appearance": "dark", "value": {"automatic-gradient": "extended-srgb:0.16000,0.16000,0.17000,1.00000"}},
+    ],
+    "groups": [
+        {
+            "layers": [
+                {
+                    "glass": False,
+                    "image-name": "mark-dark.png",
+                    "name": "mark-dark",
+                    "hidden-specializations": [{"value": True}, {"appearance": "dark", "value": False}],
+                },
+                {
+                    "glass": False,
+                    "image-name": "mark.png",
+                    "name": "mark",
+                    "hidden-specializations": [{"appearance": "dark", "value": True}],
+                },
+            ],
+            "shadow": {"kind": "neutral", "opacity": 0.5},
+            "translucency": {"enabled": False, "value": 0.5},
+        }
+    ],
+    "supported-platforms": {"squares": ["macOS"]},
+}
+
+
+def mac_icon(mark: Image.Image, size: int = 1024) -> None:
+    doc = ROOT / "assets" / "mac" / "Doorman.icon"
+    (doc / "Assets").mkdir(parents=True, exist_ok=True)
+    inner = round(size * 0.80)
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    layer.alpha_composite(mark.resize((inner, inner), Image.LANCZOS), ((size - inner) // 2, (size - inner) // 2))
+    layer.save(doc / "Assets" / "mark.png", optimize=True)
+    ringed(layer, round(size * 0.018), 1.5).save(doc / "Assets" / "mark-dark.png", optimize=True)
+    (doc / "icon.json").write_text(json.dumps(MAC_ICON_DOCUMENT, indent=2) + "\n")
 
 
 def write_mask(mark: Image.Image) -> list[list[int]]:
@@ -161,6 +220,8 @@ def main() -> None:
     print("wrote assets/doorman-app-icon.png")
     win_icon(mark).save(ROOT / "assets" / "doorman-app-icon-win.png", optimize=True)
     print("wrote assets/doorman-app-icon-win.png")
+    mac_icon(mark)
+    print("wrote assets/mac/Doorman.icon (compile it with `npm run icons:mac`)")
     write_font(write_mask(mark))
 
 

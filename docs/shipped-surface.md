@@ -30,7 +30,8 @@ Doorman.app/Contents/
   Info.plist                 CFBundleIdentifier cloud.pinata.doorman, copyright "Pinata"
   Resources/
     app.asar                 327 files — see below
-    icon.icns                from assets/doorman-app-icon.png
+    icon.icns                from assets/doorman-app-icon.png (macOS before 26)
+    Assets.car               the macOS 26+ icon with its Dark variant, from assets/mac/Doorman.icon
     assets/                  served to the renderer under the _asset/ prefix
       doorman-mark-512.png
       fonts/                 Hanken Grotesk (see Licensing)

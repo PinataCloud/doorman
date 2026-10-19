@@ -15,6 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "probe": "node scripts/guard-probe.mjs",
     "icons": "node scripts/make-icons.mjs",
+    "icons:mac": "node scripts/make-mac-icon.mjs",
     "build": "npm run compile && npm run icons && npm run renderer:min && electron-builder --mac",
     "build:linux": "npm run compile && npm run icons && npm run renderer:min && electron-builder --linux",
     "build:win": "npm run compile && npm run icons && npm run renderer:min && electron-builder --win",

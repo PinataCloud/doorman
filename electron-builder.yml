@@ -64,7 +64,17 @@ mac:
   gatekeeperAssess: false
   entitlements: build-resources/entitlements.mac.plist
   entitlementsInherit: build-resources/entitlements.mac.plist
+  # macOS 26+ draws the app icon from this asset catalog, Dark variant
+  # included (the Dock's Dark icon style left the .icns a white tile in a dark
+  # Dock); older macOS reads icon.icns above. Compiled from
+  # assets/mac/Doorman.icon by scripts/make-mac-icon.mjs and committed, since
+  # it needs Xcode 26's actool and the release runner has an older Xcode.
+  extraResources:
+    - from: assets/mac/Assets.car
+      to: Assets.car
   extendInfo:
+    # The catalog's app icon (make-mac-icon.mjs ICON_NAME).
+    CFBundleIconName: Doorman
     # The one-time Automation consent prompt macOS shows the first time the
     # ledger's Open terminal / Continue in Terminal addresses Terminal or
     # iTerm2 (com.apple.security.automation.apple-events in the entitlements).
