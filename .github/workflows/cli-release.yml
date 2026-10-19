@@ -85,10 +85,15 @@ jobs:
         working-directory: dist/cli-package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          REPO_PRIVATE: ${{ github.event.repository.private }}
         run: |
           version=$(node -p 'require("./package.json").version')
           if npm view "@pinata/doorman@$version" version >/dev/null 2>&1; then
             echo "@pinata/doorman@$version is already on npm; skipping publish"
+          elif [ "$REPO_PRIVATE" = "true" ]; then
+            # npm rejects provenance from a private repository (E422), so a
+            # private repo publishes without it; it comes back once public.
+            npm publish --access public
           else
             npm publish --access public --provenance
           fi
