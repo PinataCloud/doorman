@@ -87,7 +87,7 @@
  * callbacks.
  */
 
-import { parseJsonc } from "./jsonc.js";
+import { parseJsonc } from "../guard/jsonc.js";
 
 export interface VscodeVariant {
   /** Stable id; `vscode` is the shadow-AI/coverage id already in use. */

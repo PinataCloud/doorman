@@ -12,6 +12,7 @@ import {
   hostLabel,
   hostLabels,
 } from "../main/guard/hosts/index.js";
+import type { HostDocumentFormat } from "../main/guard/hosts/types.js";
 import { GUARD_COMMAND_MARKER } from "../main/guard/policy.js";
 import { guardCommand } from "../main/enforcement.js";
 
@@ -54,23 +55,30 @@ const FOREIGN_OVERRIDES: Record<string, string> = {
   ),
 };
 
-/** A document that is not ours, per format — see the foreign-entry test. */
-const FOREIGN_DOCUMENTS: Record<"json" | "yaml" | "toml", string> = {
-  json: JSON.stringify(
-    {
-      someUnrelatedKey: { keep: "me" },
-      hooks: {
-        PreToolUse: [
-          {
-            matcher: "*",
-            hooks: [{ type: "command", command: "/opt/somebody-else/their-hook.sh", timeout: 5 }],
-          },
-        ],
-      },
+const FOREIGN_JSON = JSON.stringify(
+  {
+    someUnrelatedKey: { keep: "me" },
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: "*",
+          hooks: [{ type: "command", command: "/opt/somebody-else/their-hook.sh", timeout: 5 }],
+        },
+      ],
     },
-    null,
-    2,
-  ),
+  },
+  null,
+  2,
+);
+
+/** The same, commented — legal in every host that reads comments. */
+const FOREIGN_COMMENTED = `// not ours\n${FOREIGN_JSON.replace('"hooks": {', '"hooks": { // theirs')}\n// end\n`;
+
+/** A document that is not ours, per format — see the foreign-entry test. */
+const FOREIGN_DOCUMENTS: Record<HostDocumentFormat, string> = {
+  json: FOREIGN_JSON,
+  jsonc: FOREIGN_COMMENTED,
+  json5: FOREIGN_COMMENTED,
   yaml: [
     "someUnrelatedKey: keep",
     "hooks:",
@@ -211,9 +219,10 @@ describe.each(each)("host %s", (_id, host) => {
   it("preserves a foreign entry in the same document, through merge AND remove", () => {
     const foreign = "/opt/somebody-else/their-hook.sh";
     // In the host's OWN document format (hosts/types.ts documentFormat): a
-    // Claude-shaped JSON document for the JSON hosts, a block-mapping YAML for
-    // Hermes, a `[[hooks]]` table array for Kimi Code. The invariant is the
-    // same in each: somebody else's hook and an unrelated key come out intact.
+    // Claude-shaped JSON document for the JSON hosts (commented for the hosts
+    // that read comments), a block-mapping YAML for Hermes, a `[[hooks]]` table
+    // array for Kimi Code. The invariant is the same in each: somebody else's
+    // hook and an unrelated key come out intact.
     const before = FOREIGN_OVERRIDES[host.id] ?? FOREIGN_DOCUMENTS[host.documentFormat ?? "json"];
     const merged = host.merge(before, COMMAND, HOLD);
     expect(merged).toContain(foreign);

@@ -11,6 +11,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { droidHost } from "../main/guard/hosts/droid.js";
+import { documentReadable } from "../main/guard/hosts/index.js";
+import { stripJsonc } from "../main/guard/jsonc.js";
 import { GUARD_COMMAND_MARKER } from "../main/guard/policy.js";
 
 const FIXTURES = join(fileURLToPath(new URL(".", import.meta.url)), "fixtures/hooks/droid");
@@ -81,6 +83,33 @@ describe("document surgery", () => {
     const removed = droidHost.remove(doc);
     expect(removed).toBeDefined();
     expect(removed).not.toContain(GUARD_COMMAND_MARKER);
+  });
+
+  it("edits a JSONC settings.json in place — comments, trailing commas and tabs all survive", () => {
+    const commented = [
+      "// Factory settings",
+      "{",
+      '\t"model": "claude-opus", /* default */',
+      '\t"hooks": {',
+      '\t\t"PreToolUse": [',
+      "\t\t\t// theirs",
+      '\t\t\t{ "matcher": "Execute", "hooks": [{ "type": "command", "command": "/opt/audit.sh" }] },',
+      "\t\t],",
+      "\t},",
+      "\t// nothing after this",
+      "}",
+      "// trailing",
+      "",
+    ].join("\n");
+    expect(documentReadable(droidHost, commented)).toBe(true);
+    const merged = droidHost.merge(commented, COMMAND, 60, 75);
+    for (const comment of commented.match(/\/\/ [^\n]*|\/\*.*?\*\//g)!) expect(merged).toContain(comment);
+    // Our group lands in the container's own style: tab-indented, trailing comma.
+    expect(merged).toContain('\t\t\t{\n\t\t\t\t"matcher": ".*",');
+    expect(JSON.parse(stripJsonc(merged).text)).toEqual(JSON.parse(droidHost.merge(stripJsonc(commented).text, COMMAND, 60, 75)));
+    expect(droidHost.installed(merged, COMMAND)).toBe(true);
+    expect(droidHost.merge(merged, COMMAND, 60, 75)).toBe(merged);
+    expect(droidHost.remove(merged)).toBe(commented);
   });
 });
 

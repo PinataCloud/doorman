@@ -38,6 +38,10 @@
  * absolute_path}`, `web_fetch{url | prompt}`, plus `glob`, `grep`, `ls`,
  * `web_search` (pass through). MCP naming is NOT documented [2] — names pass
  * through untouched unless already `mcp__…`. VERIFY on a recording.
+ *
+ * COMMENTS. Like Gemini CLI, Qwen Code strips a BOM and `//` / `/* *\/`
+ * comments, then `JSON.parse`s (verified 2026-10-19) — comments are legal, a
+ * trailing comma is fatal. A commented settings.json is edited in place.
  */
 
 import { join } from "node:path";
@@ -58,6 +62,7 @@ export const qwenHost: GuardHostDescriptor = claudeFamilyHost({
     ];
   },
   invalidDocument: "~/.qwen/settings.json",
+  jsonDialect: { trailingCommas: false },
   style: "grouped",
   event: "PreToolUse",
   acceptedEvents: ["PreToolUse"],

@@ -72,6 +72,8 @@ export const GUARD_FILES = [
   "decision.js",
   "handshake.js",
   "hold.js",
+  // Comment-preserving JSONC reader/editor for Gemini/Qwen/Droid/OpenClaw documents.
+  "jsonc.js",
   // The host registry travels with the bundle — the guard resolves its host
   // (and that host's output contract) at runtime, inside the copy.
   "hosts/claude-family.js",

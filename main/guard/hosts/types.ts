@@ -43,12 +43,16 @@ export interface HostEmit {
 /**
  * The text format of a host's hook document. Every consumer that reads a
  * document (installer, doctor, integrity watcher, hook health) has parsed it
- * as JSON; a host declaring `yaml` or `toml` tells them to ask the descriptor
+ * as JSON; a host declaring anything else tells them to ask the descriptor
  * instead (hosts/index.ts `documentReadable`). Absent means `json`. ADDITIVE
  * (2026-09-06): Hermes's `config.yaml` and Kimi Code's `config.toml` are the
- * first non-JSON documents.
+ * first non-JSON documents. ADDITIVE (2026-10-19): `jsonc` — JSON the host
+ * reads with comments (Gemini CLI, Qwen Code, Factory Droid) — and `json5` —
+ * JSON the host falls back to reading as JSON5 (OpenClaw). Their descriptors
+ * edit a commented document in place (guard/jsonc.ts), and the doctor never
+ * "repairs" one into plain JSON: there, a comment is not damage.
  */
-export type HostDocumentFormat = "json" | "yaml" | "toml";
+export type HostDocumentFormat = "json" | "jsonc" | "json5" | "yaml" | "toml";
 
 /**
  * A file the installer writes BESIDES the hook document, for a host whose

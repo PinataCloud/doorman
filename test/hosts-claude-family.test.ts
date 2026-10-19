@@ -219,6 +219,86 @@ timeout = 5
     expect(() => host.merge("{ not json", COMMAND, 60)).toThrow(/not valid TOML/);
     expect(host.remove("{ not json")).toBeUndefined();
   });
+
+  // Documents Kimi Code writes itself (smol-toml stringify / its line writeback).
+  const OURS = `[[hooks]]\nevent = "PreToolUse"\ncommand = ${JSON.stringify(COMMAND)}\ntimeout = 75\n`;
+  const roundTrips = (doc: string, eol = "\n"): void => {
+    const merged = host.merge(doc, COMMAND, 60, 75);
+    expect(merged).toBe(`${doc}${eol}${OURS.replace(/\n/g, eol)}`);
+    expect(host.merge(merged, COMMAND, 60, 75)).toBe(merged);
+    expect(host.installed(merged, COMMAND)).toBe(true);
+    expect(host.remove(merged)).toBe(doc);
+  };
+
+  it("follows quoted and dotted table headers", () => {
+    roundTrips(
+      `default_model = "kimi-code/k3"\n[providers."managed:kimi-code"]\ntype = "kimi"\n[models."kimi-code/k3"]\nprovider = "managed:kimi-code"\n[models."kimi-code/kimi-for-coding".overrides]\nmax_context_size = 131072\n`,
+    );
+    roundTrips(`[ models . 'a:b' ]\nx = 1\n[[profiles."x/y"]]\nname = "p"\n`);
+  });
+
+  it("counts every spelling of the `hooks` table array, and only that one", () => {
+    const foreignForms = `[[ hooks ]]\nevent = "Stop"\ncommand = "${FOREIGN}"\n[["hooks"]]\nevent = "Stop"\ncommand = "echo"\n[hooks.sub]\nk = 1\n[[hooks.x]]\nk = 2\n`;
+    roundTrips(foreignForms);
+    const quotedOurs = OURS.replace("[[hooks]]", `[[ "hooks" ]]`);
+    expect(host.installed(quotedOurs, COMMAND)).toBe(true);
+    expect(host.remove(`a = 1\n\n${quotedOurs}`)).toBe("a = 1\n");
+    expect(host.installed(OURS.replace("[[hooks]]", "[[hooks.x]]"), COMMAND)).toBe(false);
+  });
+
+  it("follows dotted keys", () => {
+    roundTrips(`thinking.enabled = true\n[models]\n"kimi-code/k3".display_name = "K3"\n`);
+  });
+
+  it("replaces an empty root `hooks = []` with the table array", () => {
+    const doc = `a = 1\nhooks = []\n\n[x]\ny = 2\n`;
+    expect(host.installed(doc, COMMAND)).toBe(false);
+    expect(host.remove(doc)).toBeUndefined();
+    const merged = host.merge(doc, COMMAND, 60, 75);
+    expect(merged).toBe(`a = 1\n\n[x]\ny = 2\n\n${OURS}`);
+    expect(host.installed(merged, COMMAND)).toBe(true);
+    expect(host.remove(merged)).toBe(`a = 1\n\n[x]\ny = 2\n`);
+    expect(host.merge(`hooks = [\n  # none yet\n] # empty\n`, COMMAND, 60, 75)).toBe(OURS);
+    // What an earlier build appended next to `hooks = []`: repaired, never counted.
+    const corrupt = `hooks = []\n\n${OURS}`;
+    expect(host.installed(corrupt, COMMAND)).toBe(false);
+    expect(host.merge(corrupt, COMMAND, 60, 75)).toBe(OURS);
+  });
+
+  it("refuses any other root `hooks` instead of redefining it", () => {
+    for (const doc of [
+      `hooks = [ { event = "PreToolUse", command = ${JSON.stringify(COMMAND)}, timeout = 75 } ]\n`,
+      `hooks = [\n  { event = "Stop", command = "x" },\n]\n`,
+      `hooks.x = 1\n`,
+      `[hooks]\nx = 1\n`,
+      `[hooks.x]\ny = 1\n`,
+      `[[hooks]]\nevent = "Stop"\ncommand = "e"\n[z]\n[hooks.x]\ny = 1\n`,
+    ]) {
+      expect(() => host.merge(doc, COMMAND, 60, 75)).toThrow(/`hooks`.*not touching it/);
+      expect(host.installed(doc, COMMAND)).toBe(false);
+      expect(host.remove(doc)).toBeUndefined();
+    }
+  });
+
+  it("leaves comments that lead into the next table where they are", () => {
+    const doc = `${OURS}\n# keep me\n[thinking]\nenabled = true\n`;
+    expect(host.remove(doc)).toBe("# keep me\n[thinking]\nenabled = true\n");
+    expect(host.remove(`a = 1\n\n${doc}`)).toBe("a = 1\n\n# keep me\n[thinking]\nenabled = true\n");
+    const moved = host.merge(doc, `${COMMAND} --v2`, 60, 75);
+    expect(moved.startsWith("# keep me\n[thinking]\nenabled = true\n\n[[hooks]]\n")).toBe(true);
+  });
+
+  it("follows CRLF line endings and writes its own lines in them", () => {
+    roundTrips(`[thinking] # p\r\nenabled = true\r\n`, "\r\n");
+  });
+
+  it("never reads the inside of a multi-line string as headers or keys", () => {
+    roundTrips(`n = """\nhello world\n"""\n`);
+    roundTrips(`n = '''\n[[hooks]]\ncommand = ${JSON.stringify(COMMAND)}\n'''\nm = """a ""b""""\n`);
+    expect(host.installed(`n = """\n${OURS}"""\n`, COMMAND)).toBe(false);
+    expect(host.remove(`n = """\n${OURS}"""\n`)).toBeUndefined();
+    expect(() => host.merge(`n = """\nnever closed\n`, COMMAND, 60, 75)).toThrow(/not valid TOML/);
+  });
 });
 
 describe("normalizeInput", () => {

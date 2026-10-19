@@ -26,7 +26,7 @@
 import { dirname, join } from "node:path";
 import { DEFAULT_HOST, HOSTS, documentReadable } from "../guard/hosts/index.js";
 import type { GuardHostDescriptor } from "../guard/hosts/types.js";
-import { stripJsonc } from "./jsonc.js";
+import { stripJsonc } from "../guard/jsonc.js";
 import {
   COPILOT_HOOKS_LOCATION,
   VSCODE_VARIANTS,
@@ -181,9 +181,10 @@ export function repairJsonText(raw: string): JsonRepair | null {
   } catch {
     // fall through to the repair
   }
-  // The scanner lives in lib/jsonc.ts because the VS Code reader needs the same
-  // one for the OPPOSITE reason — there a comment is normal, and stripping it is
-  // how the values are read rather than a defect to be written back.
+  // The scanner lives in guard/jsonc.ts because the VS Code reader and the
+  // commented-JSON hosts (Gemini CLI, Qwen Code, Droid, OpenClaw) need the same
+  // one for the OPPOSITE reason — there a comment is normal, and stripping it
+  // is how the values are read rather than a defect to be written back.
   const { text: out, changes } = stripJsonc(raw);
   try {
     const value = JSON.parse(out);
@@ -324,8 +325,12 @@ function guardChecks(input: DoctorInput): DoctorCheck[] {
       missing.push(h.name);
       continue;
     }
-    // In the host's OWN format — Hermes's config.yaml and Kimi Code's
-    // config.toml are not malformed for failing JSON.parse.
+    // In the host's OWN format — Hermes's config.yaml, Kimi Code's
+    // config.toml, and the commented JSON Gemini CLI, Qwen Code, Droid and
+    // OpenClaw read (`jsonc`/`json5`) are not malformed for failing
+    // JSON.parse. Only a strict-JSON host's document is offered the JSON
+    // repair: in the other dialects a comment is legitimate, and rewriting the
+    // file as plain JSON would delete it.
     if (!documentReadable(h.host, h.doc)) {
       unreadable.push(h.name);
       if ((h.host.documentFormat ?? "json") === "json") {
