@@ -189,7 +189,6 @@ function App() {
       : state.radar.summary.open_groups != null
         ? state.radar.summary.open_groups
         : state.radar.summary.open;
-  const held = (state.approvals || []).length;
   const enforcing = enforcingCount(state);
   const protection = protectionState(state, enforcing);
 
@@ -218,20 +217,6 @@ function App() {
         </div>
         <Nav screen={screen} onPick={setScreen} radarOpen={radarOpen} />
         <div className="foot">
-          <div className="statusline">
-            <span className={"dot" + (held > 0 ? " hot" : enforcing.acting > 0 ? "" : " off")} />
-            {held > 0
-              ? held === 1
-                ? "1 CALL HELD"
-                : held + " CALLS HELD"
-              : enforcing.acting > 0
-                ? "RADAR ENFORCING"
-                : "RADAR OBSERVING"}
-          </div>
-          <div className="statusline">
-            <span className="dot off" />
-            NOTHING LEAVES THIS MAC
-          </div>
           <div className="statusline credit">POWERED BY PINATA</div>
           {/* The update's one control, present only while there is one: the
               percentage while a download runs, a button once it has landed.
