@@ -416,11 +416,13 @@ function protectionState(state, enforcing) {
   const levelId = (state.prefs && state.prefs.security_level) || levelOfModes(modes, state.level_modes || {});
   const level = SECURITY_LEVELS.find((l) => l.id === levelId);
   const guarded = (state.radar.guard_hosts || []).filter((h) => h.present && h.installed).length;
+  const levelPart = level ? level.name + " level · " : "Custom rules · ";
+  const agentsPart = guarded + (guarded === 1 ? " agent" : " agents") + " guarded";
   const why =
     kind === "protected"
-      ? enforcing.acting + " of " + enforcing.total + " rules act before a tool call runs · " + guarded + (guarded === 1 ? " agent" : " agents") + " guarded"
+      ? levelPart + enforcing.acting + " of " + enforcing.total + " rules act before a tool call runs · " + agentsPart
       : kind === "watch"
-        ? "Real time protection is on, but no rule is set to hold or block — every rule only watches"
+        ? levelPart + "real time protection is on, but no rule is set to hold or block — every rule only watches · " + agentsPart
         : enforcing.tampered
           ? "The guard was changed outside this app, so no rule can act until it is reinstalled — repair it in Settings"
           : "Real time protection is off, so no rule can act — turn it on in Settings";
@@ -428,17 +430,22 @@ function protectionState(state, enforcing) {
 }
 
 /**
- * The line under the wordmark: the state in one word, then the level in force.
- * When nothing can act there is no level to state — the line is the state and
- * an arrow, the way to the fix (its label and tip name it: Turn on, Repair).
- * The whole line is the way to Settings; on Settings itself it is just text.
+ * The line under the wordmark: the state in one word, then what it covers —
+ * the agents guarded (the rules acting when no agent is installed yet). The
+ * level and the rule count are the tip. When nothing can act the line is the
+ * state and an arrow, the way to the fix (its label and tip name it: Turn on,
+ * Repair). The whole line is the way to Settings; on Settings it is just text.
  */
 function ProtectionBadge({ state, enforcing, onGoSettings }) {
   const p = protectionState(state, enforcing);
   const kids = [
     <strong key="w">{p.word}</strong>,
     p.acting ? <span key="s" className="pb-sep" aria-hidden="true">·</span> : null,
-    p.acting ? <span key="l" className="pb-level">{p.level ? p.level.name : "Custom"}</span> : null,
+    p.acting ? (
+      <span key="l" className="pb-level">
+        {p.guarded > 0 ? p.guarded + (p.guarded === 1 ? " agent" : " agents") : enforcing.acting + "/" + enforcing.total + " rules"}
+      </span>
+    ) : null,
     onGoSettings ? <span key="a" className="pb-arrow" aria-hidden="true">›</span> : null,
   ];
   const className = "protbadge " + p.kind;
