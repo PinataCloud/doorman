@@ -232,7 +232,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          foreach ($exe in Get-ChildItem dist/Doorman-Setup-*.exe) {
+          # electron-builder writes "Doorman Setup <v>.exe" (spaces); publish
+          # renames it with dashes later. Zero matches must fail, not pass.
+          $installers = @(Get-ChildItem "dist/*Setup*.exe")
+          if ($installers.Count -eq 0) { Write-Error "no installer in dist/ to verify"; exit 1 }
+          foreach ($exe in $installers) {
             node scripts/verify-win-installer.mjs $exe.FullName
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
