@@ -399,7 +399,7 @@ describe("radar feed paging and the three-screen security split", () => {
     // its WINDOW, as a share of the sessions that ran — a rate, not a count.
     expect(radar).not.toMatch(/affected_sessions/);
     expect(radar).not.toMatch(/label="Sessions/);
-    expect(analytics).toMatch(/label="Sessions that tripped a rule"/);
+    expect(analytics).toMatch(/label="Sessions flagged"/);
     // …and the state is named for what sets it. `status: "open"` is the
     // absence of a triage click, so the copy says "needs review" — the words
     // the triage segment and the hero already use — rather than "open", which

@@ -249,7 +249,14 @@ html, body {
   border-radius: var(--r-lg);
   padding: var(--s5) var(--s6);
 }
-.card + .card, .card + .grid, .grid + .card { margin-top: var(--s5); }
+.card + .card, .card + .grid, .grid + .card,
+.statgrid + .card, .card + .statgrid { margin-top: var(--s5); }
+/* …but only down a column. In a ROW — cards side by side in a grid — the
+   stack margin pushed every item after the first below its neighbours. */
+.herorow > .card, .herorow > .statgrid, .herorow > .grid,
+.grid2 > .card, .grid2 > .grid, .grid2 > .statgrid,
+.statgrid > .card, .statgrid > .kpi,
+.radartop > .card { margin-top: 0; }
 .card h3 {
   margin: 0 0 var(--s4);
   font-size: var(--t-2);
@@ -487,6 +494,7 @@ td.right, th.right { text-align: right; }
   font-family: var(--mono);
   font-size: var(--t-3);
   letter-spacing: .16em;
+  text-transform: uppercase;
   color: var(--ink-4);
   margin: var(--s5) 0 var(--s3);
 }
@@ -535,7 +543,10 @@ td.right, th.right { text-align: right; }
   gap: var(--s4);
   padding: var(--s4) 0 var(--s3);
   margin-top: var(--s4);
-  background: linear-gradient(to bottom, transparent, var(--linen) 30%);
+  /* Solid, with the fade ABOVE its rule: a transparent top let the last turn's
+     text show through with the rule struck across it. */
+  background: var(--linen);
+  box-shadow: 0 -12px 14px -4px var(--linen);
   border-top: 1px solid var(--tan);
 }
 .detail-foot .sparkwrap { display: inline-flex; align-items: center; gap: var(--s3); }
@@ -923,6 +934,8 @@ button.link {
   border-bottom: 1px solid color-mix(in srgb, var(--tan) var(--mix-2), transparent);
 }
 .setting:last-child { border-bottom: none; }
+/* A disclosure below draws its own rule; two hairlines 10px apart read as a glitch. */
+.setting:has(+ .advanced) { border-bottom: none; }
 .setting .what { flex: 1; min-width: 0; }
 .setting .what .t { font-size: var(--t-1); color: var(--ink); font-weight: 600; }
 .setting .what .d { font-size: var(--t-2); color: var(--ink-3); margin-top: 1px; }
@@ -1546,7 +1559,9 @@ button.btn.quiet:hover { border-color: var(--tan-2); }
 .usecases .uc-meta .uc-alerts { color: var(--bad); }
 .usecases .uc-track { display: block; height: 4px; border-radius: 2px; background: var(--linen-2); margin-top: var(--s3); overflow: hidden; }
 .usecases .uc-track > span { display: block; height: 100%; border-radius: 2px; }
-.usecases .uc-time { text-align: right; flex: none; }
+/* A fixed minimum, so every row's track ends at the same point however wide
+   its time ("4m" beside "1h 20m"). */
+.usecases .uc-time { text-align: right; flex: none; min-width: 7ch; }
 .usecases .uc-hrs { display: block; font-family: var(--mono); font-size: var(--t-0); font-weight: 600; }
 .usecases .uc-time .delta { display: block; margin-top: 2px; }
 /* The chevron only appears on hover/focus: it is a hint about what a click
@@ -1837,6 +1852,8 @@ button.eventrun .er-act { font-size: var(--t-3); color: var(--blue); flex: none;
    segment's width is stable across filter changes. */
 .filterbar.radar-filters { flex-wrap: nowrap; }
 .filterbar.radar-filters .searchbox { flex: 1 1 160px; min-width: 140px; width: auto; max-width: 300px; }
+/* In a filter row the search box is a control like the selects beside it: one height. */
+.filterbar .searchbox input { height: var(--control-h); }
 .filterbar.radar-filters .fmenu-wrap { flex: none; }
 .filterbar.radar-filters .seg { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
 
@@ -3133,7 +3150,7 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .live-note code { font-size: var(--t-3); }
 .live-handoff {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--s3);
-  margin-top: var(--s3); font-size: var(--t-2); color: var(--ink-3);
+  margin: var(--s3) 0 var(--s5); font-size: var(--t-2); color: var(--ink-3);
 }
 .live-handoff .livestate { display: inline-flex; align-items: center; gap: var(--s2); }
 @media (prefers-reduced-motion: reduce) {

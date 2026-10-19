@@ -53,7 +53,7 @@ function windowDelta(now, before, days) {
   const period = "the " + days + " days before";
   if (before === 0) {
     if (now === 0) return { arrow: "—", text: "none in " + period + " either.", tone: "flat" };
-    return { arrow: "▲", text: "none in " + period + ".", tone: "worse" };
+    return { arrow: "▲", text: "up from none in " + period + ".", tone: "worse" };
   }
   if (now === before) return { arrow: "—", text: "the same as " + period + ".", tone: "flat" };
   const down = now < before;
@@ -380,7 +380,7 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
             no rate to state and the count stands on its own. */}
         <Kpi
           num={sessionRate != null ? sessionRate + "%" : String(stats.sessions)}
-          label="Sessions that tripped a rule"
+          label="Sessions flagged"
           note={
             sessionRate == null
               ? "No sessions ran in the last " + days + " days, so there is no rate to give."
@@ -417,7 +417,7 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
 
       <Card
         title={"New exposures per day · " + days + " days"}
-        hint="an exposure counts on the day it was first seen."
+        hint="counted on the day first seen."
         right={<Legend series={trendSeries} days={daily} />}
       >
         {newExposures === 0 ? (
