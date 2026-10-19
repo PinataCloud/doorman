@@ -508,10 +508,11 @@ export interface RadarState {
    * this machine, and is the guard's entry in its document? The renderer names
    * hosts from this instead of hard-coding Claude Code and Codex. */
   guard_hosts?: GuardHostSummary[];
-  /** Why the last guard sync couldn't reach the hook documents (usually a
-   * malformed settings.json the merge refuses to touch). Absent when healthy.
-   * Without this, the app would show the policy it WANTS while the guard on
-   * disk quietly runs an older one. */
+  /** Why the last guard install/sync couldn't reach a hook document (usually
+   * a config file the merge refuses to touch): one "<Host label>: <reason>"
+   * sentence per agent it couldn't reach, joined with ". " — the others were
+   * still updated. Absent when healthy. Without this, the app would show the
+   * policy it WANTS while the guard on disk quietly runs an older one. */
   guard_sync_error?: string;
   /** Per-rule counters over each Analytics window (lib/findings.ts
    * summarizeRuleStats) — computed in main over EVERY stored finding, because

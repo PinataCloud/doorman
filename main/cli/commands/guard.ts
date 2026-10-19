@@ -111,8 +111,14 @@ const guardInstall: CliCommand = {
     ctx.setPrefs({ guard_wanted: true });
     const report = guardReport(ctx, false);
     const notes = outcome.codex_restart_required ? [ctx.style.yellow("Restart running Codex sessions so they load the new hook.")] : [];
+    // Every agent the install could take was wired; these keep what they had.
+    for (const failure of outcome.failures) notes.push(ctx.style.yellow(`Not installed in ${failure.label}: ${failure.error}`));
     return {
-      data: { ...(report.data as object), codex_restart_required: outcome.codex_restart_required },
+      data: {
+        ...(report.data as object),
+        codex_restart_required: outcome.codex_restart_required,
+        failed_hosts: outcome.failures,
+      },
       text: ["Guard on.", ...notes, "", ...report.text],
     };
   },

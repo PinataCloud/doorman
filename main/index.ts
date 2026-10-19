@@ -44,6 +44,7 @@ import {
   SpoolWatcher,
   guardDir,
   guardHostSummaries,
+  guardInstallProblem,
   installGuard,
   isGuardInstalled,
   refreshGuardBundle,
@@ -495,7 +496,9 @@ function applyGuardSync(): void {
 function setGuardWanted(on: boolean): { ok: boolean; error?: string } {
   if (on) {
     const outcome = installGuard(app.getPath("userData"), livePolicy());
-    guardSyncError = outcome.ok ? undefined : outcome.error;
+    // A partial install is ON (some agents are guarded) and still a problem
+    // to show: the hosts it couldn't reach are named, one by one.
+    guardSyncError = guardInstallProblem(outcome);
     // The person wants the guard: from here a missing entry is tampering.
     if (outcome.ok) store.setPrefs({ guard_wanted: true });
     // Coverage is computed from where the guard IS — re-scan so the card
@@ -1704,7 +1707,7 @@ function onIntegrityReport(report: GuardIntegrityReport, previous: GuardIntegrit
       notifyGuardTampered(description, {
         onReinstall: () => {
           const outcome = installGuard(app.getPath("userData"), livePolicy());
-          guardSyncError = outcome.ok ? undefined : outcome.error;
+          guardSyncError = guardInstallProblem(outcome);
           integrity.check();
           scheduleRecompute();
         },
@@ -2896,8 +2899,10 @@ if (!app.requestSingleInstanceLock()) {
     // guard off and on.
     if (isGuardInstalled()) {
       const outcome = installGuard(app.getPath("userData"), livePolicy());
+      // Hosts the re-merge couldn't reach are named in Settings, not only the log.
+      guardSyncError = guardInstallProblem(outcome);
+      if (guardSyncError !== undefined) console.warn("[doorman] couldn't re-merge the guard at boot:", guardSyncError);
       if (!outcome.ok) {
-        console.warn("[doorman] couldn't re-merge the guard at boot:", outcome.error);
         try {
           refreshGuardBundle(app.getPath("userData"));
           writeGuardPolicy(app.getPath("userData"), livePolicy());

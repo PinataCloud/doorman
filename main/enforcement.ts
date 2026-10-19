@@ -477,10 +477,41 @@ function nothingToInstallInto(): string {
   return `${who} was found on this machine (no ${paths}), so there is nothing to install the guard into.`;
 }
 
-export function installGuard(
-  userDataDir: string,
-  policy: GuardPolicy,
-): { ok: true; codex_restart_required: boolean } | { ok: false; error: string } {
+/** A host the install (or removal) could not reach, and the host's own reason
+ * — its merge's refusal ("~/.hermes/config.yaml is … ; not touching it") or
+ * the write that failed. */
+export interface GuardHostFailure {
+  id: string;
+  label: string;
+  error: string;
+}
+
+/**
+ * What installGuard did. `ok` means the guard is enforcing in at least one
+ * agent; `failures` lists every present host it could not reach — those keep
+ * whatever they had before (an older entry, or none), untouched.
+ */
+export type GuardInstallOutcome =
+  | { ok: true; codex_restart_required: boolean; failures: GuardHostFailure[] }
+  | { ok: false; error: string; failures?: GuardHostFailure[] };
+
+/** One sentence per failing host, named — what `guard_sync_error` carries.
+ * No closing period, so whoever shows it can end the sentence. */
+export function describeGuardFailures(failures: readonly GuardHostFailure[]): string {
+  return failures.map((f) => `${f.label}: ${f.error.replace(/\.+$/, "")}`).join(". ");
+}
+
+/** The problem to show for an install outcome, or undefined when every present
+ * host took the guard. A partial install is a problem too: an agent the guard
+ * couldn't reach runs an older policy, or none. */
+export function guardInstallProblem(outcome: GuardInstallOutcome): string | undefined {
+  if (!outcome.ok) return outcome.error;
+  return outcome.failures.length > 0 ? describeGuardFailures(outcome.failures) : undefined;
+}
+
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+export function installGuard(userDataDir: string, policy: GuardPolicy): GuardInstallOutcome {
   try {
     // The effective per-hook timeout: it must EXCEED the hold window, or the
     // host kills the guard mid-hold and a killed hook fails open (which would
@@ -499,31 +530,46 @@ export function installGuard(
       // nowhere while the UI reads "enforcing".
       return { ok: false, error: nothingToInstallInto() };
     }
-    // Parse and build EVERY document before writing any of them. A malformed
-    // Codex file must not leave the switch half-on by changing Claude first.
-    const planned = present.map((state) => ({
-      state,
-      next: state.host.merge(
-        state.doc,
-        guardCommand(userDataDir, state.host.id),
-        policy.confirm.hold_seconds,
-        timeout,
-      ),
-    }));
-    // Companion documents (a host's consent allowlist) and plugin artefacts
-    // (a host's plugin directory) belong to the same all-or-nothing plan: a
-    // companion that refuses its document fails the install before anything
-    // is written, exactly like a malformed hook document does.
+    // Plan each host on its own: its hook document(s), its companion documents
+    // (a consent allowlist) and its plugin artefacts, all parsed and built
+    // before anything of that host is written. A host whose plan refuses —
+    // a hook document or companion its merge can't follow — is skipped whole
+    // and reported, so it is never left half-on (a companion entry with no
+    // hook, a hook pointing at a plugin that isn't there). It no longer takes
+    // the other hosts down with it: one Hermes config the YAML reader can't
+    // follow used to leave Claude, Codex and every other agent unguarded.
     const home = homedir();
-    const presentHosts = [...new Set(present.map((s) => s.host))];
-    const companions = presentHosts.flatMap((host) =>
-      (host.companions ?? []).map((companion) => {
-        const path = companion.path(home, process.env);
-        const doc = readDocument(path);
-        return { path, doc, next: companion.merge(doc, guardCommand(userDataDir, host.id)) };
-      }),
-    );
-    const artifacts = presentHosts.flatMap((host) => hostArtifacts(host));
+    const failures: GuardHostFailure[] = [];
+    type PlannedDocument = { path: string; doc: string | undefined; next: string };
+    const plans: {
+      host: GuardHostDescriptor;
+      hooks: PlannedDocument[];
+      companions: PlannedDocument[];
+      artifacts: HostArtifact[];
+    }[] = [];
+    for (const host of [...new Set(present.map((s) => s.host))]) {
+      try {
+        const command = guardCommand(userDataDir, host.id);
+        const hooks = present
+          .filter((s) => s.host === host)
+          .map((s) => ({
+            path: s.docPath,
+            doc: s.doc,
+            next: host.merge(s.doc, command, policy.confirm.hold_seconds, timeout),
+          }));
+        const companions = (host.companions ?? []).map((companion) => {
+          const path = companion.path(home, process.env);
+          const doc = readDocument(path);
+          return { path, doc, next: companion.merge(doc, command) };
+        });
+        plans.push({ host, hooks, companions, artifacts: hostArtifacts(host) });
+      } catch (err) {
+        failures.push({ id: host.id, label: host.label, error: errorText(err) });
+      }
+    }
+    // No host could take the guard: write nothing (not even the policy, as
+    // before) and keep the switch off rather than read "enforcing".
+    if (plans.length === 0) return { ok: false, error: describeGuardFailures(failures), failures };
     refreshGuardBundle(userDataDir);
     writeGuardPolicy(userDataDir, policy);
     // Write only what changed: this runs on every boot and policy sync, and a
@@ -533,29 +579,45 @@ export function installGuard(
     // were just refreshed; the hook documents live in the real home.
     if (!hookWritesAllowed()) return { ok: false, error: SANDBOX_READ_ONLY };
     let codexChanged = false;
-    for (const { state, next } of planned) {
-      if (next === state.doc) continue;
-      mkdirSync(dirname(state.docPath), { recursive: true });
-      writeDocumentAtomically(state.docPath, next);
-      if (state.host.id === "codex") codexChanged = true;
+    let installed = 0;
+    const writeChanged = ({ path, doc, next }: PlannedDocument): boolean => {
+      if (next === doc) return false;
+      mkdirSync(dirname(path), { recursive: true });
+      writeDocumentAtomically(path, next);
+      return true;
+    };
+    for (const plan of plans) {
+      try {
+        // What the entry points at (plugin files, consent) first, the hook
+        // entry last: a write that fails midway leaves inert files behind,
+        // never an entry pointing at nothing.
+        for (const artifact of plan.artifacts) writeArtifact(artifact);
+        for (const companion of plan.companions) writeChanged(companion);
+        for (const hook of plan.hooks) {
+          if (writeChanged(hook) && plan.host.id === "codex") codexChanged = true;
+        }
+        installed += 1;
+      } catch (err) {
+        failures.push({ id: plan.host.id, label: plan.host.label, error: errorText(err) });
+        continue;
+      }
+      // One-time upgrade hygiene (2026-09-10): the Hermes shell-hook install
+      // left a consent entry for a command that is no longer configured; the
+      // plugin path needs none. Best-effort, our entries only.
+      if (plan.host.id === hermesHost.id) {
+        try {
+          const allowlist = `${hermesHome(home, process.env)}/shell-hooks-allowlist.json`;
+          const cleaned = withoutLegacyAllowlistEntries(readDocument(allowlist));
+          if (cleaned !== undefined) writeDocumentAtomically(allowlist, cleaned);
+        } catch {
+          // a stale consent entry for a command nobody runs is inert
+        }
+      }
     }
-    for (const companion of companions) {
-      if (companion.next === companion.doc) continue;
-      mkdirSync(dirname(companion.path), { recursive: true });
-      writeDocumentAtomically(companion.path, companion.next);
-    }
-    for (const artifact of artifacts) writeArtifact(artifact);
-    // One-time upgrade hygiene (2026-09-10): the Hermes shell-hook install
-    // left a consent entry for a command that is no longer configured; the
-    // plugin path needs none. Best-effort, our entries only.
-    if (presentHosts.some((h) => h.id === hermesHost.id)) {
-      const allowlist = `${hermesHome(home, process.env)}/shell-hooks-allowlist.json`;
-      const cleaned = withoutLegacyAllowlistEntries(readDocument(allowlist));
-      if (cleaned !== undefined) writeDocumentAtomically(allowlist, cleaned);
-    }
-    return { ok: true, codex_restart_required: codexChanged };
+    if (installed === 0) return { ok: false, error: describeGuardFailures(failures), failures };
+    return { ok: true, codex_restart_required: codexChanged, failures };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: errorText(err) };
   }
 }
 
@@ -568,6 +630,8 @@ export function installGuard(
  * Returns the failure instead of swallowing it: a settings.json the merge
  * refuses to touch (malformed JSON) means the guard on disk is now drifting
  * from the policy the app displays, and the caller has to be able to say so.
+ * A host the re-merge couldn't reach is that failure too, named, even while
+ * the others took the new policy.
  */
 export function syncGuard(
   userDataDir: string,
@@ -576,7 +640,8 @@ export function syncGuard(
   try {
     if (isGuardInstalled()) {
       const outcome = installGuard(userDataDir, policy);
-      return outcome.ok ? { ok: true } : outcome;
+      const problem = guardInstallProblem(outcome);
+      return problem === undefined ? { ok: true } : { ok: false, error: problem };
     }
     writeGuardPolicy(userDataDir, policy);
     return { ok: true };
@@ -585,25 +650,38 @@ export function syncGuard(
   }
 }
 
+/**
+ * Take our entry out of every host, each on its own: a host whose document
+ * can't be rewritten is reported and the rest are still removed. Within one
+ * host the hook document goes first; its companions and plugin artefacts are
+ * only removed once it has, so a failure never strands an entry pointing at
+ * nothing. Not ok while any host still carries the guard.
+ */
 export function uninstallGuard(): { ok: true } | { ok: false; error: string } {
   try {
     if (!hookWritesAllowed()) return { ok: false, error: SANDBOX_READ_ONLY };
-    for (const state of guardHostStates()) {
-      const next = state.host.remove(state.doc);
-      if (next !== undefined) writeDocumentAtomically(state.docPath, next);
-    }
     const home = homedir();
+    const states = guardHostStates();
+    const failures: GuardHostFailure[] = [];
     for (const host of HOSTS) {
-      for (const companion of host.companions ?? []) {
-        const path = companion.path(home, process.env);
-        const next = companion.remove(readDocument(path));
-        if (next !== undefined) writeDocumentAtomically(path, next);
+      try {
+        for (const state of states.filter((s) => s.host === host)) {
+          const next = host.remove(state.doc);
+          if (next !== undefined) writeDocumentAtomically(state.docPath, next);
+        }
+        for (const companion of host.companions ?? []) {
+          const path = companion.path(home, process.env);
+          const next = companion.remove(readDocument(path));
+          if (next !== undefined) writeDocumentAtomically(path, next);
+        }
+        removeArtifacts(hostArtifacts(host));
+      } catch (err) {
+        failures.push({ id: host.id, label: host.label, error: errorText(err) });
       }
-      removeArtifacts(hostArtifacts(host));
     }
-    return { ok: true };
+    return failures.length === 0 ? { ok: true } : { ok: false, error: describeGuardFailures(failures) };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: errorText(err) };
   }
 }
 

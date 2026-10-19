@@ -539,13 +539,14 @@ function RulesCard({ state, onGoRules }) {
           Couldn't update the guard: {error}
         </div>
       ) : null}
-      {/* A sync that can't reach the hook documents (usually a settings.json
-          someone hand-broke) means the guard on disk is running an OLDER
-          policy than the one shown below — the one state this card must
-          never be quiet about. */}
+      {/* A sync that can't reach a hook document (usually a config file the
+          merge can't follow) means the guard in that agent is running an OLDER
+          policy than the one shown below, or none — while every other agent
+          took it. The error names each such agent; the one state this card
+          must never be quiet about. */}
       {state.radar.guard_sync_error ? (
         <div className="callout bad" style={{ marginBottom: "var(--s4)" }}>
-          The guard's hook entries couldn't be updated: {state.radar.guard_sync_error}
+          The guard's hook entries couldn't be updated: {state.radar.guard_sync_error}.
         </div>
       ) : null}
       {/* The other state this card must never be quiet about: the guard's
