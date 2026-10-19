@@ -1455,12 +1455,13 @@ describe("every screen renders (renderer)", () => {
   it("prints the active-exposure count from the summary and routes it to the Radar", () => {
     const s = populatedState();
     ctx.__state = s;
+    // The Overview's title row carries the count (app.jsx passes ActiveCount
+    // as SecurityHeader's action).
     const seen = runInContext(
       `(function () {
          var radar = 0;
-         var tree = OverviewScreen({ state: __state,
-           onGoRadar: function (f) { if (f === undefined) radar += 1; },
-           onOpenSession: function () {}, onTraceSecret: function () {} });
+         var tree = ActiveCount({ state: __state,
+           onGoRadar: function (f) { if (f === undefined) radar += 1; } });
          var pill = __nodes(tree, "button", [], 0).filter(function (n) {
            return n.props && /ovr-count/.test(String(n.props.className));
          })[0];
@@ -3404,45 +3405,53 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
     expect(body).not.toContain("Rotate at");
   });
 
-  it("the Radar wears one door under the hero, and opens the trace as its own sub page", () => {
+  it("the Radar's title row carries the trace door, and opens the trace as its own sub page", () => {
     const state = populatedState();
     ctx.__state = state;
-    // The title row stays two controls (more up top is too much); while the sub page is open it says where you are.
+    // The door is the title row's one action (app.jsx passes it on the Radar);
+    // while the sub page is open the row says where you are, with no door.
     const head = runInContext(
       `(function () {
-         var plain = SecurityHeader({ state: __state, screen: "radar", enforcing: enforcingCount(__state), onGoRules: ${noop} });
-         var traced = SecurityHeader({ state: __state, screen: "radar", enforcing: enforcingCount(__state), onGoRules: ${noop}, title: "Trace a secret" });
+         var door = TraceSecretBar({ pronounced: true, onOpen: ${noop} });
+         var withDoor = SecurityHeader({ screen: "radar", action: door });
+         var traced = SecurityHeader({ screen: "radar", title: "Trace a secret" });
          return {
-           buttons: __nodes(plain, "button", [], 0).map(function (n) { return String(n.props.className); }),
+           door: String(door.props.className),
+           kids: __nodes(withDoor, "TraceSecretBar", [], 0).length + __nodes(withDoor, "button", [], 0).length,
            title: String(__nodes(traced, "h1", [], 0).map(function (n) { return n.kids; })),
          };
        })()`,
       ctx as object,
       { filename: "security head" },
-    ) as { buttons: string[]; title: string };
-    expect(head.buttons.filter((c) => c.includes("trace"))).toHaveLength(0);
+    ) as { door: string; kids: number; title: string };
+    expect(head.door).toBe("tracebar pronounced");
+    expect(head.kids).toBeGreaterThan(0);
     expect(head.title).toBe("Trace a secret");
+    const app = readFileSync(new URL("app.jsx", rendererDir), "utf8");
+    expect(app).toContain('<TraceSecretBar pronounced onOpen={() => openTrace("")} />');
     const radar = (trace: string) =>
       `RadarScreen({ state: __state, onOpenSession: ${noop}, onGoRules: ${noop}, onGoIntegrations: ${noop}, onGoSettings: ${noop}, ruleFilter: "all", ruleNonce: 0, trace: ${trace}, onTraceClose: ${noop}, onTrace: ${noop} })`;
     for (const s of [populatedState(), blankState()]) {
       ctx.__state = s;
       const count = (name: string, trace: string) =>
         (runInContext(`__nodes(${radar(trace)}, ${JSON.stringify(name)}, [], 0)`, ctx as object, { filename: name }) as unknown[]).length;
-      // At rest: the bar, no page. Opened: the page, no bar, no feed.
-      expect(count("TraceSecretBar", "null")).toBe(1);
+      // At rest: no page (the door is the title row's). Opened: the page, no feed.
+      expect(count("TraceSecretBar", "null")).toBe(0);
       expect(count("TraceSecretView", "null")).toBe(0);
       expect(count("TraceSecretView", `{ seed: ${JSON.stringify(KEY)}, nonce: 7 }`)).toBe(1);
-      expect(count("TraceSecretBar", `{ seed: "", nonce: 1 }`)).toBe(0);
       expect(count("FindingGroup", `{ seed: "", nonce: 1 }`)).toBe(0);
     }
-    // The door sits above the feed, on its own. It used to hang off
-    // the foot of the exposures-needing-review card; that card and the two
-    // beside it are gone, and the bar is a CONTROL rather than a summary, so
-    // it kept its place while they lost theirs.
+    // The summary cards stay gone; the door moved up to the title row, and the
+    // Overview carries none (it is the Radar's).
     const radarSrc = readFileSync(new URL("screens/radar.jsx", rendererDir), "utf8");
     expect(radarSrc).not.toMatch(/className="herocard"/);
     expect(radarSrc).not.toMatch(/title="By priority"/);
-    expect(radarSrc.indexOf("<TraceSecretBar")).toBeLessThan(radarSrc.indexOf('className="filterbar radar-filters"'));
+    expect(radarSrc).not.toMatch(/<TraceSecretBar/);
+    const overviewSrc = readFileSync(new URL("screens/overview.jsx", rendererDir), "utf8");
+    expect(overviewSrc).not.toMatch(/<TraceSecretBar/);
+    // …and the Overview's title row carries its count the same way.
+    expect(overviewSrc).not.toMatch(/<ActiveCount state/);
+    expect(app).toContain('<ActiveCount state={state} onGoRadar={openRadar} />');
     // The menus reach it: the tray and the app menu both carry the door.
     const tray = readFileSync(new URL("main/tray.ts", root), "utf8");
     const menu = readFileSync(new URL("main/menu.ts", root), "utf8");

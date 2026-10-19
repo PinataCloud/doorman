@@ -385,8 +385,8 @@ describe("radar feed paging and the three-screen security split", () => {
     expect(radar).not.toMatch(/title="What's waiting"/);
     expect(radar).not.toMatch(/PostureFacts/);
     expect(radar).not.toMatch(/title="Needs attention"/);
-    // Then the trace door and the filter row, as before.
-    expect(radar).toMatch(/<TraceSecretBar/);
+    // Then the filter row; the trace door is the title row's now (app.jsx).
+    expect(radar).not.toMatch(/<TraceSecretBar/);
     expect(radar).toMatch(/className="filterbar radar-filters"/);
   });
 

@@ -4,13 +4,12 @@
    Security opened on the Radar: a list that is either empty or overwhelming,
    with no route from "something happened in a session" to "here is the
    session". This screen is that route, and nothing else. It holds THREE
-   things and deliberately no fourth:
+   things and deliberately no third — Trace a secret is the Radar's:
 
      1. the agents running RIGHT NOW, each with the exposures currently open
         against it — the Ledger's live rail, read for what it means rather
         than what it costs;
-     2. Trace a secret, the app's existing control, compact at the top right;
-     3. recent sessions that had something flagged, each opening to its own
+     2. recent sessions that had something flagged, each opening to its own
         exposures — plus a quiet line for the sessions that had nothing, which
         is the part that says the quiet is real rather than unmeasured.
 
@@ -23,25 +22,15 @@
    with its own filters and its own idea of what is open, is the thing this
    page exists to avoid. */
 
-function OverviewScreen({ state, onGoRadar, onOpenSession, onTraceSecret }) {
+function OverviewScreen({ state, onGoRadar, onOpenSession }) {
   return (
     <div>
-      {/* The title row is SecurityHeader's — see app.jsx.
-
-          One row above the sessions: Trace a secret at the left, the
-          active-exposure count at the right. The count is `summary.open_exposures`
-          — the very field the sidebar badge, the menu bar and the Radar's
-          own hero print — so a fourth copy here cannot disagree with the
-          other three; it is the answer to "is anything open?" before the
-          reader scans a single row, and a click lands on the Radar. Trace a
-          secret is a control, not a report — the one thing on this page you
-          act WITH — and as a full card it was a paragraph explaining a
-          button. The compact bar is the same one the Radar wears. */}
-      <div className="tracebar-row">
-        <TraceSecretBar compact onOpen={onTraceSecret} />
-        <span className="spacer" />
-        <ActiveCount state={state} onGoRadar={onGoRadar} />
-      </div>
+      {/* The title row is SecurityHeader's — see app.jsx — and carries the
+          active-exposure count at its right, as the Radar's carries Trace a
+          secret. It is `summary.open_exposures` — the very field the sidebar
+          badge, the menu bar and the Radar's own hero print — so a fourth
+          copy cannot disagree with the other three; it answers "is anything
+          open?" before the reader scans a row, and a click lands on the Radar. */}
 
       <ActiveSessions state={state} onGoRadar={onGoRadar} onOpenSession={onOpenSession} />
 

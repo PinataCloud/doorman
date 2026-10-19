@@ -253,7 +253,17 @@ function App() {
         <div className="drag-edge drag-edge-r" />
         <div className="drag-edge drag-edge-b" />
         {SECURITY_SCREENS.includes(screen) ? (
-          <SecurityHeader screen={screen} title={screen === "radar" && trace ? "Trace a secret" : undefined} />
+          <SecurityHeader
+            screen={screen}
+            title={screen === "radar" && trace ? "Trace a secret" : undefined}
+            action={
+              screen === "radar" && !trace ? (
+                <TraceSecretBar pronounced onOpen={() => openTrace("")} />
+              ) : screen === "overview" ? (
+                <ActiveCount state={state} onGoRadar={openRadar} />
+              ) : null
+            }
+          />
         ) : null}
         {screen === "spend" ? <GraphsScreen state={state} onOpenTask={openTask} /> : null}
         {screen === "ledger" ? (
@@ -271,12 +281,7 @@ function App() {
           />
         ) : null}
         {screen === "overview" ? (
-          <OverviewScreen
-            state={state}
-            onGoRadar={openRadar}
-            onOpenSession={openSession}
-            onTraceSecret={() => openTrace(null)}
-          />
+          <OverviewScreen state={state} onGoRadar={openRadar} onOpenSession={openSession} />
         ) : null}
         {screen === "radar" ? (
           <RadarScreen
@@ -502,10 +507,12 @@ function ProtectionMarkBadge({ protection }) {
   );
 }
 
-function SecurityHeader({ screen, title }) {
+function SecurityHeader({ screen, title, action }) {
   return (
     <div className="screen-head sechead">
       <h1>{title || SECURITY_TITLES[screen] || "Security"}</h1>
+      {action ? <span className="spacer" /> : null}
+      {action || null}
     </div>
   );
 }

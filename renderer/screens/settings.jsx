@@ -479,60 +479,61 @@ function UpdatesCard({ state, checkNonce }) {
         : u.message || "Checked hourly for a newer version.";
 
   return (
-    <div ref={box}>
-      <Card title="Updates">
-        <div className="setting">
-          <div className="what">
-            <div className="t">Version {state.appVersion}</div>
-            <div className={"d" + (u.outdated && !answered ? " warn" : "")}>
-              {line}
-              {u.checked_at && !checking ? <span className="upd-when">{" · Last checked " + relTime(u.checked_at)}</span> : null}
-            </div>
+    <Card title="Updates">
+      {/* The scroll target for the app menu's Check for Updates… — inside the
+          card, because a wrapper would break the `.card + .card` spacing. */}
+      <span ref={box} aria-hidden="true" />
+      <div className="setting">
+        <div className="what">
+          <div className="t">Version {state.appVersion}</div>
+          <div className={"d" + (u.outdated && !answered ? " warn" : "")}>
+            {line}
+            {u.checked_at && !checking ? <span className="upd-when">{" · Last checked " + relTime(u.checked_at)}</span> : null}
           </div>
-          {u.status === "downloaded" || u.status === "installing" ? (
-            <button className="btn primary" onClick={() => window.doorman.installUpdate()}>
-              Update now
-            </button>
-          ) : (
-            <div className="upd-actions">
-              {answered ? (
-                <span className={"upd-answer " + answer.kind} role="status" aria-live="polite">
-                  <span className="upd-ic" aria-hidden="true">{answer.icon}</span>
-                  {answer.label}
-                </span>
-              ) : null}
-              <button className="btn" disabled={checking || u.status === "downloading"} aria-busy={checking} onClick={run}>
-                {checking
-                  ? [<span key="s" className="spinner" aria-hidden="true" />, "Checking…"]
-                  : u.status === "downloading"
-                    ? percent + "%"
-                    : answered && answer.kind === "bad"
-                      ? "Try again"
-                      : "Check for updates"}
-              </button>
-            </div>
-          )}
         </div>
-        {/* Download progress: the same meter primitive the charts use, one
-            segment wide. A finished download installs itself, so the bar's end
-            state is the restart, not a button. */}
-        {u.status === "downloading" || u.status === "downloaded" || u.status === "installing" ? (
-          <div className="setting" style={{ paddingTop: 0 }}>
-            <div className="what" style={{ width: "100%" }}>
-              <div className="meter" style={{ height: 6 }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
-                <span className="mp" style={{ width: Math.max(2, percent) + "%", background: "var(--c1)", transition: "width 300ms ease" }} />
-              </div>
-              {u.progress && u.progress.total > 0 && u.status === "downloading" ? (
-                <div className="d" style={{ marginTop: "var(--s2)" }}>
-                  {(u.progress.transferred / 1e6).toFixed(0)} of {(u.progress.total / 1e6).toFixed(0)} MB
-                  {u.progress.bytes_per_second > 0 ? " · " + (u.progress.bytes_per_second / 1e6).toFixed(1) + " MB/s" : ""}
-                </div>
-              ) : null}
-            </div>
+        {u.status === "downloaded" || u.status === "installing" ? (
+          <button className="btn primary" onClick={() => window.doorman.installUpdate()}>
+            Update now
+          </button>
+        ) : (
+          <div className="upd-actions">
+            {answered ? (
+              <span className={"upd-answer " + answer.kind} role="status" aria-live="polite">
+                <span className="upd-ic" aria-hidden="true">{answer.icon}</span>
+                {answer.label}
+              </span>
+            ) : null}
+            <button className="btn" disabled={checking || u.status === "downloading"} aria-busy={checking} onClick={run}>
+              {checking
+                ? [<span key="s" className="spinner" aria-hidden="true" />, "Checking…"]
+                : u.status === "downloading"
+                  ? percent + "%"
+                  : answered && answer.kind === "bad"
+                    ? "Try again"
+                    : "Check for updates"}
+            </button>
           </div>
-        ) : null}
-      </Card>
-    </div>
+        )}
+      </div>
+      {/* Download progress: the same meter primitive the charts use, one
+          segment wide. A finished download installs itself, so the bar's end
+          state is the restart, not a button. */}
+      {u.status === "downloading" || u.status === "downloaded" || u.status === "installing" ? (
+        <div className="setting" style={{ paddingTop: 0 }}>
+          <div className="what" style={{ width: "100%" }}>
+            <div className="meter" style={{ height: 6 }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+              <span className="mp" style={{ width: Math.max(2, percent) + "%", background: "var(--c1)", transition: "width 300ms ease" }} />
+            </div>
+            {u.progress && u.progress.total > 0 && u.status === "downloading" ? (
+              <div className="d" style={{ marginTop: "var(--s2)" }}>
+                {(u.progress.transferred / 1e6).toFixed(0)} of {(u.progress.total / 1e6).toFixed(0)} MB
+                {u.progress.bytes_per_second > 0 ? " · " + (u.progress.bytes_per_second / 1e6).toFixed(1) + " MB/s" : ""}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </Card>
   );
 }
 

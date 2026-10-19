@@ -486,16 +486,9 @@ function RadarScreen({
           the severities are a filter, and the Overview answers "how am I
           doing" for the whole section.
 
-          Trace a secret keeps its place — it is a control, not a summary. */}
-      {/* Trace a secret: the same compact bar, in the same place, as the
-          Overview — small, top right, above the cards. It is a control, not
-          a summary, and a full-width bar here read as a second header. */}
-      {onTrace ? (
-        <div className="tracebar-row">
-          <span className="spacer" />
-          <TraceSecretBar compact onOpen={() => onTrace("")} />
-        </div>
-      ) : null}
+          Trace a secret moved up to the title row — a control, not a summary. */}
+      {/* Trace a secret is on the title row (app.jsx SecurityHeader): the
+          Radar's one action, level with its name rather than a row of its own. */}
 
       {/* HOW MANY ARE ACTIVE — the one summary above the feed, back by
           request: the open count as a figure, its 14-day shape, and its

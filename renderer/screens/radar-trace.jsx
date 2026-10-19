@@ -192,17 +192,24 @@ function shortPathLabel(path) {
 /* The door on the Radar: one row under the hero, shaped like the field it
    leads to. Any interaction opens the sub page, where the real input takes
    focus — the Radar itself stays a triage screen with nothing to type into. */
-function TraceSecretBar({ onOpen, compact }) {
+function TraceSecretBar({ onOpen, compact, pronounced }) {
+  const short = compact || pronounced;
   return (
     <button
       type="button"
-      className={"tracebar" + (compact ? " compact" : "")}
+      className={"tracebar" + (compact ? " compact" : "") + (pronounced ? " pronounced" : "")}
       onClick={onOpen}
-      title={compact ? "Paste a key, token or password and see everywhere an AI tool on this Mac has touched it" : undefined}
+      title={short ? "Paste a key, token or password and see everywhere an AI tool on this Mac has touched it" : undefined}
     >
-      <Icon name="key" size={14} />
+      {pronounced ? (
+        <span className="tracebar-ic" aria-hidden="true">
+          <Icon name="key" size={14} />
+        </span>
+      ) : (
+        <Icon name="key" size={14} />
+      )}
       <span className="tracebar-label">Trace a secret</span>
-      {compact ? null : (
+      {short ? null : (
         <span className="tracebar-hint">Paste a key, token or password and see everywhere an AI tool on this Mac has touched it</span>
       )}
       <Icon className="tracebar-go" name="chevron" size={13} strokeWidth={2} />
