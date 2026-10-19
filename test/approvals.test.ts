@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,10 +7,12 @@ import {
   appListening,
   clearExchange,
   heartbeatFresh,
+  heartbeatLive,
   heartbeatPath,
   holdForVerdict,
   parseRequest,
   pendingDir,
+  pidAlive,
   readReply,
   replyPath,
   requestPath,
@@ -64,9 +67,9 @@ const request = (over: Partial<ApprovalRequest> = {}): ApprovalRequest => ({
 });
 
 /** Pretend the app is up, without running the interval. */
-function beat(at = new Date().toISOString()): void {
+function beat(at = new Date().toISOString(), pid = process.pid): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(heartbeatPath(dir), JSON.stringify({ at, pid: process.pid }));
+  writeFileSync(heartbeatPath(dir), JSON.stringify({ at, pid }));
 }
 
 /** The app's side of a hold whose id the test doesn't know (it's a fresh uuid). */
@@ -115,6 +118,30 @@ describe("heartbeat", () => {
     // This is the "no human, no hold" gate: a guard spawned now falls through
     // to Claude Code's own prompt instead of waiting out the window.
     expect(appListening(dir)).toBe(false);
+  });
+
+  it("is not live once the process that wrote it is gone, however fresh", () => {
+    // Found on Windows: a `doorman watch` killed with Stop-Process gets no
+    // cleanup, so its last heartbeat stays on disk and is fresh for up to 45s
+    // more — and every guard spawned in that window held its call for nobody.
+    // A child that has already exited gives a pid that is really gone.
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+    expect(dead).toBeGreaterThan(0);
+    expect(pidAlive(dead)).toBe(false);
+    const now = Date.now();
+    const fresh = new Date(now).toISOString();
+    expect(heartbeatLive(JSON.stringify({ at: fresh, pid: dead }), now)).toBe(false);
+    beat(fresh, dead);
+    expect(appListening(dir, now)).toBe(false);
+
+    // The same fresh heartbeat from a running process is someone to ask…
+    expect(heartbeatLive(JSON.stringify({ at: fresh, pid: process.pid }), now)).toBe(true);
+    beat(fresh, process.pid);
+    expect(appListening(dir, now)).toBe(true);
+    // …but a live pid doesn't revive an old one (pids are reused), and a
+    // heartbeat that names no process names nobody.
+    expect(heartbeatLive(JSON.stringify({ at: new Date(now - 60_000).toISOString(), pid: process.pid }), now)).toBe(false);
+    expect(heartbeatLive(JSON.stringify({ at: fresh }), now)).toBe(false);
   });
 });
 

@@ -481,6 +481,9 @@ async function main(): Promise<void> {
           detectors: decision.detectors,
           resolution: heldResolution,
           policy,
+          // An unheld ask with nobody listening must not tell the agent the
+          // user is being asked in Doorman (remedy.ts).
+          appListening: listening,
         });
   if (identity) {
     writeDedup(guardDir, host.id, identity, {

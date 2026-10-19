@@ -24,7 +24,7 @@
 
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { heartbeatFresh, heartbeatPath } from "../guard/handshake.js";
+import { heartbeatFresh, heartbeatPath, pidAlive } from "../guard/handshake.js";
 
 export interface LockRecord {
   pid: number;
@@ -50,17 +50,6 @@ export function locksDir(userDataDir: string): string {
 
 export function lockPath(userDataDir: string, name: LockName): string {
   return join(locksDir(userDataDir), `${name}.json`);
-}
-
-export function pidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM: alive, just not ours to signal.
-    return (err as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 function readRecord(path: string): LockRecord | undefined {

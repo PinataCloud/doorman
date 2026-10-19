@@ -57,6 +57,25 @@ describe("agent-facing reason", () => {
     expect(asking).toContain("wait for their answer rather than working around it");
   });
 
+  it("doesn't send the agent waiting on Doorman when nobody is there to ask", () => {
+    // Found on Windows: with the app closed and no `doorman watch`, Claude Code
+    // was handed the `ask` and the agent read "asking you in Doorman" — but the
+    // only thing that could answer was Claude Code's own prompt.
+    const base = { decision: "ask" as const, reason: "R.", detectors: ["infra_mutation"] };
+    const attended = agentFacingReason({ ...base, appListening: true });
+    expect(attended).toBe(agentFacingReason(base));
+    expect(attended).toContain("The user is being asked in Doorman");
+    for (const unattended of [
+      agentFacingReason({ ...base, appListening: false }),
+      // The app vanished mid-hold and the question went back to the host.
+      agentFacingReason({ ...base, appListening: true, resolution: "unattended" }),
+    ]) {
+      expect(unattended).not.toContain("The user is being asked in Doorman");
+      expect(unattended).toContain("Doorman is not running");
+      expect(unattended).toContain("your own permission prompt");
+    }
+  });
+
   it("falls back to the generic line for a custom or unknown rule, and never throws", () => {
     expect(remedyFor(["custom:no-prod-deploys"])).toMatch(/^Do not retry the same call/);
     expect(remedyFor([])).toMatch(/^Do not retry the same call/);
