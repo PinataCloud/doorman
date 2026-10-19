@@ -40,6 +40,7 @@ import { DEFAULT_HOST, HOSTS, documentReadable } from "./guard/hosts/index.js";
 import { hermesHome, hermesHost, withoutLegacyAllowlistEntries } from "./guard/hosts/hermes.js";
 import type { GuardHostDescriptor, HostArtifact } from "./guard/hosts/types.js";
 import { buildInfo } from "./lib/build-info.js";
+import { LAUNCHER, launcherHash, launcherOnDiskHash, nodeCommandPrefix, readRuntimes, usesLauncher, writeLauncher } from "./lib/node-launcher.js";
 import { assessGuardIntegrity, type GuardIntegrityReport } from "./lib/guard-integrity.js";
 import {
   heartbeatPath,
@@ -134,6 +135,16 @@ export function writeDocumentAtomically(path: string, text: string): void {
 }
 
 export function guardCommand(userDataDir: string, host: string = DEFAULT_HOST.id): string {
+  // Not a bare `node`: the launcher beside the guard runs it on a runtime
+  // Doorman knows is here (lib/node-launcher.ts).
+  const base = `${nodeCommandPrefix(guardDir(userDataDir))} "${join(guardDir(userDataDir), "guard.js")}"`;
+  return host === DEFAULT_HOST.id ? base : `${base} --host ${host}`;
+}
+
+/** The command builds before the launcher wrote — still a working guard
+ * wherever `node` is on the PATH, so not reported as tampering; the next
+ * install (or app launch) rewrites it to guardCommand's. */
+function legacyGuardCommand(userDataDir: string, host: string): string {
   const base = `node "${join(guardDir(userDataDir), "guard.js")}"`;
   return host === DEFAULT_HOST.id ? base : `${base} --host ${host}`;
 }
@@ -368,6 +379,8 @@ function bundleWriter(): GuardBundleStamp["writer"] {
 export function refreshGuardBundle(userDataDir: string): boolean {
   const target = guardDir(userDataDir);
   mkdirSync(target, { recursive: true });
+  // This build's runtime goes into the launcher whoever's bundle stays.
+  writeLauncher(target);
   const own = buildInfo();
   const stamp = readGuardBundleStamp(userDataDir);
   if (stamp && stamp.revision > own.revision && stampIntact(userDataDir, stamp)) return false;
@@ -973,9 +986,18 @@ export function guardBundleHashes(userDataDir: string): {
   const target = guardDir(userDataDir);
   // Another build's: a different revision. A stamp claiming THIS revision
   // must match this build's own files, so it falls through to them.
+  // The launcher is checked like a bundle file once a build that writes it
+  // has run here: it must be exactly what its recorded runtimes render.
+  const launcher = (into: { shipped: Record<string, string>; copied: Record<string, string | undefined> }) => {
+    if (usesLauncher() && existsSync(join(target, "runtimes.json"))) {
+      into.shipped[LAUNCHER] = launcherHash(readRuntimes(target));
+      into.copied[LAUNCHER] = launcherOnDiskHash(target);
+    }
+    return into;
+  };
   const stamp = readGuardBundleStamp(userDataDir);
   if (stamp && stamp.revision !== buildInfo().revision && stampIntact(userDataDir, stamp)) {
-    return { shipped: { ...stamp.files }, copied: Object.fromEntries(Object.keys(stamp.files).map((f) => [f, fileHash(join(target, f))])) };
+    return launcher({ shipped: { ...stamp.files }, copied: Object.fromEntries(Object.keys(stamp.files).map((f) => [f, fileHash(join(target, f))])) });
   }
   const shipped: Record<string, string> = {};
   const copied: Record<string, string | undefined> = {};
@@ -987,7 +1009,7 @@ export function guardBundleHashes(userDataDir: string): {
     shipped[file] = hash;
     copied[file] = fileHash(join(target, file));
   }
-  return { shipped, copied };
+  return launcher({ shipped, copied });
 }
 
 /**
@@ -1023,7 +1045,10 @@ export function checkGuardIntegrity(
         expected_command: expected,
         unreadable,
         entry_present: state.installed,
-        entry_exact: !unreadable && state.installed && state.host.installed(state.doc, expected),
+        entry_exact:
+          !unreadable &&
+          state.installed &&
+          (state.host.installed(state.doc, expected) || state.host.installed(state.doc, legacyGuardCommand(userDataDir, state.host.id))),
         // The two halves the marker cannot see: a plugin host's files beside
         // the document, and a companion document's consent entry. Compared
         // against exactly what installGuard would write, so "would a

@@ -23,6 +23,7 @@
  */
 
 
+import { nodeCommandPrefix } from "./node-launcher.js";
 import { dirname, join } from "node:path";
 import { DEFAULT_HOST, HOSTS, documentReadable } from "../guard/hosts/index.js";
 import type { GuardHostDescriptor } from "../guard/hosts/types.js";
@@ -358,7 +359,7 @@ function guardChecks(input: DoctorInput): DoctorCheck[] {
   const commandFor =
     input.guardCommandFor ??
     ((hostId: string) => {
-      const base = `node "${join(input.guardDir, "guard.js")}"`;
+      const base = `${nodeCommandPrefix(input.guardDir)} "${join(input.guardDir, "guard.js")}"`;
       return hostId === DEFAULT_HOST.id ? base : `${base} --host ${hostId}`;
     });
   const brokenArtifacts: string[] = [];

@@ -63,10 +63,11 @@
  *
  * RUNTIME. OpenCode runs plugins under Bun [1]; the plugin uses only
  * `node:child_process`, `node:fs`, `node:path`, `node:os` and `node:url`,
- * which Bun implements. The guard command begins with `node` — resolved
- * through the PATH OpenCode inherited; a machine where `node` is not on PATH
- * inside OpenCode gets a spawn error, which is a silent allow (rule 1). The
- * doctor cannot see this; a live run is what closes it.
+ * which Bun implements. The guard command starts Doorman's launcher
+ * (lib/node-launcher.ts), which runs the guard on a runtime Doorman recorded
+ * rather than the PATH OpenCode inherited. A launcher that went missing would
+ * be a spawn error, which is a silent allow (rule 1) — the integrity check
+ * reports that one as bundle drift and re-writes it.
  *
  * FAILURE SEMANTICS. A hook that throws blocks ([4]); anything else the plugin
  * does — a guard spawn error, a timeout, unparseable stdout, a non-zero exit —
