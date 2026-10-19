@@ -8,42 +8,6 @@
   font-weight: 100 900; font-style: normal; font-display: swap;
 }
 
-@font-face {
-  font-family: "ABC Diatype";
-  src: url("_asset/fonts/ABCDiatypeVariable.ttf") format("truetype");
-  font-weight: 100 900; font-style: normal; font-display: swap;
-}
-
-@font-face {
-  font-family: "ABC Diatype Mono";
-  src: url("_asset/fonts/ABCDiatypeMonoVariable.ttf") format("truetype");
-  font-weight: 100 900; font-style: normal; font-display: swap;
-}
-
-@font-face {
-  font-family: "ABC Diatype Extended";
-  src: url("_asset/fonts/ABCDiatypeExtended-Light.otf") format("opentype");
-  font-weight: 300; font-style: normal; font-display: swap;
-}
-
-@font-face {
-  font-family: "ABC Diatype Extended";
-  src: url("_asset/fonts/ABCDiatypeExtended-Regular.otf") format("opentype");
-  font-weight: 400; font-style: normal; font-display: swap;
-}
-
-@font-face {
-  font-family: "ABC Diatype Extended";
-  src: url("_asset/fonts/ABCDiatypeExtended-Medium.otf") format("opentype");
-  font-weight: 500 650; font-style: normal; font-display: swap;
-}
-
-@font-face {
-  font-family: "ABC Diatype Extended";
-  src: url("_asset/fonts/ABCDiatypeExtended-Bold.otf") format("opentype");
-  font-weight: 700 900; font-style: normal; font-display: swap;
-}
-
 :root {
   /* Surfaces — Pinata white: white canvas and cards, a faint violet recess. */
   --linen:        #FFFFFF;  /* app background */
@@ -184,10 +148,12 @@
   --c-other: #8A8172;
 
   /* Type */
-  --display: "ABC Diatype Extended", "Hanken Grotesk", system-ui, sans-serif;
-  --serif: "Hanken Grotesk", "ABC Diatype", system-ui, -apple-system, sans-serif;
-  --sans:  "Hanken Grotesk", "ABC Diatype", system-ui, -apple-system, sans-serif;
-  --mono:  "ABC Diatype Mono", "SFMono-Regular", ui-monospace, monospace;
+  --display: "Hanken Grotesk", system-ui, sans-serif;
+  --serif: "Hanken Grotesk", system-ui, -apple-system, sans-serif;
+  --sans:  "Hanken Grotesk", system-ui, -apple-system, sans-serif;
+  /* The platform's own monospace (SF Mono, Consolas, Liberation/DejaVu Mono)
+     rather than a bundled face: nothing to license or ship. */
+  --mono:  ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
 
   /* ---- Type scale: one ratio, φ^(1/3) = 1.1746, base 15px ----
      φ itself is a poster ratio — far too violent per step for a dense data

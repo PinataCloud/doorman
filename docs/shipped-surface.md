@@ -33,7 +33,7 @@ Doorman.app/Contents/
     icon.icns                from assets/doorman-app-icon.png
     assets/                  served to the renderer under the _asset/ prefix
       doorman-mark-512.png
-      fonts/                 Hanken Grotesk, ABC Diatype (see Licensing)
+      fonts/                 Hanken Grotesk (see Licensing)
       vendor/react.js, react-dom.js
     runtime/onnxruntime-web/ the WASM runtime the injection classifier runs on
     vscode/doorman.vsix      the VS Code companion, installed by path
@@ -127,7 +127,6 @@ copyright Pinata Technologies Inc.
 | onnxruntime-web 1.29.0 WASM runtime | MIT |
 | React, React DOM (`assets/vendor`) | MIT |
 | Hanken Grotesk | SIL Open Font License 1.1 (`assets/fonts/HankenGrotesk-OFL.txt` ships beside it) |
-| **ABC Diatype, ABC Diatype Mono, ABC Diatype Extended** | **Commercial (Dinamo). Redistribution in an app needs a licence that covers it — confirm before any build is distributed, or replace the family.** |
 | The Doorman mark and app icon | Pinata's own |
 
 The classifier models are data the app downloads on demand, never part of the

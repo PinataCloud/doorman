@@ -340,10 +340,9 @@ outputs are committed) writes:
 `scripts/make-icons.mjs` then slices the `.icns` and the Linux/Windows PNG
 from the app icon on every build.
 
-**Fonts.** Hanken Grotesk ships under the SIL OFL (`assets/fonts/HankenGrotesk-OFL.txt`).
-ABC Diatype (Variable, Mono and Extended) is a commercial typeface that is
-currently included and shipped inside the app. Its licence for this product
-needs to be confirmed before any build is distributed.
+**Fonts.** Hanken Grotesk ships under the SIL OFL (`assets/fonts/HankenGrotesk-OFL.txt`)
+and is the only bundled typeface. Monospace text uses the platform's own
+monospace font.
 
 ## License
 
