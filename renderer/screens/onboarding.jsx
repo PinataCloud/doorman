@@ -283,8 +283,8 @@ function OnboardingTools({ state }) {
           {tools.length === 0
             ? "No AI tools found yet"
             : tools.length === 1
-              ? "We found 1 AI tool on this Mac"
-              : "We found " + tools.length + " AI tools on this Mac"}
+              ? "We found 1 AI tool on this computer"
+              : "We found " + tools.length + " AI tools on this computer"}
         </h1>
         <p>
           {tools.length === 0
@@ -349,7 +349,7 @@ function OnboardingWatching({ state, pending, onSet }) {
           <h1>Doorman will be watching</h1>
           <p>
             From now on it keeps a record of what your AI tools do and flags anything risky. It all stays on
-            this Mac.
+            this computer.
           </p>
         </div>
       </div>
@@ -402,7 +402,7 @@ function OnboardingDone({ state }) {
             : "We’ll keep an eye on " +
               (s.watching === 1 ? "1 tool" : s.watching + " tools") +
               "."}
-          {" Nothing leaves this Mac."}
+          {" Nothing leaves this computer."}
         </p>
       </div>
       <div className="onb-fact">

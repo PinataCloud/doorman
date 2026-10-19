@@ -116,7 +116,7 @@ export const DETECTION_SCHEMA: JsonSchema = {
   $id: DETECTION_SCHEMA_ID,
   title: "Doorman detection",
   description:
-    "One Security Radar finding on this Mac: which rule fired, how sure it was, the mode it was in, what enforcement did, when, where, and the masked evidence.",
+    "One Security Radar finding on this computer: which rule fired, how sure it was, the mode it was in, what enforcement did, when, where, and the masked evidence.",
   type: "object",
   required: [
     "schema_version",
@@ -185,7 +185,7 @@ export const DETECTION_SCHEMA: JsonSchema = {
     turn_id: str("The ledger turn it sits under."),
     source_turn_id: str("Session-flow rows: the turn where the flow began."),
     source_at: time("Session-flow rows: when the flow began."),
-    burned_usd: { type: "number", minimum: 0, description: "agent_loop only: what the repeated turns cost, priced on this Mac (an estimate; the app shows tokens instead)." },
+    burned_usd: { type: "number", minimum: 0, description: "agent_loop only: what the repeated turns cost, priced on this computer (an estimate; the app shows tokens instead)." },
     burned_tokens: { type: "integer", minimum: 0, description: "agent_loop only: input+output tokens the repeated turns burned — the figure the app shows." },
     config_host: str("Config rows: the app whose config file this is."),
     cwd: str("The call's working directory."),
@@ -237,7 +237,7 @@ export const DETECTIONS_EXPORT_SCHEMA: JsonSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: DETECTIONS_EXPORT_SCHEMA_ID,
   title: "Doorman detections export",
-  description: "Every detection the Security Radar shows on this Mac, with the rules that raised them. Masked: no raw values.",
+  description: "Every detection the Security Radar shows on this computer, with the rules that raised them. Masked: no raw values.",
   type: "object",
   required: ["schema", "schema_version", "generated_at", "app_version", "detectors", "detections"],
   additionalProperties: false,

@@ -903,7 +903,7 @@ function TurnBubble({ turn, ordinal, inRun }) {
               title={
                 value != null
                   ? "Click to mask it again"
-                  : "Reveal this value in place — read from this Mac just now, never stored"
+                  : "Reveal this value in place — read from this computer just now, never stored"
               }
               onClick={toggleMark(ord)}
               onKeyDown={(ev) => (ev.key === "Enter" || ev.key === " " ? toggleMark(ord)(ev) : null)}
@@ -932,7 +932,7 @@ function TurnBubble({ turn, ordinal, inRun }) {
           <button
             className={"revealbtn" + (showFull ? " on" : "")}
             onClick={toggleFull}
-            title="Secrets in this turn are redacted on screen — click a redaction to reveal just that value, or view the whole raw text. Read from this Mac, shown here only."
+            title="Secrets in this turn are redacted on screen — click a redaction to reveal just that value, or view the whole raw text. Read from this computer, shown here only."
           >
             {showFull ? "HIDE RAW" : "REDACTED · VIEW RAW"}
           </button>

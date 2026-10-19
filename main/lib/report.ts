@@ -130,7 +130,7 @@ export function buildSecurityReport(inputs: ReportInputs): SecurityReport {
   return {
     generated_at: inputs.generated_at.toISOString(),
     app_version: inputs.app_version,
-    generator: inputs.generator ?? "Doorman for Mac",
+    generator: inputs.generator ?? "Doorman",
     posture: {
       guard_installed: inputs.guard_installed,
       integrity: inputs.integrity?.status ?? "unchecked",
@@ -273,7 +273,7 @@ export function renderSecurityReportMarkdown(report: SecurityReport): string {
     `- ${report.mcp.servers} servers · ${report.mcp.recognized} recognized (${report.mcp.stale_recognitions} stale) · ${report.mcp.gatewayed} routed through the gateway · ${report.mcp.with_open_poisoning} with open poisoning findings · ${report.mcp.changed_descriptions} tool descriptions changed after first sight`,
   );
   lines.push("");
-  lines.push("## Other AI on this Mac");
+  lines.push("## Other AI on this computer");
   lines.push("");
   lines.push(
     `- ${report.shadow_ai.installed} installed · ${report.shadow_ai.guarded} guarded · ${report.shadow_ai.metered_only} metered only · ${report.shadow_ai.outside_guard} outside the guard (${report.shadow_ai.active_outside_guard} active)`,
