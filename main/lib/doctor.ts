@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { DEFAULT_HOST, HOSTS, documentReadable } from "../guard/hosts/index.js";
 import type { GuardHostDescriptor } from "../guard/hosts/types.js";
 import { stripJsonc } from "../guard/jsonc.js";
+import { carriesGuardMarker } from "../guard/policy.js";
 import {
   COPILOT_HOOKS_LOCATION,
   VSCODE_VARIANTS,
@@ -340,7 +341,7 @@ function guardChecks(input: DoctorInput): DoctorCheck[] {
       }
       continue;
     }
-    if (!h.doc.includes(input.guardCommandMarker)) missing.push(h.name);
+    if (!carriesGuardMarker(h.doc, input.guardCommandMarker)) missing.push(h.name);
   }
   out.push(...docChecks);
   if (unreadable.length > 0) {
@@ -366,7 +367,7 @@ function guardChecks(input: DoctorInput): DoctorCheck[] {
   const brokenCompanions: string[] = [];
   let auxiliaryHosts = 0;
   for (const h of hosts) {
-    if (!h.present || h.doc === undefined || !documentReadable(h.host, h.doc) || !h.doc.includes(input.guardCommandMarker)) continue;
+    if (!h.present || h.doc === undefined || !documentReadable(h.host, h.doc) || !carriesGuardMarker(h.doc, input.guardCommandMarker)) continue;
     const artifacts = h.host.artifacts?.(input.home, env) ?? [];
     const companions = h.host.companions ?? [];
     if (artifacts.length === 0 && companions.length === 0) continue;
