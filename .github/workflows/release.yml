@@ -219,8 +219,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run compile && npm run renderer:min
+      # BCJ for every payload entry: electron-builder's 7-Zip otherwise packs
+      # ARM64 executables with its ARM64 filter, which the installer's Nsis7z
+      # can't decode, so Windows on ARM got no Doorman.exe (0.4.0).
       - name: Build
+        env:
+          ELECTRON_BUILDER_7Z_FILTER: BCJ
         run: npx electron-builder --win --publish never
+      # Both architectures' payloads, checked as the installer will read them;
+      # the launch below only exercises x64 (the runner's own).
+      - name: Verify the installer payloads
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($exe in Get-ChildItem dist/Doorman-Setup-*.exe) {
+            node scripts/verify-win-installer.mjs $exe.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Launch the packaged app
         shell: pwsh
         run: |
