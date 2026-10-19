@@ -10,8 +10,9 @@ build dependencies, so nothing in CI or in the app needs Python):
                                    VS Code extension's icon
   assets/doorman-app-icon.png      the app icon: the mark on a white tile,
                                    full-bleed 1024 px — scripts/make-icons.mjs
-                                   slices the .icns and the Linux/Windows PNG
-                                   from it
+                                   slices the .icns and the Linux PNG from it
+  assets/doorman-app-icon-win.png  the Windows icon: the mark itself, ringed in
+                                   white, no tile — see win_icon()
   main/lib/tray-mask.ts            the mark's silhouette as an alpha mask, which
                                    main/lib/tray-glyph.ts samples into the
                                    menu-bar template image
@@ -31,7 +32,7 @@ from pathlib import Path
 
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 MASTER = ROOT / "assets" / "doorman-logo.png"
@@ -70,6 +71,25 @@ def app_icon(mark: Image.Image, size: int = 1024) -> Image.Image:
     m = mark.resize((inner, inner), Image.LANCZOS)
     tile.alpha_composite(m, ((size - inner) // 2, (size - inner) // 2))
     return tile
+
+
+def win_icon(mark: Image.Image, size: int = 1024) -> Image.Image:
+    """The mark edge to edge, ringed in white, on a transparent square. Windows
+    draws app icons as shapes at 16-32 px in the taskbar, title bar and Start
+    menu; the white tile made a full-bleed white square there with the llama
+    an 11 px speck inside it. The ring is what keeps the black jacket and cap
+    readable on a dark taskbar."""
+    pad = round(size * 0.03)
+    inner = size - 2 * pad
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas.alpha_composite(mark.resize((inner, inner), Image.LANCZOS), (pad, pad))
+    solid = canvas.getchannel("A").point(lambda v: 255 if v > 40 else 0)
+    reach = round(size * 0.035)
+    ring = solid.filter(ImageFilter.MaxFilter(2 * reach + 1)).filter(ImageFilter.GaussianBlur(size / 512))
+    out = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    out.putalpha(ring)
+    out.alpha_composite(canvas)
+    return out
 
 
 def write_mask(mark: Image.Image) -> list[list[int]]:
@@ -139,6 +159,8 @@ def main() -> None:
     print("wrote assets/doorman-mark-512.png")
     app_icon(mark).save(ROOT / "assets" / "doorman-app-icon.png", optimize=True)
     print("wrote assets/doorman-app-icon.png")
+    win_icon(mark).save(ROOT / "assets" / "doorman-app-icon-win.png", optimize=True)
+    print("wrote assets/doorman-app-icon-win.png")
     write_font(write_mask(mark))
 
 

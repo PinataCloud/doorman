@@ -72,12 +72,14 @@ mac:
 dmg:
   title: Doorman ${version}
 win:
-  # The SAME full-bleed 512×512 PNG the Linux target uses, not the Apple-grid
-  # master — Windows draws its icons close to full-bleed too, so the padded
-  # variant would read small in the taskbar. electron-builder converts it to a
-  # multi-size .ico itself (app-builder-lib's iconConverter), so there is no
-  # .ico to generate or commit and no ImageMagick on the runner.
-  icon: build-resources/icon.png
+  # Its own art, not the tile the Mac and Linux use (scripts/make-brand.py
+  # win_icon): Windows draws app icons as shapes at 16-32 px, where the tile
+  # was a full-bleed white square with the llama a speck inside it. The mark
+  # fills the square, ringed in white so it reads on a dark taskbar.
+  # electron-builder converts the 1024 px PNG to a multi-size .ico itself
+  # (app-builder-lib's iconConverter), so there is no .ico to generate or
+  # commit and no ImageMagick on the runner.
+  icon: build-resources/icon-win.png
   # UNSIGNED, deliberately and visibly: there is no Authenticode credential in
   # this repo, so electron-builder logs that it skipped signing and SmartScreen
   # shows "Windows protected your PC" on first run until the binary accrues

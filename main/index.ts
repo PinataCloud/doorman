@@ -1264,8 +1264,18 @@ function createWindow(): BrowserWindow {
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
     show: false,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 14 },
+    // The inset title bar is macOS's. On Windows and Linux the window keeps
+    // its system frame, and the menu bar (Doorman · File · Edit · View …) is
+    // hidden: the sidebar is the app's navigation, and the menu stays only for
+    // its shortcuts (Ctrl+1…7, Ctrl+,), which work without the bar; Alt shows it.
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 14 } }
+      : { autoHideMenuBar: true }),
+    // A packaged Windows or Linux build takes its window icon from the exe /
+    // desktop entry; a dev run is Electron's own binary, so name it here.
+    ...(process.platform !== "darwin" && !app.isPackaged
+      ? { icon: join(assetRoot(), process.platform === "win32" ? "doorman-app-icon-win.png" : "doorman-app-icon.png") }
+      : {}),
     // Opaque: the sidebar is solid plum, so vibrancy would only show through
     // during load as a mismatched blur.
     backgroundColor: windowCanvas(),

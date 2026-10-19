@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Builds the app icons from the product's own mark: `icon.png` for Linux AND
-// Windows (every platform can write it) and `icon.icns` for macOS (macOS only).
+// Builds the app icons from the product's own mark: `icon.png` for Linux,
+// `icon-win.png` for Windows (both on every platform) and `icon.icns` for macOS
+// (macOS only).
 //
 // There is no .ico half. electron-builder converts `icon.png` to a multi-size
 // .ico itself when it packages the Windows target, so writing one here would be
@@ -35,11 +36,17 @@ const outDir = join(desktopRoot, "build-resources");
 const iconset = join(outDir, "icon.iconset");
 const icns = join(outDir, "icon.icns");
 const png = join(outDir, "icon.png");
+// Windows has its own art (make-brand.py win_icon): the mark ringed in white,
+// no tile — Windows draws app icons as shapes.
+const winSource = join(desktopRoot, "assets", "doorman-app-icon-win.png");
+const winPng = join(outDir, "icon-win.png");
 const paddedMaster = join(outDir, "icon-master.png");
 
-if (!existsSync(source)) {
-  console.error(`! brand mark not found at ${source}`);
-  process.exit(1);
+for (const required of [source, winSource]) {
+  if (!existsSync(required)) {
+    console.error(`! brand mark not found at ${required}`);
+    process.exit(1);
+  }
 }
 
 mkdirSync(outDir, { recursive: true });
@@ -51,7 +58,9 @@ mkdirSync(outDir, { recursive: true });
 // icon in a GNOME/KDE launcher or on the taskbar. The 1024 master is above
 // electron-builder's 512 minimum for a single-file Linux icon.
 copyFileSync(source, png);
-console.log(`✓ wrote ${png} (full-bleed, for Linux and Windows)`);
+console.log(`✓ wrote ${png} (full-bleed, for Linux)`);
+copyFileSync(winSource, winPng);
+console.log(`✓ wrote ${winPng} (the ringed mark, for Windows)`);
 
 if (process.platform !== "darwin") {
   console.log("• skipping the .icns build — sips/iconutil are macOS-only.");
