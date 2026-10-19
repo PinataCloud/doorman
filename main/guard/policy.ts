@@ -976,11 +976,17 @@ export function decideEnforcement(
 /** Substring that identifies OUR current hook entry, whatever path it was installed at. */
 export const GUARD_COMMAND_MARKER = "doorman/guard";
 
+/** Does `text` (a command, or a whole hook document) carry `marker`? Compared
+ * on forward slashes: on Windows the bundle path is written with backslashes,
+ * doubled again inside JSON text, and a plain substring check never matched
+ * our own entry there, so install appended instead of replacing and
+ * uninstall left it behind. */
+export function carriesGuardMarker(text: string, marker: string = GUARD_COMMAND_MARKER): boolean {
+  return text.replace(/\\+/g, "/").includes(marker);
+}
+
 export function isGuardCommand(command: unknown): command is string {
-  return (
-    typeof command === "string" &&
-    command.includes(GUARD_COMMAND_MARKER)
-  );
+  return typeof command === "string" && carriesGuardMarker(command);
 }
 
 interface HookHandler {

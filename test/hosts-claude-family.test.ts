@@ -57,6 +57,17 @@ describe("grouped JSON surgery", () => {
     expect(host.remove("{}\n")).toBeUndefined();
   });
 
+  it("recognises its own entry at a Windows path: replaces it on update, removes it on uninstall", () => {
+    // Windows writes the bundle path with backslashes; the marker is
+    // `doorman/guard`, so a slash-only match treated our entry as foreign.
+    const win = `node "C:\\Users\\x\\AppData\\Roaming\\Doorman\\doorman\\guard\\guard.js" --host fam`;
+    const doc = host.merge(undefined, win, 60, 75);
+    expect(host.installed(doc, win)).toBe(true);
+    const moved = host.merge(doc, `${win} --newer`, 60, 75);
+    expect(JSON.parse(moved).hooks.PreToolUse[0].hooks).toHaveLength(1);
+    expect(host.remove(moved)).toBe("{}\n");
+  });
+
   it("multiplies into milliseconds when the host wants them", () => {
     const ms = claudeFamilyHost(spec({ timeoutUnit: "milliseconds" }));
     const parsed = JSON.parse(ms.merge(undefined, COMMAND, 60, 75));
