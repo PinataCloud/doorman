@@ -214,7 +214,7 @@ function McpAnswersCard({ state }) {
    like the browser guard beside it, rather than setting a preference about the
    app itself. */
 
-function SettingsScreen({ state, onGoRules }) {
+function SettingsScreen({ state, onGoRules, checkNonce }) {
   const prefs = state.prefs;
   const os = PLATFORM_LABELS[state.platform] || "this computer";
   const setPref = (patch) => window.doorman.setPrefs(patch);
@@ -398,64 +398,134 @@ function SettingsScreen({ state, onGoRules }) {
         </div>
       </Card>
 
-      {/* Updates check themselves hourly and install themselves; this card is
-          the only place the version is stated (the sidebar carries just the
-          Update now control once a download has landed). */}
+      <UpdatesCard state={state} checkNonce={checkNonce} />
+    </div>
+  );
+}
+
+/** "Checking…" stays up at least this long: a check that answers in 80 ms
+ * flashed and landed on the line that was already there, so a click looked
+ * like it did nothing. */
+const UPDATE_CHECK_MIN_MS = 700;
+/** How long the answer to a click stays beside the button. */
+const UPDATE_ANSWER_MS = 8000;
+
+/** What a finished check found, as the card says it. */
+function updateAnswer(u, appVersion) {
+  if (u.status === "error") {
+    return { kind: "bad", icon: "!", label: "Couldn't check", text: u.message || "The update server couldn't be reached." };
+  }
+  if (u.status === "unsupported") {
+    return { kind: "muted", icon: "–", label: "Not available", text: u.message || "Updates aren't set up for this build." };
+  }
+  if (u.outdated || u.status === "available" || u.status === "downloading" || u.status === "downloaded" || u.status === "installing") {
+    return {
+      kind: "new",
+      icon: "↓",
+      label: u.version ? "v" + u.version + " found" : "Update found",
+      text: (u.version ? "Doorman " + u.version : "A newer version") + " is available — downloading it now.",
+    };
+  }
+  return { kind: "good", icon: "✓", label: "Up to date", text: "You're on the latest version, " + appVersion + "." };
+}
+
+/* Updates check themselves hourly and install themselves; this card is the
+   only place the version is stated (the sidebar carries just the Update now
+   control once a download has landed). A click — or the app menu's Check for
+   Updates…, which lands here — always ends in an answer beside the button. */
+function UpdatesCard({ state, checkNonce }) {
+  const u = state.updater;
+  const [phase, setPhase] = useState("idle"); // idle | checking | answered
+  const [answer, setAnswer] = useState(null);
+  const box = useRef(null);
+  const timer = useRef(null);
+  const run = async () => {
+    if (phase === "checking") return;
+    clearTimeout(timer.current);
+    setPhase("checking");
+    setAnswer(null);
+    const started = Date.now();
+    let after;
+    try {
+      after = await window.doorman.checkForUpdates();
+    } catch (err) {
+      after = { status: "error", message: String((err && err.message) || err) };
+    }
+    const rest = UPDATE_CHECK_MIN_MS - (Date.now() - started);
+    if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
+    setAnswer(updateAnswer(after || u, state.appVersion));
+    setPhase("answered");
+    timer.current = setTimeout(() => setPhase("idle"), UPDATE_ANSWER_MS);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => {
+    if (!checkNonce) return;
+    if (box.current && box.current.scrollIntoView) box.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    run();
+  }, [checkNonce]);
+
+  const checking = phase === "checking" || u.status === "checking";
+  const answered = phase === "answered" && answer;
+  const percent = Math.round((u.progress && u.progress.percent) || 0);
+  /* Outdated is a fact about THIS copy, not about what the updater is doing,
+     so it is said in the description (in the warning colour) and stays there
+     through a stalled download or a failed check. */
+  const line = checking
+    ? "Checking for a newer version…"
+    : answered
+      ? answer.text
+      : u.outdated
+        ? (u.version ? `v${u.version} is available. ` : "A newer version is available. ") + (u.message || "")
+        : u.message || "Checked hourly for a newer version.";
+
+  return (
+    <div ref={box}>
       <Card title="Updates">
         <div className="setting">
           <div className="what">
-            {/* Outdated is a fact about THIS copy, not about what the updater
-                is doing, so it is said in the description (in the warning
-                colour) and stays there through a stalled download or a failed
-                check — the two cases where "Checking…" would otherwise be the
-                whole story. The version line itself stays a plain title: a
-                chip jammed against the number read as clutter, not as state. */}
             <div className="t">Version {state.appVersion}</div>
-            <div className={"d" + (state.updater.outdated ? " warn" : "")}>
-              {state.updater.outdated
-                ? (state.updater.version ? `v${state.updater.version} is available. ` : "A newer version is available. ") +
-                  (state.updater.message || "")
-                : state.updater.message || "Checked hourly for a newer version."}
+            <div className={"d" + (u.outdated && !answered ? " warn" : "")}>
+              {line}
+              {u.checked_at && !checking ? <span className="upd-when">{" · Last checked " + relTime(u.checked_at)}</span> : null}
             </div>
           </div>
-          {state.updater.status === "downloaded" || state.updater.status === "installing" ? (
+          {u.status === "downloaded" || u.status === "installing" ? (
             <button className="btn primary" onClick={() => window.doorman.installUpdate()}>
               Update now
             </button>
           ) : (
-            <button
-              className="btn"
-              disabled={state.updater.status === "checking" || state.updater.status === "downloading"}
-              onClick={() => window.doorman.checkForUpdates()}
-            >
-              {state.updater.status === "checking"
-                ? "Checking…"
-                : state.updater.status === "downloading"
-                  ? Math.round((state.updater.progress && state.updater.progress.percent) || 0) + "%"
-                  : "Check for updates"}
-            </button>
+            <div className="upd-actions">
+              {answered ? (
+                <span className={"upd-answer " + answer.kind} role="status" aria-live="polite">
+                  <span className="upd-ic" aria-hidden="true">{answer.icon}</span>
+                  {answer.label}
+                </span>
+              ) : null}
+              <button className="btn" disabled={checking || u.status === "downloading"} aria-busy={checking} onClick={run}>
+                {checking
+                  ? [<span key="s" className="spinner" aria-hidden="true" />, "Checking…"]
+                  : u.status === "downloading"
+                    ? percent + "%"
+                    : answered && answer.kind === "bad"
+                      ? "Try again"
+                      : "Check for updates"}
+              </button>
+            </div>
           )}
         </div>
         {/* Download progress: the same meter primitive the charts use, one
             segment wide. A finished download installs itself, so the bar's end
             state is the restart, not a button. */}
-        {state.updater.status === "downloading" || state.updater.status === "downloaded" || state.updater.status === "installing" ? (
+        {u.status === "downloading" || u.status === "downloaded" || u.status === "installing" ? (
           <div className="setting" style={{ paddingTop: 0 }}>
             <div className="what" style={{ width: "100%" }}>
-              <div className="meter" style={{ height: 6 }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((state.updater.progress && state.updater.progress.percent) || 0)}>
-                <span
-                  className="mp"
-                  style={{
-                    width: Math.max(2, Math.round((state.updater.progress && state.updater.progress.percent) || 0)) + "%",
-                    background: "var(--c1)",
-                    transition: "width 300ms ease",
-                  }}
-                />
+              <div className="meter" style={{ height: 6 }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+                <span className="mp" style={{ width: Math.max(2, percent) + "%", background: "var(--c1)", transition: "width 300ms ease" }} />
               </div>
-              {state.updater.progress && state.updater.progress.total > 0 && state.updater.status === "downloading" ? (
+              {u.progress && u.progress.total > 0 && u.status === "downloading" ? (
                 <div className="d" style={{ marginTop: "var(--s2)" }}>
-                  {(state.updater.progress.transferred / 1e6).toFixed(0)} of {(state.updater.progress.total / 1e6).toFixed(0)} MB
-                  {state.updater.progress.bytes_per_second > 0 ? " · " + (state.updater.progress.bytes_per_second / 1e6).toFixed(1) + " MB/s" : ""}
+                  {(u.progress.transferred / 1e6).toFixed(0)} of {(u.progress.total / 1e6).toFixed(0)} MB
+                  {u.progress.bytes_per_second > 0 ? " · " + (u.progress.bytes_per_second / 1e6).toFixed(1) + " MB/s" : ""}
                 </div>
               ) : null}
             </div>

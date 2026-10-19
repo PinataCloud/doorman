@@ -94,6 +94,9 @@ function App() {
   // screen can open it.
   const [trace, setTrace] = useState(null);
   const traceRef = useRef(null);
+  /* The app menu's Check for Updates… — bumped to make the Updates card run
+     the check with its own feedback. */
+  const [updateCheck, setUpdateCheck] = useState(0);
   const openTrace = (seed) => {
     setTrace({ seed: seed || "", nonce: Date.now() });
     setScreen("radar");
@@ -118,6 +121,11 @@ function App() {
       // "trace" is the menus' Trace a Secret… (⌘⇧T).
       if (target === "trace") {
         if (traceRef.current) traceRef.current("");
+        return;
+      }
+      if (target === "check-updates") {
+        setScreen("settings");
+        setUpdateCheck((n) => n + 1);
         return;
       }
       if (SCREEN_IDS.includes(target)) setScreen(target);
@@ -183,6 +191,7 @@ function App() {
         : state.radar.summary.open;
   const held = (state.approvals || []).length;
   const enforcing = enforcingCount(state);
+  const protection = protectionState(state, enforcing);
 
   return (
     <div className="shell">
@@ -190,22 +199,23 @@ function App() {
           stopped until it's answered. */}
       <ApprovalOverlay state={state} />
       <div className="sidebar">
+        {/* The brand carries what protection amounts to, on every screen: a
+            badge on the mark (the menu-bar icon's status dot) and the line under
+            the name, which is also the way to Settings — so not a link there. */}
         <div className="brand">
           <span className="brand-mark">
             <img src="_asset/doorman-mark-512.png" alt="" />
+            <ProtectionMarkBadge protection={protection} />
           </span>
           <span className="brand-lock">
             <span className="brand-wordmark">Doorman</span>
-            <span className="sub">Powered by Pinata</span>
+            <ProtectionBadge
+              state={state}
+              enforcing={enforcing}
+              onGoSettings={screen === "settings" ? undefined : () => setScreen("settings")}
+            />
           </span>
         </div>
-        {/* What protection amounts to, on every screen rather than only the
-            security ones; Manage is the way to Settings, so not on Settings. */}
-        <ProtectionBadge
-          state={state}
-          enforcing={enforcing}
-          onGoSettings={screen === "settings" ? undefined : () => setScreen("settings")}
-        />
         <Nav screen={screen} onPick={setScreen} radarOpen={radarOpen} />
         <div className="foot">
           <div className="statusline">
@@ -222,6 +232,7 @@ function App() {
             <span className="dot off" />
             NOTHING LEAVES THIS MAC
           </div>
+          <div className="statusline credit">POWERED BY PINATA</div>
           {/* The update's one control, present only while there is one: the
               percentage while a download runs, a button once it has landed.
               Updates otherwise install on their own the moment the window is
@@ -302,7 +313,7 @@ function App() {
             onFocused={() => setIntegrationsFocus(null)}
           />
         ) : null}
-        {screen === "settings" ? <SettingsScreen state={state} onGoRules={() => setScreen("rules")} /> : null}
+        {screen === "settings" ? <SettingsScreen state={state} onGoRules={() => setScreen("rules")} checkNonce={updateCheck} /> : null}
       </div>
 
       <NoticeStack notices={state.notices || []} onNav={setScreen} state={state} onGoSettings={() => setScreen("settings")} />
@@ -388,7 +399,9 @@ function enforcingCount(state) {
  *   · Protected  — the guard is on AND something is genuinely being stopped;
  *   · Watch only — the guard is on and nothing is: the state that exists so
  *     that "Protected" can never contradict a level that stops nothing;
- *   · Not protected — no guard, or a guard edited outside the app.
+ *   · Not protected — no guard;
+ *   · Guard changed — a guard edited outside the app, which holds nothing
+ *     until it is reinstalled (the action reads Repair).
  *
  * It replaces the `N/M guardrails enforcing` pill. That ratio is not lost —
  * it is the badge's tooltip, and on Guardrails the level card's own
@@ -403,35 +416,89 @@ function enforcingCount(state) {
  *
  * It lives in the sidebar, under the brand, on every screen.
  */
-function ProtectionBadge({ state, enforcing, onGoSettings }) {
+/** What protection amounts to — one reading for the mark's badge and the
+ * line under the name, so the two can never disagree. */
+function protectionState(state, enforcing) {
   const installed = !!state.radar.guard_installed;
   // A guard changed outside the app holds nothing, so it cannot be called
   // protected however the policy reads.
   const acting = installed && !enforcing.tampered;
   const kind = !acting ? "off" : enforcing.acting > 0 ? "protected" : "watch";
-  const word = kind === "protected" ? "Protected" : kind === "watch" ? "Watch only" : "Not protected";
+  const word = kind === "protected" ? "Protected" : kind === "watch" ? "Watch only" : enforcing.tampered ? "Guard changed" : "Not protected";
+  /* The level the rules are set to — read from the STORED modes, like the
+     Guardrails card, so a guard that is off doesn't read as "Relaxed". */
+  const modes = (state.prefs && state.prefs.policy && state.prefs.policy.modes) || {};
+  const levelId = (state.prefs && state.prefs.security_level) || levelOfModes(modes, state.level_modes || {});
+  const level = SECURITY_LEVELS.find((l) => l.id === levelId);
+  const guarded = (state.radar.guard_hosts || []).filter((h) => h.present && h.installed).length;
   const why =
     kind === "protected"
-      ? enforcing.acting + " of " + enforcing.total + " rules act before a tool call runs"
+      ? enforcing.acting + " of " + enforcing.total + " rules act before a tool call runs · " + guarded + (guarded === 1 ? " agent" : " agents") + " guarded"
       : kind === "watch"
         ? "Real time protection is on, but no rule is set to hold or block — every rule only watches"
         : enforcing.tampered
-          ? "The guard was changed outside this app, so no rule can act until it is reinstalled"
-          : "Real time protection is off, so no rule can act";
+          ? "The guard was changed outside this app, so no rule can act until it is reinstalled — repair it in Settings"
+          : "Real time protection is off, so no rule can act — turn it on in Settings";
+  return { kind, word, why, level, guarded, acting, tampered: !!enforcing.tampered, action: kind === "off" ? (enforcing.tampered ? "Repair" : "Turn on") : "Manage" };
+}
 
+/**
+ * The line under the wordmark: the state in one word, then the level in force.
+ * When nothing can act there is no level to state — the line is the state and
+ * an arrow, the way to the fix (its label and tip name it: Turn on, Repair).
+ * The whole line is the way to Settings; on Settings itself it is just text.
+ */
+function ProtectionBadge({ state, enforcing, onGoSettings }) {
+  const p = protectionState(state, enforcing);
+  const kids = [
+    <strong key="w">{p.word}</strong>,
+    p.acting ? <span key="s" className="pb-sep" aria-hidden="true">·</span> : null,
+    p.acting ? <span key="l" className="pb-level">{p.level ? p.level.name : "Custom"}</span> : null,
+    onGoSettings ? <span key="a" className="pb-arrow" aria-hidden="true">›</span> : null,
+  ];
+  const className = "protbadge " + p.kind;
+  return onGoSettings ? (
+    <button
+      className={className}
+      data-tampered={p.tampered ? "" : undefined}
+      data-action={p.action}
+      data-tip={p.why}
+      aria-label={p.word + " — " + p.why + ". " + p.action + " in Settings"}
+      onClick={onGoSettings}
+    >
+      {kids}
+    </button>
+  ) : (
+    <span className={className} data-tampered={p.tampered ? "" : undefined} data-tip={p.why} aria-label={p.word + " — " + p.why}>
+      {kids}
+    </span>
+  );
+}
+
+/* The mark's corner badge, the menu-bar icon's status dot: a check when
+   something is being stopped, an eye when everything only watches, a slash
+   when nothing can act, an exclamation when the guard was changed. */
+function ProtectionMarkBadge({ protection }) {
+  const { kind, tampered } = protection;
   return (
-    <span className={"protbadge " + kind}>
-      {kind === "watch" ? null : <span className="pb-dot" aria-hidden="true" />}
-      <strong data-tip={why} aria-label={word + " — " + why}>
-        {word}
-      </strong>
-      {/* Goes to Settings, so it is left out while Settings is open. */}
-      {onGoSettings ? <span className="pb-sep" aria-hidden="true" /> : null}
-      {onGoSettings ? (
-        <button className="linkbtn pb-manage" onClick={onGoSettings} data-tip="Real time protection, the hold window and the guard's integrity check">
-          Manage
-        </button>
-      ) : null}
+    <span className={"brand-status " + (tampered ? "tampered" : kind)} aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {kind === "protected" ? (
+          <path d="M4 8.4l2.6 2.6L12 5.6" />
+        ) : kind === "watch" ? (
+          <g>
+            <path d="M2.6 8s2-3.4 5.4-3.4S13.4 8 13.4 8s-2 3.4-5.4 3.4S2.6 8 2.6 8z" strokeWidth="1.6" />
+            <circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none" />
+          </g>
+        ) : tampered ? (
+          <g>
+            <path d="M8 4v5" />
+            <circle cx="8" cy="12" r="0.4" fill="currentColor" />
+          </g>
+        ) : (
+          <path d="M4.5 4.5l7 7" />
+        )}
+      </svg>
     </span>
   );
 }

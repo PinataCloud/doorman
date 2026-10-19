@@ -89,7 +89,7 @@ html, body {
   height: 40px;
   border-radius: var(--r);
   flex: 0 0 40px;
-  overflow: hidden;
+  position: relative;
   background: #FFFFFF;
   display: grid;
   place-items: center;
@@ -106,15 +106,6 @@ html, body {
   letter-spacing: .01em;
   color: #fff;
   opacity: .96;
-}
-.brand .sub {
-  display: block;
-  margin-top: 5px;
-  font-size: var(--t-3);
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: #B79AD9;
-  white-space: nowrap;
 }
 
 .nav { display: flex; flex-direction: column; gap: 1px; position: relative; }
@@ -2345,48 +2336,61 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
    from the canvas — a 999px pill, 13px text, an 8px dot — but symmetric
    padding, since the canvas's asymmetric 5px 8px 5px 16px existed to seat the
    switch against the pill's right edge and there is no switch here. */
+/* What protection amounts to, carried by the brand. The mark's corner badge
+   is the menu-bar icon's status dot; the line under the name says it in
+   words and is the way to Settings. The sidebar is dark in both themes, so
+   these are the sidebar's inks. */
+.brand-status {
+  position: absolute; right: -5px; bottom: -5px;
+  width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center;
+  color: #FFFFFF;
+  box-shadow: 0 0 0 2px #380A68;
+}
+.brand-status.protected { background: #3FA56D; }
+.brand-status.watch { background: #8E6CC0; }
+.brand-status.off { background: #E0A93B; color: #2B1A00; }
+.brand-status.tampered { background: #E5675C; }
+/* A slow pulse while it is actually stopping things. */
+.brand-status.protected::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  animation: pb-pulse 2.8s ease-out infinite;
+}
+@keyframes pb-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(76, 175, 122, .55); }
+  70% { box-shadow: 0 0 0 7px rgba(76, 175, 122, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(76, 175, 122, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .brand-status.protected::after { animation: none; } }
 .protbadge {
-  display: inline-flex; align-items: center; gap: 7px; flex: none;
-  padding: 5px 14px; border-radius: 999px;
-  background: var(--paper); border: 1px solid var(--ring); font-size: 13px; color: var(--ink);
+  display: flex; align-items: center; gap: 5px;
+  max-width: 100%; margin-top: 5px; padding: 0;
+  border: 0; background: none; text-align: left;
+  font: inherit; font-size: var(--t-3); letter-spacing: .07em; text-transform: uppercase;
+  color: #B79AD9; white-space: nowrap;
 }
-.pb-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.protbadge strong { font-weight: 650; }
-/* Protected: green word, green dot. Watch only: NO dot and a quiet word — the
-   guard is on, so nothing is wrong, but nothing is being stopped either.
-   Not protected: gold throughout, including the pill's own border, because it
-   is the one state that wants finding from across the screen. */
-.protbadge.protected .pb-dot { background: var(--good); }
-.protbadge.protected strong { color: var(--good); }
-.protbadge.watch strong { color: var(--ink-3); }
-.protbadge.off { border-color: var(--gold-deep); }
-.protbadge.off .pb-dot { background: var(--gold-deep); }
-.protbadge.off strong { color: var(--gold-deep); }
-/* The rule before Manage — a real divider rather than a "|" glyph, which sat
-   on the text baseline and read as punctuation in the sentence. */
-.pb-sep { width: 1px; align-self: stretch; margin: 2px 1px; background: var(--ring); flex: none; }
-.pb-manage { font-size: var(--t-1); }
-/* In the sidebar (dark in both themes), across its width under the brand —
-   with the sidebar's own inks rather than the page's. */
-.sidebar .protbadge {
-  display: flex;
-  margin: 0 6px var(--s6);
-  padding: 8px 12px;
-  border-radius: var(--r);
-  background: rgba(255, 255, 255, .06);
-  border: 1px solid rgba(255, 255, 255, .12);
-  color: var(--ink-on-dark);
-  font-size: var(--t-1);
+button.protbadge { cursor: pointer; }
+.protbadge strong { font-weight: 700; flex: none; }
+.protbadge.protected strong { color: #8FE0AE; }
+.protbadge.watch strong { color: #E6D9F5; }
+.protbadge.off strong { color: #F6D58E; }
+.protbadge.off[data-tampered] strong { color: #FFB1A9; }
+.pb-sep { opacity: .7; flex: none; }
+.pb-level { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pb-arrow {
+  flex: none; font-size: 12px; line-height: 0; letter-spacing: 0;
+  opacity: 0; transform: translateX(-2px);
+  transition: opacity var(--glide-ms) var(--ease), transform var(--glide-ms) var(--ease);
 }
-.sidebar .protbadge.protected .pb-dot { background: #4CAF7A; }
-.sidebar .protbadge.protected strong { color: #8FE0AE; }
-.sidebar .protbadge.watch strong { color: #B79AD9; }
-.sidebar .protbadge.off { border-color: rgba(242, 198, 107, .55); }
-.sidebar .protbadge.off .pb-dot { background: #F2C66B; }
-.sidebar .protbadge.off strong { color: #F2C66B; }
-.sidebar .pb-sep { display: none; }
-.sidebar .pb-manage { margin-left: auto; color: #D9C2F5; }
-.sidebar .pb-manage:hover { color: #FFFFFF; }
+/* Nothing can act: the arrow stays, in the state's colour — the line is the way to the fix. */
+.protbadge.off .pb-arrow { color: #F6D58E; }
+.protbadge.off[data-tampered] .pb-arrow { color: #FFB1A9; }
+.protbadge.off .pb-arrow,
+button.protbadge:hover .pb-arrow,
+button.protbadge:focus-visible .pb-arrow { opacity: 1; transform: none; }
+button.protbadge:hover .pb-level { color: #F3E9FF; }
+button.protbadge:focus-visible { outline: 2px solid #D9C2F5; outline-offset: 3px; border-radius: 3px; }
+.sidebar .foot .statusline.credit { color: rgba(183, 154, 217, .7); }
 
 .sechead-pill {
   display: inline-flex; align-items: center; gap: var(--s3); flex: none;
@@ -4264,3 +4268,29 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 /* The action buttons (VIEW RAW / COPY) keep the dark-panel styling they have
    everywhere else, since the strip is dark here too. */
 
+
+/* Settings → Updates: a click always ends in an answer beside the button. */
+.upd-actions { display: inline-flex; align-items: center; gap: var(--s3); flex: none; }
+.upd-answer {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--control-h); padding: 0 12px; border-radius: 999px;
+  font-size: var(--t-1); font-weight: 600; white-space: nowrap;
+  animation: upd-in .22s var(--ease) both;
+}
+.upd-answer.good { color: var(--good); background: var(--good-soft); }
+.upd-answer.new { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.upd-answer.bad { color: var(--gold-deep); background: color-mix(in srgb, var(--gold-deep) 14%, transparent); }
+.upd-answer.muted { color: var(--ink-3); background: color-mix(in srgb, var(--navy) 8%, transparent); }
+.upd-ic { font-weight: 700; }
+.upd-when { color: var(--ink-4); }
+.btn .spinner {
+  width: 12px; height: 12px; flex: none; border-radius: 50%;
+  border: 2px solid currentColor; border-right-color: transparent;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes upd-in { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .btn .spinner { animation-duration: 2.4s; }
+  .upd-answer { animation: none; }
+}

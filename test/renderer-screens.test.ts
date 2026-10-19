@@ -1066,13 +1066,12 @@ describe("every screen renders (renderer)", () => {
            });
            var pill = inner && inner.props ? String(inner.props.className || "") : "";
            var word = __nodes(inner, "strong", [], 0)[0];
-           var manage = __nodes(inner, "button", [], 0).filter(function (n) {
-             return n.kids && n.kids[0] === "Manage";
-           })[0];
+           // The whole line is the way to Settings, naming what it does there.
+           var clickable = !!(inner && inner.props && inner.props.onClick);
            return {
              kind: pill.replace("protbadge ", ""),
              word: word && word.kids ? String(word.kids[0]) : null,
-             manages: !!manage,
+             manages: clickable ? String(inner.props["data-action"]) : false,
            };
          })()`,
         ctx as object,
@@ -1081,13 +1080,13 @@ describe("every screen renders (renderer)", () => {
     };
 
     // The fixture holds and blocks, so something really is being stopped.
-    expect(badge(populatedState())).toEqual({ kind: "protected", word: "Protected", manages: true });
+    expect(badge(populatedState())).toEqual({ kind: "protected", word: "Protected", manages: "Manage" });
 
-    // Guard off: the word drops, and Manage still routes to the one screen
-    // that can turn it back on.
+    // Guard off: the word drops, and the action becomes the way back on —
+    // to the one screen that can turn it on.
     const off = populatedState();
     off.radar = { ...off.radar, guard_installed: false };
-    expect(badge(off)).toEqual({ kind: "off", word: "Not protected", manages: true });
+    expect(badge(off)).toEqual({ kind: "off", word: "Not protected", manages: "Turn on" });
 
     // Guard ON, but every rule only observes — the state the word "Watch only"
     // exists for: protection IS on, it just does not amount to anything being
@@ -1101,7 +1100,7 @@ describe("every screen renders (renderer)", () => {
         custom_rules: [],
       },
     };
-    expect(badge(watching)).toEqual({ kind: "watch", word: "Watch only", manages: true });
+    expect(badge(watching)).toEqual({ kind: "watch", word: "Watch only", manages: "Manage" });
 
     // A guard edited outside the app holds nothing, so it cannot be called
     // protected however the policy reads — the fix is a reinstall, which is
@@ -1120,7 +1119,7 @@ describe("every screen renders (renderer)", () => {
         bundle_missing: [],
       },
     };
-    expect(badge(tampered)).toEqual({ kind: "off", word: "Not protected", manages: true });
+    expect(badge(tampered)).toEqual({ kind: "off", word: "Guard changed", manages: "Repair" });
     // On Settings itself there is nowhere to Manage to: the word stays, the link goes.
     expect(badge(populatedState(), false)).toEqual({ kind: "protected", word: "Protected", manages: false });
   });
@@ -3473,6 +3472,23 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
     ) as string[];
     expect(labels.some((l) => l.includes("Trace secret…"))).toBe(false);
     expect(labels.some((l) => l.includes("Open session"))).toBe(false);
+  });
+
+  it("Check for updates always ends in an answer: up to date, found, couldn't check, or not available", () => {
+    const answer = (updater: Record<string, unknown>) => {
+      ctx.__u = updater;
+      return runInContext(`updateAnswer(__u, "0.3.0")`, ctx as object, { filename: "update answer" }) as { kind: string; label: string; text: string };
+    };
+    expect(answer({ status: "idle", outdated: false, message: "Up to date." })).toMatchObject({ kind: "good", label: "Up to date" });
+    expect(answer({ status: "idle" }).text).toContain("0.3.0");
+    expect(answer({ status: "available", version: "0.4.0", outdated: true })).toMatchObject({ kind: "new", label: "v0.4.0 found" });
+    expect(answer({ status: "downloading", version: "0.4.0", outdated: true }).kind).toBe("new");
+    expect(answer({ status: "error", message: "The update server couldn't be reached." })).toMatchObject({ kind: "bad", label: "Couldn't check" });
+    expect(answer({ status: "unsupported", message: "Updates are disabled in development." })).toMatchObject({ kind: "muted", label: "Not available" });
+    // The card the Settings screen renders is the one with that feedback.
+    const settings = readFileSync(new URL("screens/settings.jsx", rendererDir), "utf8");
+    expect(settings).toContain("<UpdatesCard state={state} checkNonce={checkNonce} />");
+    expect(settings).toContain('role="status"');
   });
 
   it("the ledger's search box recognizes a credential and offers the trace instead", () => {

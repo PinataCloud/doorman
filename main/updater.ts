@@ -211,12 +211,12 @@ export async function initUpdater(store: Store, next: UpdaterHandlers = {}, deps
     return;
   }
   if (!(deps.isPackaged ?? app.isPackaged)) {
-    store.setUpdater({ status: "unsupported", message: "Updates are disabled in development." });
+    store.setUpdater({ status: "unsupported", message: "Updates are disabled in development.", checked_at: new Date().toISOString() });
     return;
   }
   const feedConfigured = deps.feedConfigured ?? (() => existsSync(join(process.resourcesPath ?? "", "app-update.yml")));
   if (!feedConfigured()) {
-    store.setUpdater({ status: "unsupported", message: "Automatic updates aren't set up for this build." });
+    store.setUpdater({ status: "unsupported", message: "Automatic updates aren't set up for this build.", checked_at: new Date().toISOString() });
     return;
   }
   let mod: UpdaterModule;
@@ -243,6 +243,7 @@ export async function initUpdater(store: Store, next: UpdaterHandlers = {}, deps
       ...(version ? { version } : {}),
       outdated: true,
       message: "Update available — downloading…",
+      checked_at: new Date().toISOString(),
     });
     handlers.onAvailable?.(version);
   });
@@ -276,13 +277,14 @@ export async function initUpdater(store: Store, next: UpdaterHandlers = {}, deps
     manualRequested = false;
     // The only event that can clear it: `setUpdater` merges, so `outdated`
     // survives the download/error states in between on purpose.
-    store.setUpdater({ status: "idle", outdated: false, message: "Up to date." });
+    store.setUpdater({ status: "idle", outdated: false, message: "Up to date.", checked_at: new Date().toISOString() });
   });
   autoUpdater.on("error", (err: unknown) => {
     manualRequested = false;
     store.setUpdater({
       status: "error",
       message: describeUpdateError(err instanceof Error ? err.message : String(err)),
+      checked_at: new Date().toISOString(),
     });
   });
   const check = async () => {

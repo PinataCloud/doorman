@@ -2506,7 +2506,12 @@ if (!app.requestSingleInstanceLock()) {
         store.setPrefs({ onboarding_open: true });
         showWindow();
       },
-      onCheckUpdates: () => void checkForUpdatesManually(store),
+      // In the window, where the answer can be shown: the Updates card runs
+      // the same check its own button does, with the same feedback.
+      onCheckUpdates: () => {
+        showWindow();
+        window?.webContents.send("nav:go", "check-updates");
+      },
       onOpenDataDir: () => void shell.openPath(app.getPath("userData")),
       onGo: (screen: string) => {
         showWindow();

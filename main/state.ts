@@ -437,6 +437,9 @@ export interface UpdaterState {
   /** Live download progress while `status === "downloading"` (electron-updater's
    * download-progress event) — what the Settings row draws its bar from. */
   progress?: { percent: number; transferred: number; total: number; bytes_per_second: number };
+  /** When the last check FINISHED, whatever it found — what "Last checked …"
+   * reads, and how a click on "Check for updates" knows its answer arrived. */
+  checked_at?: string;
 }
 
 export interface SourceStat {
