@@ -196,6 +196,53 @@ describe("merge: the plugin entry in config.yaml", () => {
     // `enabled: []` is empty and can be opened; a duplicate top-level key cannot be followed.
     expect(hermesHost.merge("plugins:\n  enabled: []\n", COMMAND, HOLD)).toContain(`  enabled:\n    - ${HERMES_PLUGIN_ID}`);
   });
+
+  it("follows a config Hermes itself wrote: lists flush with their keys (PyYAML/ruamel style)", () => {
+    // The shape of a stock ~/.hermes/config.yaml (user report, 2026-10): a
+    // top-level list at column 0, nested flush lists, `hooks: {}`, a folded
+    // double-quoted scalar, and the commented boilerplate Hermes appends.
+    const before = [
+      "model:",
+      "  provider: minimax-oauth",
+      "toolsets:",
+      "- hermes-cli",
+      "agent:",
+      "  personalities:",
+      '    kawaii: "You are a kawaii assistant! (\\u25D5\\u203F\\u25D5\\',
+      '      ) Add sparkles!"',
+      "  disabled_toolsets: []",
+      "hooks: {}",
+      "platform_toolsets:",
+      "  cli:",
+      "  - hermes-cli",
+      "",
+      "# ── Fallback Model ──",
+      "# fallback_model:",
+      "#   provider: openrouter",
+      "",
+    ].join("\n");
+    const merged = hermesHost.merge(before, COMMAND, HOLD);
+    const [body, tail] = before.split("\n# ── Fallback Model ──");
+    // Every line of theirs kept; our block lands after their last key, above the comments.
+    expect(merged).toBe(`${body!.trimEnd()}\n${OUR_BLOCK.trimEnd()}\n\n# ── Fallback Model ──${tail}`);
+    expect(hermesHost.installed(merged, COMMAND)).toBe(true);
+    expect(hermesHost.remove(merged)).toBe(`${body!.trimEnd()}\nplugins:\n  hook_callback_timeout: ${TIMEOUT}\n\n# ── Fallback Model ──${tail}`);
+  });
+
+  it("joins a flush `enabled:` list at its own indentation, and remove() takes only ours out", () => {
+    const before = "plugins:\n  enabled:\n  - memory-core\n  disabled:\n  - other\n";
+    const merged = hermesHost.merge(before, COMMAND, HOLD);
+    expect(merged.startsWith(`plugins:\n  enabled:\n  - memory-core\n  - ${HERMES_PLUGIN_ID}\n  disabled:\n  - other\n`)).toBe(true);
+    expect(hermesHost.installed(merged, COMMAND)).toBe(true);
+    expect(hermesHost.remove(merged)).toBe(`${before}  hook_callback_timeout: ${TIMEOUT}\n`);
+  });
+
+  it("still refuses a column-0 `- ` that no value-less key above it owns, and a sequence where a mapping belongs", () => {
+    for (const doc of ["agent:\n  max_turns: 60\n- stray\n", "model: x\n- stray\n", "plugins:\n- memory-core\n", "plugins:\n  entries:\n  - memory-core\n"]) {
+      expect(() => hermesHost.merge(doc, COMMAND, HOLD), doc).toThrow();
+      expect(hermesHost.installed(doc, COMMAND), doc).toBe(false);
+    }
+  });
 });
 
 describe("the registry suite's shared documents", () => {
