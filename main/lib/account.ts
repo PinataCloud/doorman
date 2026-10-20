@@ -55,6 +55,12 @@ export interface ExposureAccount {
   sink_tool?: string;
   /** Quoted: the host it was sent to. */
   destination_host?: string;
+  /** For a secret READ (dotenv_read, env_dump, secret_manager_read): where its
+   * output went — `agent`, printed back as the tool's output and so into the
+   * model's context; `local`, used without being printed. Absent: not known
+   * (a row minted before this was read). The detector's band says the same:
+   * medium for `agent`, low for `local`. */
+  output?: "agent" | "local";
   /** The redaction family of the value (`aws`, `github`, `credentials`). */
   credential_family?: string;
   /** The family in words, no article — "AWS credential", "Grafana API key" —
@@ -91,6 +97,9 @@ export interface AccountUnit {
 export interface AccountFinding {
   detector: string;
   key_name?: string;
+  /** The band the detector gave it — for a secret read, the record of where
+   * its output went (see ExposureAccount.output). */
+  severity?: string;
 }
 
 /* ---- Family words --------------------------------------------------------
@@ -493,6 +502,9 @@ export function renderAccount(detector: string, a: Partial<ExposureAccount>): st
     case "secret_egress":
       return `One command ${whereRead(a)} and ${whereSent(a)} in the same step.`;
     case "credential_in_tool_arg":
+      if (a.source_kind === "tool_output") {
+        return `A tool's output${a.read_via ? ` (${code(a.read_via)})` : ""} showed ${familyPhrase(fam)} to the agent.`;
+      }
       return `The agent put ${familyPhrase(fam)} into ${a.sink_tool ? `a ${code(a.sink_tool)} call` : "a tool call"}${a.destination_host ? ` that reached ${code(a.destination_host)}` : ""}.`;
     case "credential_in_prompt":
       return `${capital(familyPhrase(fam))} was typed into a prompt.`;
@@ -552,6 +564,7 @@ export function renderTitle(detector: string, a: Partial<ExposureAccount>): stri
     case "secret_egress":
       return `Secret read and sent${a.destination_host ? ` to ${code(a.destination_host)}` : " out"} in one command`;
     case "credential_in_tool_arg":
+      if (a.source_kind === "tool_output") return `${cred} in ${a.read_via ? `${code(a.read_via)} output` : "a tool's output"}`;
       return `${cred} in a ${q(a.sink_tool, "tool")} call`;
     case "credential_in_prompt":
       return `${cred} pasted into a prompt`;
@@ -585,21 +598,29 @@ export function renderSo(detector: string, a: Partial<ExposureAccount>): string 
   const ph = a.placeholder_signals ?? [];
   if (ph.length > 0) return `It looks like a placeholder, not a live secret:${placeholderClause(ph).replace(/^ It looks like a placeholder:/, "")}`;
   const file = q(a.source_ref, "that file");
+  const host = a.destination_host ? code(a.destination_host) : undefined;
   switch (detector) {
     case "flow_secret_egress":
-      return `Treat everything ${file} holds as leaked.`;
+      return `What ${file} holds may now be at ${host ?? "the destination"}. If that is not where those credentials belong, rotate them.`;
     case "secret_egress":
-      return "Read and sent in one step — treat the value as leaked.";
+      return `The value went ${host ? `to ${host}` : "off this computer"} without passing through the agent's context. Routine if ${host ?? "the destination"} is where this credential is used; if not, rotate it.`;
     case "credential_in_tool_arg":
-      return `The command ran with the value in it${a.destination_host ? ` and reached ${code(a.destination_host)}` : ""}; the agent already had it in its context.`;
+      if (a.source_kind === "tool_output") return "It went to the model provider with the tool's output.";
+      return `It was in the agent's context, so the model provider has it; the command ran with it${host ? ` and reached ${host}` : ""}.`;
     case "credential_in_prompt":
-      return "It went to the model provider with the prompt — treat it as leaked.";
+      return "It went to the model provider with the prompt.";
     case "dotenv_read":
-      return `Everything ${file} holds is now in the agent's context. Routine on its own; it matters if a later call sends it out.`;
+      if (a.output === "local") return `Its contents stayed on this computer: the command used ${file} without printing it, so none of it reached the model.`;
+      if (a.output === "agent") return "What it printed went into the agent's context, and with it to the model provider.";
+      return `If it printed ${file}, what it printed went into the agent's context and to the model provider.`;
     case "env_dump":
-      return "Every environment variable, keys included, is now in the agent's context. It matters if a later call sends it out.";
+      if (a.output === "local") return "The environment stayed on this computer: the command used it without printing it.";
+      if (a.output === "agent") return "Every variable it printed, keys included, went into the agent's context and to the model provider.";
+      return "If it printed the environment, every variable it showed went into the agent's context and to the model provider.";
     case "secret_manager_read":
-      return "Expected in ops work. It matters if a later call sends the value out.";
+      if (a.output === "local") return "The value stayed on this computer: the command used it without printing it.";
+      if (a.output === "agent") return "The value it printed went into the agent's context, and with it to the model provider.";
+      return "If it printed the value, it went into the agent's context and to the model provider.";
     case "hardcoded_credential":
       return `${a.name ? `${code(a.name)} looks like a secret by name and the value by shape` : "The value looks like a secret by shape and its name"}; it now sits in ${file}, where it can be committed and pushed. The rule cannot tell a real key from a digest or a fixture — that is why it reads medium confidence.`;
     case "unrecognized_secret":
@@ -626,17 +647,18 @@ export function renderNext(detector: string, a: Partial<ExposureAccount>): strin
   const file = q(a.source_ref, "that file");
   switch (detector) {
     case "flow_secret_egress":
-      return `Rotate what ${file} holds.${a.destination_host ? ` Check what ${code(a.destination_host)} is and why the agent sent there.` : ""}`;
+      return `${a.destination_host ? `Check what ${code(a.destination_host)} is and why the agent sent there; rotate` : "Rotate"} what ${file} holds if it should not have gone there.`;
     case "secret_egress":
-      return `Rotate ${cred}${a.destination_host ? `, and check what ${code(a.destination_host)} is` : ""}.`;
+      return `Check that ${a.destination_host ? code(a.destination_host) : "the destination"} is where ${cred} is meant to go; rotate it if not.`;
     case "credential_in_tool_arg":
+      if (a.source_kind === "tool_output") return `Rotate ${cred}, then find what printed it — a file read, an environment dump, a config print.`;
       return `Rotate ${cred}, then find how the agent got it — a pasted prompt or a file it read.`;
     case "credential_in_prompt":
       return `Rotate ${cred}, then find what put it in the prompt — a pasted .env, a config block.`;
     case "dotenv_read":
     case "env_dump":
     case "secret_manager_read":
-      return "Nothing to rotate yet. If a later exposure shows it leaving, that one is the alarm.";
+      return a.output === "local" ? "Nothing to do." : "If what it printed included live credentials, rotate them.";
     case "hardcoded_credential":
       return `Open ${file}: if ${a.name ? code(a.name) : "the value"} is a real secret, move it to an environment variable or a secret manager before it is committed. If it is a digest, an id or a fixture, mark this a false positive.`;
     case "unrecognized_secret":
@@ -665,6 +687,14 @@ const ACCOUNTED = new Set([
 
 export function accountable(detector: string): boolean {
   return ACCOUNTED.has(detector);
+}
+
+/** Where a secret read's output went, as its band records it (see
+ * ExposureAccount.output): low is `local`, medium `agent`. Any other band — a
+ * row from before the bands said so — leaves it unknown. */
+export function readOutputOf(detector: string, severity: string | undefined): ExposureAccount["output"] {
+  if (detector !== "dotenv_read" && detector !== "env_dump" && detector !== "secret_manager_read") return undefined;
+  return severity === "low" ? "local" : severity === "medium" ? "agent" : undefined;
 }
 
 /** The recovered value this finding is about, if the reveal has it. */
@@ -707,6 +737,7 @@ export function accountForUnit(
     ...sink,
     ...named,
     ...family,
+    ...outputOf(readOutputOf(finding.detector, finding.severity)),
     placeholder_signals: placeholderSignals(own?.value, unit.raw, [unit.target, source.source_ref, cwd]),
   };
   // The tool's name, target and the finding's key are the unit's own metadata
@@ -730,6 +761,7 @@ export function accountForRow(row: {
   cwd?: string;
   excerpt?: string;
   origin?: string;
+  severity?: string;
 }): ExposureAccount | undefined {
   if (!accountable(row.detector) || row.origin === "config") return undefined;
   const editor = row.tool_name !== undefined && /^(Read|Edit|Write|MultiEdit|NotebookEdit)$/.test(row.tool_name);
@@ -751,6 +783,7 @@ export function accountForRow(row: {
     ...named,
     ...family,
     placeholder_signals: placeholderSignals(undefined, row.excerpt ?? "", [row.target, row.cwd]),
+    ...outputOf(readOutputOf(row.detector, row.severity)),
   };
   const verified = verifyQuotes(partial, [row.target ?? "", row.tool_name ?? "", row.key_name ?? "", row.excerpt ?? ""]);
   return finish(row.detector, verified);
@@ -788,6 +821,21 @@ export function accountForFlow(
   return finish(finding.detector, verified);
 }
 
+/** `{ output }` when known, nothing otherwise — the field is optional on the record. */
+function outputOf(output: ExposureAccount["output"]): Pick<ExposureAccount, "output"> {
+  return output === undefined ? {} : { output };
+}
+
+/**
+ * The same account with its sentence, title, consequence and next step
+ * rendered again from its fields — for a stored row whose words were written
+ * by an older template (lib/finding-bands.ts), and with `output` set when the
+ * caller has since learned it.
+ */
+export function refreshAccountText(detector: string, account: ExposureAccount, output?: ExposureAccount["output"]): ExposureAccount {
+  return finish(detector, output === undefined ? account : { ...account, output });
+}
+
 function finish(detector: string, a: Partial<ExposureAccount>): ExposureAccount {
   const account: ExposureAccount = {
     by: a.by ?? "extractor",
@@ -797,6 +845,7 @@ function finish(detector: string, a: Partial<ExposureAccount>): ExposureAccount 
     ...(a.read_via ? { read_via: a.read_via } : {}),
     ...(a.sink_tool ? { sink_tool: a.sink_tool } : {}),
     ...(a.destination_host ? { destination_host: a.destination_host } : {}),
+    ...outputOf(a.output),
     ...(a.credential_family ? { credential_family: a.credential_family } : {}),
     ...(familyNoun(a.credential_family) !== undefined ? { family_noun: familyNoun(a.credential_family) } : {}),
     ...(a.gap ? { gap: a.gap } : {}),

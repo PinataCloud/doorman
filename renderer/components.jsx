@@ -242,23 +242,23 @@ function surfaceShown(id) {
 const SEC_DETECTORS = {
   credential_in_prompt: {
     label: "Credential in prompt",
-    blurb: "A real password or API key was typed into a prompt. It has already gone to the AI provider, so treat it as leaked and replace it.",
+    blurb: "A real password or API key was typed into a prompt. It went to the AI provider with the prompt, so replace it.",
   },
   credential_in_tool_arg: {
     label: "Credential in tool argument",
-    blurb: "The agent put a real password or API key into a command it was about to run.",
+    blurb: "A real password or API key was in a command the agent ran, or in what a tool showed it. Either way it was in the agent's context, so the AI provider has it.",
   },
   secret_egress: {
     label: "Secret egress",
-    blurb: "One command reads a password or key and sends it out over the network in the same step.",
+    blurb: "One command reads a password or key and sends it to a server in the same step, without showing it to the agent. Fine when the server is the one the key is for.",
   },
   env_dump: {
     label: "Environment dump",
-    blurb: "A command printed every environment variable at once. API keys usually live there.",
+    blurb: "A command read the environment, where API keys usually live. Low when it kept the output to itself; medium when it printed it to the agent.",
   },
   dotenv_read: {
     label: "Credential file read",
-    blurb: "Something read a file whose whole job is holding secrets — .env, ~/.aws/credentials, a private key.",
+    blurb: "Something read a file whose whole job is holding secrets — .env, ~/.aws/credentials, a private key. Low when the command kept the contents to itself; medium when it printed them to the agent.",
   },
   hardcoded_credential: {
     label: "Hardcoded credential",

@@ -17,19 +17,19 @@ export interface DetectorGuidance {
 
 export const DETECTOR_GUIDANCE: Record<string, DetectorGuidance> = shownRecord<string, DetectorGuidance>({
   credential_in_prompt: {
-    blurb: "A live credential was pasted into a prompt, so it already reached the model provider.",
-    fix: "Rotate the credential now; then find how it got into the prompt (a pasted .env, a config block) and keep it out next time.",
+    blurb: "A live credential was pasted into a prompt, so it reached the model provider.",
+    fix: "Rotate the credential soon; then find how it got into the prompt (a pasted .env, a config block) and keep it out next time.",
   },
   credential_in_tool_arg: {
-    blurb: "The agent put a recognized credential into a tool call it authored — the value was already in its context.",
+    blurb: "A recognized credential was in the agent's context — in a tool call it authored, or in a tool's output it read — so it reached the model provider.",
     fix: "Find the upstream exposure (a prompt paste or a file read) and rotate if the value is real; if it was handed over deliberately, consider a scoped exception.",
   },
   secret_egress: {
-    blurb: "One command both read a credential source and reached the network.",
-    fix: "Confirm where the bytes went; if it was not a deploy you intended, rotate what the file held and deny similar calls (the rule ships on ask).",
+    blurb: "One command read a credential source and sent it to a host, without the value passing through the model.",
+    fix: "Check that the destination is where the credential is used — usually it is the API it belongs to. If not, rotate what the source held and deny similar calls (the rule ships on ask).",
   },
-  env_dump: { blurb: "The whole environment was printed, API keys included.", fix: "Usually diagnostic; prefer printing named variables. Nothing to rotate unless the output was sent somewhere." },
-  dotenv_read: { blurb: "A file that is a credential by name was read.", fix: "Routine in development; the finding matters when it precedes a network call. Consider an exception scoped to the project if it is your own .env." },
+  env_dump: { blurb: "The environment was read. Medium when it was printed to the agent (keys included); low when the command kept the output to itself.", fix: "Usually diagnostic; prefer printing named variables. If the printed output held live keys, rotate them." },
+  dotenv_read: { blurb: "A file that is a credential by name was read. Medium when its contents were printed to the agent; low when the command kept them to itself (piped on, redirected, sourced).", fix: "Routine in development. If it printed live keys, rotate them; consider an exception scoped to the project if it is your own .env." },
   hardcoded_credential: { blurb: "A high-entropy literal was written into a file under a secret-shaped name.", fix: "Move the value to an environment variable or secret manager before it is committed; rotate if the file was pushed." },
   unsafe_fetch_exec: { blurb: "A download was piped straight into an interpreter.", fix: "Download first, read the script, then run it — or pin to a checksum. Deny the held call unless the source is one you trust." },
   destructive_command: { blurb: "An irreversible local or SQL operation.", fix: "Check the target path or table; if intended, allow once. Never allow-for-project a rm -rf against a root-ish path." },
@@ -37,7 +37,7 @@ export const DETECTOR_GUIDANCE: Record<string, DetectorGuidance> = shownRecord<s
   unrecognized_secret: { blurb: "A high-entropy token no named pattern claimed — a guess.", fix: "Decide whether it is a real secret; if not, mark it a false positive. This rule never holds a call." },
   invisible_unicode: { blurb: "Invisible characters that can smuggle instructions.", fix: "Inspect the source text (View raw) — a tag-block payload or bidi override is an attack; a stray zero-width in copied text is noise." },
   exfil_render_link: { blurb: "A markdown/HTML link whose URL carries a payload — it exfiltrates on render.", fix: "Treat the tool result as hostile; do not render or click it; check what the agent did after reading it." },
-  secret_manager_read: { blurb: "A credential fetched from a secret manager.", fix: "Expected in ops work; the finding matters when a later call sends it out. Nothing to rotate on its own." },
+  secret_manager_read: { blurb: "A credential fetched from a secret manager. Medium when the value was printed to the agent; low when the command used it without printing it.", fix: "Expected in ops work. If the printed value was live, rotate it." },
   agent_config_tamper: { blurb: "A write to the agent's own governance: hooks, permissions, MCP servers, shell startup, launch agents, ssh keys, sudoers.", fix: "Read the diff. If you did not ask for the change, treat the session as compromised and restore the file from version control or a backup." },
   injected_instruction: { blurb: "Text a tool RETURNED tried to steer the agent.", fix: "Distrust the whole tool result and check the following calls for credential reads, config writes and network sends; consider the source (a web page, an issue) hostile." },
   insecure_code_written: { blurb: "A known-dangerous construct in code on its way to disk.", fix: "Review the diff; fix or justify it before commit. Test fixtures are the usual false positive." },

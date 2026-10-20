@@ -97,6 +97,11 @@ const ACCOUNT: JsonSchema = {
     sink_tool: str("The command or tool that carried it out."),
     destination_host: str("The host it was sent to."),
     credential_family: str("The redaction family of the value."),
+    output: {
+      type: "string",
+      enum: ["agent", "local"],
+      description: "For a secret read: printed back to the agent (`agent`), or used without being printed (`local`).",
+    },
     family_noun: str("The family in words."),
     gap: str("Time between a flow's two ends."),
     placeholder_signals: {

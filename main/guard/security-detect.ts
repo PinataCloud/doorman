@@ -1596,6 +1596,261 @@ export function secretPathsReadIn(command: string, firstOnly = false): Array<{ n
   return found;
 }
 
+/**
+ * WHERE a secret read's output goes. `agent`: the reading program prints it,
+ * so it comes back as the tool's output — into the model's context and, with
+ * it, the model provider's logs. `local`: the command uses it without
+ * printing it — piped into a program that prints something else (`| xargs
+ * curl …`, `| wc -l`, `| shasum`), written to a file (`> /tmp/x`), copied
+ * (`cp .env x`), loaded into the shell (`source .env`), captured into a
+ * variable (`KEY=$(grep …)`), or handed to a network call as data. Nothing of
+ * it reaches the model then; whether it left the machine is secret_egress's
+ * question, not this one.
+ *
+ * `reads` says whether a piece of command text performs the read in question
+ * (secretPathsReadIn, envDumpIn, secretManagerReadIn). Every read the command
+ * makes has to stay local for the answer to be `local`; anything this cannot
+ * place reads as `agent` — a lower band has to be earned by a shape that
+ * provably prints nothing of the value.
+ */
+export type ReadReach = "agent" | "local";
+
+export function secretReadReach(command: string, reads: (text: string) => boolean): ReadReach {
+  let found = false;
+  for (const pipeline of topLevelPipelines(splitHeredocs(command).visible)) {
+    for (let i = 0; i < pipeline.length; i += 1) {
+      const { outer, inner } = splitSubstitutions(pipeline[i]!);
+      if (reads(outer)) {
+        found = true;
+        if (!stageOutputStaysLocal(pipeline, i)) return "agent";
+      }
+      for (const sub of inner) {
+        if (!reads(sub)) continue;
+        found = true;
+        if (!substitutionStaysLocal(outer, pipeline, i)) return "agent";
+      }
+    }
+  }
+  return found ? "local" : "agent";
+}
+
+/** Programs whose output is never the bytes they read: a count, a digest, a
+ * clipboard, a copy, the shell's own environment — or nothing at all. */
+const SILENT_PROGRAMS: Readonly<Record<string, true>> = {
+  wc: true, md5sum: true, md5: true, shasum: true, sha1sum: true, sha224sum: true, sha256sum: true,
+  sha384sum: true, sha512sum: true, b2sum: true, cksum: true, pbcopy: true, xclip: true, xsel: true,
+  "wl-copy": true, clip: true, true: true, ":": true, source: true, ".": true, cp: true, install: true,
+  ditto: true,
+};
+/** Programs that SEND what they are given and print the answer, not the input. */
+const SENDING_PROGRAMS: Readonly<Record<string, true>> = {
+  curl: true, wget: true, http: true, https: true, xh: true, httpie: true, nc: true, ncat: true,
+  netcat: true, ssh: true, sftp: true, scp: true, rsync: true, aws: true, gsutil: true, gh: true,
+};
+/** Builtins that assign: `export KEY=$(…)` keeps the value in a variable. */
+const ASSIGNING_PROGRAMS: Readonly<Record<string, true>> = {
+  export: true, local: true, declare: true, readonly: true, typeset: true,
+};
+/** A sender's flags that print the request it made — headers, body and all. */
+const VERBOSE_SEND_RE = /(?:^|\s)(?:-v{1,3}|--verbose|--trace(?:-ascii)?|--debug|-d)(?=\s|$)/;
+/** A program reading a credential on STDIN and printing none of it. */
+const STDIN_CREDENTIAL_RE = /(?:^|\s)--(?:password-stdin|with-token|token-stdin)(?=\s|$)/;
+/** `grep -q`/`-c`/`-l` print nothing, a count, or file names — not the lines. */
+const QUIET_SEARCH_RE = /(?:^|\s)(?:-[a-zA-Z]*[qcl][a-zA-Z]*|--(?:quiet|silent|count|files-with-matches))(?=\s|$)/;
+/** Standard output sent to a file (`>`, `>>`, `>|`, `&>`); not `2>`, not `>&2`. */
+const STDOUT_TO_FILE_RE = /(?:^|\s)(?:&>>?|1?>>?\|?)\s*(?![&\d\s])\S/;
+const SUBSTITUTION_TOKEN = "__DOORMAN_SUBSTITUTION__";
+
+/** A stage's program word with wrappers and comments gone (`xargs`, `sudo`, `env A=1`). */
+function stageHead(stage: string): string {
+  return stripInvocationWrappers(withoutShellComment(stage).trim());
+}
+
+/** Does this stage, as the end of a pipe, keep what it is fed off the terminal? */
+function stageSwallows(stage: string): boolean {
+  if (STDOUT_TO_FILE_RE.test(stage)) return true;
+  const head = stageHead(stage);
+  // `| xargs` with no command runs `echo`: the value is printed.
+  if (head === "") return false;
+  const program = programOf(head.replace(/["']/g, ""));
+  if (SILENT_PROGRAMS[program] || STDIN_CREDENTIAL_RE.test(head)) return true;
+  if (PATTERN_FIRST_PROGRAMS.has(program)) return QUIET_SEARCH_RE.test(head);
+  return SENDING_PROGRAMS[program] === true && !VERBOSE_SEND_RE.test(head);
+}
+
+/** Does what the reading stage `pipeline[i]` outputs stay off the terminal? */
+function stageOutputStaysLocal(pipeline: readonly string[], i: number): boolean {
+  const stage = pipeline[i]!;
+  if (STDOUT_TO_FILE_RE.test(stage)) return true;
+  const head = stageHead(stage).replace(/["']/g, "");
+  const program = programOf(head);
+  if (SILENT_PROGRAMS[program] || STDIN_CREDENTIAL_RE.test(head)) return true;
+  if (PATTERN_FIRST_PROGRAMS.has(program) && QUIET_SEARCH_RE.test(head)) return true;
+  if (i === pipeline.length - 1) return false;
+  // Down the pipe: what reaches the terminal is the LAST stage's output.
+  return stageSwallows(pipeline[pipeline.length - 1]!);
+}
+
+/** Does a read inside `$( … )` stay local, given the stage it is spliced into? */
+function substitutionStaysLocal(outer: string, pipeline: readonly string[], i: number): boolean {
+  if (STDOUT_TO_FILE_RE.test(outer)) return true;
+  // `KEY=$(…)` alone: the value went into a variable.
+  if (/^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s*)+$/.test(withoutShellComment(outer))) return true;
+  const head = stageHead(outer).replace(/["']/g, "");
+  const program = programOf(head);
+  if (ASSIGNING_PROGRAMS[program] || STDIN_CREDENTIAL_RE.test(head)) return true;
+  if (SENDING_PROGRAMS[program] === true && !VERBOSE_SEND_RE.test(head)) return true;
+  // `echo "$(…)" | shasum`: printed into the pipe, so the pipe's end decides.
+  if ((program === "echo" || program === "printf") && i < pipeline.length - 1) return stageSwallows(pipeline[pipeline.length - 1]!);
+  return false;
+}
+
+/**
+ * The command's pipelines, each as its stages, split at the top level only:
+ * lists on `;`, newlines, `&&`, `||` and a backgrounding `&`; stages on `|`
+ * (and `|&`). Quotes, escapes and `$( … )` / backtick substitutions are kept
+ * whole, and redirections spelled with `|` or `&` (`>|`, `>&2`, `&>`) are not
+ * separators.
+ */
+function topLevelPipelines(text: string): string[][] {
+  const pipelines: string[][] = [];
+  let stages: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  let depth = 0;
+  let backtick = false;
+  const endStage = () => {
+    stages.push(current);
+    current = "";
+  };
+  const endPipeline = () => {
+    endStage();
+    if (stages.some((s) => s.trim() !== "")) pipelines.push(stages.filter((s) => s.trim() !== ""));
+    stages = [];
+  };
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (quote === "'") {
+      if (ch === "'") quote = undefined;
+      current += ch;
+      continue;
+    }
+    if (ch === "\\" && next !== undefined) {
+      current += ch + next;
+      i += 1;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') quote = undefined;
+      current += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === "`") backtick = !backtick;
+    else if (ch === "$" && next === "(") {
+      depth += 1;
+      current += "$(";
+      i += 1;
+      continue;
+    } else if (ch === "(" && depth > 0) depth += 1;
+    else if (ch === ")" && depth > 0) depth -= 1;
+    if (depth > 0 || backtick) {
+      current += ch;
+      continue;
+    }
+    const prev = text[i - 1];
+    if (ch === "\n" || ch === ";") {
+      endPipeline();
+      continue;
+    }
+    if (ch === "|") {
+      if (prev === ">") {
+        current += ch;
+        continue;
+      }
+      if (next === "|") {
+        endPipeline();
+        i += 1;
+        continue;
+      }
+      endStage();
+      if (next === "&") i += 1;
+      continue;
+    }
+    if (ch === "&") {
+      if (prev === ">" || prev === "<" || next === ">") {
+        current += ch;
+        continue;
+      }
+      endPipeline();
+      if (next === "&") i += 1;
+      continue;
+    }
+    current += ch;
+  }
+  endPipeline();
+  return pipelines;
+}
+
+/** A stage with each top-level `$( … )` / backtick substitution replaced by a
+ * token (`outer`), and the substitutions' own texts (`inner`). */
+function splitSubstitutions(stage: string): { outer: string; inner: string[] } {
+  const inner: string[] = [];
+  let outer = "";
+  let quote: string | undefined;
+  for (let i = 0; i < stage.length; i += 1) {
+    const ch = stage[i]!;
+    if (quote === "'") {
+      if (ch === "'") quote = undefined;
+      outer += ch;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < stage.length) {
+      outer += ch + stage[i + 1];
+      i += 1;
+      continue;
+    }
+    if (ch === "'" && quote === undefined) {
+      quote = ch;
+      outer += ch;
+      continue;
+    }
+    if (ch === '"') {
+      quote = quote === '"' ? undefined : '"';
+      outer += ch;
+      continue;
+    }
+    if (ch === "$" && stage[i + 1] === "(") {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < stage.length && depth > 0; j += 1) {
+        if (stage[j] === "(") depth += 1;
+        else if (stage[j] === ")") depth -= 1;
+      }
+      inner.push(stage.slice(i + 2, j - 1));
+      outer += SUBSTITUTION_TOKEN;
+      i = j - 1;
+      continue;
+    }
+    if (ch === "`") {
+      const close = stage.indexOf("`", i + 1);
+      if (close !== -1) {
+        inner.push(stage.slice(i + 1, close));
+        outer += SUBSTITUTION_TOKEN;
+        i = close;
+        continue;
+      }
+    }
+    outer += ch;
+  }
+  return { outer, inner };
+}
+
 /** A path without the home directory leading it, the way POSIX shells (`~/`,
  * `$HOME/`), cmd (`%USERPROFILE%/`) and PowerShell (`$env:USERPROFILE/`)
  * spell it; the path is already `/`-separated. */
@@ -2183,15 +2438,14 @@ interface Raise {
  * developer's machine, and rewrote it — which also means the key had already
  * reached the model provider by then. That is the finding.
  *
- * SEVERITY SPLITS ON WHO PUT IT THERE. A prompt is a human pasting a live
- * secret — a fresh, unintended exposure to the provider's logs, and the one
- * case where "rotate it now" is always the right instruction: critical. A tool
- * argument is authored by the MODEL, so a literal credential there means it was
- * already in provider-bound context upstream — the exposure event is the prompt
- * paste or the file read that fed it (each a finding of its own), and the
- * overwhelmingly common shape is the developer deliberately handing the agent a
- * key to use. Worth recording, one band down: high — which also keeps the
- * routine case off the critical-only alert rail.
+ * HIGH WHEREVER IT IS — prompt, tool argument or tool output. Each is a value
+ * that reached the model's context and the provider's logs: rotate it soon.
+ * Critical is kept for what cannot be undone or went where nobody chose (a
+ * wallet key, an exfiltration after an injected instruction, the guard
+ * tampered with); a key in the provider's logs is neither — the provider is
+ * the one third party the person already sends everything to. The detector id
+ * still splits on who put it there, because the card's sentence and next step
+ * differ: a prompt is a human paste, a tool unit the model's own context.
  */
 function detectNamedPlaceholders(text: string, kind: DetectInput["kind"], raise: Raise): void {
   NAMED_PLACEHOLDER_RE.lastIndex = 0;
@@ -2222,7 +2476,7 @@ function detectNamedPlaceholders(text: string, kind: DetectInput["kind"], raise:
     }
     raise({
       detector: kind === "prompt" ? "credential_in_prompt" : "credential_in_tool_arg",
-      severity: kind === "prompt" ? "critical" : "high",
+      severity: "high",
       ...(HEURISTIC_FAMILIES.has(label) ? { confidence: "medium" as const } : {}),
       key_name: label,
       // The match already IS the placeholder, so the excerpt keeps it verbatim
@@ -2298,19 +2552,29 @@ function detectHardcodedCredential(payload: string, raise: Raise): void {
   });
 }
 
-/** Reading a file that is a credential by name. */
+/** A credential file named by a non-shell tool (Read, Grep, an MCP file tool).
+ * Those tools return what they read, so it reached the agent: medium. The
+ * credential values themselves, when the output shows them, are a high
+ * finding of their own on the output. */
 function detectSecretPaths(haystack: string, raise: Raise, target?: string): void {
   for (const [name, pattern] of SECRET_PATH_PATTERNS) {
     const match = pattern.exec(haystack);
     if (!match) continue;
     raise({
       detector: "dotenv_read",
-      severity: "high",
+      severity: "medium",
       key_name: name,
       excerpt: maskedExcerpt(haystack, match.index, match.index + match[0].length, match[0]),
       ...(target === undefined ? {} : { target }),
     });
   }
+}
+
+/** A secret read's band by where its output went (secretReadReach): printed
+ * back to the agent is medium — what it printed is in the model's context; kept
+ * on this computer is low — nothing of it reached the model. */
+function readSeverity(rawCommand: string, reads: (text: string) => boolean): SecuritySeverity {
+  return secretReadReach(rawCommand, reads) === "local" ? "low" : "medium";
 }
 
 /**
@@ -2319,12 +2583,12 @@ function detectSecretPaths(haystack: string, raise: Raise, target?: string): voi
  * merely names one; `command` is the quote-stripped copy the pattern detectors
  * below read (see the caller for why).
  */
-function detectInCommand(command: string, raise: Raise, rawCommand: string = command): void {
+function detectInCommand(command: string, raise: Raise, rawCommand: string = command, reachCommand: string = rawCommand): void {
   const dump = envDumpIn(rawCommand);
   if (dump !== undefined) {
     raise({
       detector: "env_dump",
-      severity: "high",
+      severity: readSeverity(reachCommand, (text) => envDumpIn(text) !== undefined),
       key_name: "environment",
       excerpt: collapse(dump).slice(0, 200),
     });
@@ -2365,12 +2629,14 @@ function detectInCommand(command: string, raise: Raise, rawCommand: string = com
   // real invocations, though — `git commit -m 'stop printing .env via curl'`
   // is neither.
   //
-  // High, not critical: critical is reserved for a credential that reached the
-  // model provider (credential_in_prompt) — the one case where the exposure is
-  // already irreversible the moment the finding fires. This never touches the
-  // provider at all, and SECRET_PATH_PATTERNS can't tell "read the raw key
-  // bytes and shipped them off" from "passed my own SSH key to scp/rsync as
-  // their normal -i auth argument" — a routine deploy command, not a leak.
+  // Medium: the value went to a host without passing through the model, and
+  // the overwhelmingly common shape is a script using a key with the API it
+  // belongs to (`grep KEY .env | xargs -I{} curl -H "Authorization: …"`).
+  // What to check is the destination, which the key names. The conjunction
+  // also cannot tell "read the raw key bytes and shipped them off" from
+  // "passed my own SSH key to scp/rsync as their normal -i auth argument".
+  // A secret the agent reads and later sends in a separate call is the flow
+  // rule's (flow_secret_egress), and that one stays high.
   if ((readsSecretPath || dump !== undefined) && hasNetworkVerb) {
     // The key names WHAT left and WHERE TO — `.env file → api.example.com` —
     // because it is what a scoped "allow for this project" is written from
@@ -2383,7 +2649,7 @@ function detectInCommand(command: string, raise: Raise, rawCommand: string = com
     const excerpt = collapse(command).slice(0, 240);
     for (const what of whats) {
       for (const destination of egressDestinations(rawCommand)) {
-        raise({ detector: "secret_egress", severity: "high", key_name: `${what} → ${destination}`, excerpt });
+        raise({ detector: "secret_egress", severity: "medium", key_name: `${what} → ${destination}`, excerpt });
       }
     }
   }
@@ -2430,7 +2696,7 @@ function detectInCommand(command: string, raise: Raise, rawCommand: string = com
   }
 
   detectInfraMutation(command, raise);
-  detectSecretManagerRead(command, raise);
+  detectSecretManagerRead(command, raise, reachCommand);
   detectSecurityControlDisabled(command, raise);
 }
 
@@ -2455,14 +2721,14 @@ function detectSecurityControlDisabled(command: string, raise: Raise): void {
  * because the same LocalStack endpoint and local cluster context prove the same
  * thing here: the secret being read belongs to a dev stack on this machine.
  */
-function detectSecretManagerRead(command: string, raise: Raise): void {
+function detectSecretManagerRead(command: string, raise: Raise, rawCommand: string): void {
   const name = secretManagerReadIn(command);
   if (name === undefined) return;
   if (AWS_LOCAL_ENDPOINT_RE.test(command) && name.startsWith("aws ")) return;
   if (LOCAL_K8S_CONTEXT_RE.test(command) && name.startsWith("kubernetes")) return;
   raise({
     detector: "secret_manager_read",
-    severity: "high",
+    severity: readSeverity(rawCommand, (text) => secretManagerReadIn(text) !== undefined),
     key_name: name,
     excerpt: collapse(command).slice(0, 240),
   });
@@ -3473,7 +3739,14 @@ export function detectSecurityFindings(
       // a detector that quoting can blind is a detector a one-keystroke edit
       // evades. Excerpts still pass through the same masking choke point.
       const command = rawCommand === undefined ? undefined : scanWindow(rawCommand, MAX_SCAN_CHARS).replace(/["']/g, "");
-      if (command !== undefined) detectInCommand(command, raise, rawCommand);
+      // Where a read's output goes is judged on the UNREDACTED command when the
+      // caller has it: redaction reads `KEY=$(grep KEY .env | cut …)` and
+      // `Bearer $(cat token)` as secret values and masks the substitution's
+      // opening, leaving a line whose pipes no longer parse. Only a band comes
+      // out of it, never text.
+      const unredacted = typeof input.raw_text === "string" && input.raw_text !== "" ? readCommand(input.raw_text, input.tool_name) : undefined;
+      const reachCommand = unredacted === undefined ? rawCommand : scanWindow(unredacted, MAX_COMMAND_CHARS);
+      if (command !== undefined) detectInCommand(command, raise, rawCommand, reachCommand);
 
       // An MCP database tool's statement argument: destructive SQL is
       // destructive whichever door it arrives through. No host is stated on
@@ -3542,7 +3815,7 @@ export function detectSecurityFindings(
           const match = SECRET_PATH_PATTERNS.find(([name]) => name === read.name)?.[1].exec(read.head);
           raise({
             detector: "dotenv_read",
-            severity: "high",
+            severity: readSeverity(reachCommand ?? rawCommand, (text) => secretPathsReadIn(text, true).length > 0),
             key_name: read.name,
             excerpt: match
               ? maskedExcerpt(read.head, match.index, match.index + match[0].length, match[0])

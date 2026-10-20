@@ -23,6 +23,7 @@ import type { TurnSource } from "./turns.js";
 import type { ExposureAccount } from "./account.js";
 import type { EnforcementMode } from "../guard/policy.js";
 import { DETECTION_SCHEMA_VERSION, upgradeFindingRow } from "./detection-schema.js";
+import { rebandFindingRow } from "./finding-bands.js";
 import { maskFindingRow } from "./masking.js";
 
 /**
@@ -498,6 +499,8 @@ export function foldFindingLines(lines: readonly string[], stats?: { upgraded: n
     try {
       parsed = JSON.parse(trimmed);
       row = upgradeFindingRow(parsed);
+      // Under today's bands and card words (lib/finding-bands.ts).
+      if (row) row = rebandFindingRow(row);
     } catch {
       continue;
     }

@@ -235,6 +235,14 @@
               "type": "string",
               "description": "The redaction family of the value."
             },
+            "output": {
+              "type": "string",
+              "enum": [
+                "agent",
+                "local"
+              ],
+              "description": "For a secret read: printed back to the agent (`agent`), or used without being printed (`local`)."
+            },
             "family_noun": {
               "type": "string",
               "description": "The family in words."
