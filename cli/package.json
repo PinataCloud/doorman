@@ -10,28 +10,14 @@
     "url": "git+https://github.com/PinataCloud/doorman.git"
   },
   "bugs": "https://github.com/PinataCloud/doorman/issues",
-  "keywords": [
-    "doorman",
-    "ai-agents",
-    "claude-code",
-    "codex",
-    "security",
-    "secrets",
-    "prompt-injection",
-    "mcp"
-  ],
+  "keywords": ["doorman", "ai-agents", "claude-code", "codex", "security", "secrets", "prompt-injection", "mcp"],
   "engines": {
     "node": ">=22"
   },
   "bin": {
     "doorman": "build/main/cli/index.js"
   },
-  "files": [
-    "build/",
-    "LICENSE",
-    "NOTICE",
-    "README.md"
-  ],
+  "files": ["build/", "LICENSE", "NOTICE", "README.md"],
   "dependencies": {
     "@huggingface/tokenizers": "0.1.3"
   }
