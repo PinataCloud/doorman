@@ -5,6 +5,7 @@ import type { UnattendedPolicy } from "../../guard/policy.js";
 import { describeIntegrity } from "../../lib/guard-integrity.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
+import { dockerSandbox, sandboxWatchCommand, type DockerSandbox } from "../docker-sandbox.js";
 import { CliError, table, type CommandResult } from "../output.js";
 import { customRulesCommands } from "./custom-rules.js";
 import { exceptionsCommands } from "./exceptions.js";
@@ -66,15 +67,20 @@ function guardReport(ctx: CliContext, all: boolean): CommandResult {
     ...(integrity.status === "tampered" || (installed && integrity.status !== "healthy") ? [`  ${s.red(describeIntegrity(integrity))}`] : []),
     `  bundle   ${tilde(ctx.guardDir, ctx.io.home)}${data.policy_file ? "" : s.yellow("  (no policy.json yet)")}`,
     `  holds    ${confirmSentence(policy.confirm)}`,
-    `  answers  ${answering ? s.green(`${answering.by}${answering.pid !== undefined ? ` (pid ${answering.pid})` : ""}`) : nobodyAnswers(hosts, policy.confirm.unattended)}`,
+    `  answers  ${answering ? s.green(`${answering.by}${answering.pid !== undefined ? ` (pid ${answering.pid})` : ""}`) : nobodyAnswers(hosts, policy.confirm.unattended, dockerSandbox(ctx.io.env))}`,
   ];
   return { data, text };
 }
 
 /** What a held call does while neither the app nor `doorman watch` answers:
  * agents with their own permission prompt ask there, the rest follow
- * `confirm.unattended` (guard/hold.ts unattendedOutcome). */
-function nobodyAnswers(hosts: readonly { label: string; installed: boolean; native_ask: boolean }[], unattended: UnattendedPolicy): string {
+ * `confirm.unattended` (guard/hold.ts unattendedOutcome). In a Docker Sandbox
+ * the app can't run, so the way to answer is `doorman watch` from the host. */
+function nobodyAnswers(
+  hosts: readonly { label: string; installed: boolean; native_ask: boolean }[],
+  unattended: UnattendedPolicy,
+  sandbox: DockerSandbox | undefined,
+): string {
   const guarded = hosts.filter((h) => h.installed);
   const ownPrompt = [...new Set(guarded.filter((h) => h.native_ask).map((h) => h.label))];
   const others = [...new Set(guarded.filter((h) => !h.native_ask).map((h) => h.label))].filter((l) => !ownPrompt.includes(l));
@@ -83,7 +89,7 @@ function nobodyAnswers(hosts: readonly { label: string; installed: boolean; nati
   if (ownPrompt.length > 0) parts.push(`${ownPrompt.join(", ")} ${ownPrompt.length === 1 ? "asks in its" : "ask in their"} own prompt`);
   if (others.length > 0) parts.push(`${others.join(", ")}: held calls are ${fallback}`);
   if (parts.length === 0) parts.push(`held calls are ${fallback}`);
-  return `nobody right now: ${parts.join("; ")} (open Doorman or run doorman watch)`;
+  return `nobody right now: ${parts.join("; ")} (${sandbox ? `run on your computer: ${sandboxWatchCommand(sandbox)}` : "open Doorman or run doorman watch"})`;
 }
 
 const statusOptions = { all: { type: "boolean", default: false } } as const;

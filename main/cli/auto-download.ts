@@ -25,7 +25,15 @@ import { defaultInjectionClassifierConfig, type InjectionModelId } from "../guar
 import { handOverLock, liveLock, releaseLock, takeLock, updateLock, type LockRecord } from "../lib/data-owner.js";
 import { runtimePresent } from "../lib/injection-classifier.js";
 import { fetchInjectionModels, injectionModelsMissing, type InjectionModelFetchDeps } from "../lib/injection-model-choice.js";
-import { bytesOnDisk, downloadModel, injectionModelManifest, manifestBytes, modelStatus, PROMPT_GUARD_2_22M_DOORMAN_1 } from "../lib/model-assets.js";
+import {
+  bytesOnDisk,
+  downloadModel,
+  injectionModelManifest,
+  manifestBytes,
+  ModelDownloadHttpError,
+  modelStatus,
+  PROMPT_GUARD_2_22M_DOORMAN_1,
+} from "../lib/model-assets.js";
 import { injectionModelSourceFromEnv } from "../lib/policy-env.js";
 import { doormanSource, modelPlan, modelsRoot, runtimeDir } from "./classifier.js";
 import type { CliContext } from "./context.js";
@@ -41,20 +49,44 @@ const NO_AUTO_DOWNLOAD = new Set(["model download", "model remove", "model selec
  * app's 1 / 5 / 30 minutes, then once a day (a CLI has no "next launch"). */
 export const AUTO_DOWNLOAD_RETRY_MS = [60_000, 5 * 60_000, 30 * 60_000, 24 * 60 * 60_000];
 
+/** A download a server answered with an HTTP error: the status, and the host
+ * that answered (after redirects, so possibly the CDN, not the Hub). */
+export interface DownloadRefusal {
+  status: number;
+  host: string;
+}
+
+/** The refusal behind a downloadModel error, if it was one. */
+export function downloadRefusal(err: unknown): DownloadRefusal | undefined {
+  if (!(err instanceof ModelDownloadHttpError)) return undefined;
+  try {
+    return { status: err.status, host: new URL(err.url).host };
+  } catch {
+    return undefined;
+  }
+}
+
 interface AttemptRecord {
   last_attempt_at: string;
   /** Failures in a row; 0 after a success. */
   failures: number;
   error?: string;
+  /** When `error` was a server's HTTP answer: which status, from which host. */
+  refused?: DownloadRefusal;
 }
 
 /** What `doorman model` and `doorman status` show about a model download. */
 export type AutoDownloadView =
   | { status: "running"; by: "app" | "cli"; pid: number; model: InjectionModelId; bytes_done: number; bytes_total: number }
-  | { status: "failed"; error: string; next_attempt_at: string }
+  | { status: "failed"; error: string; refused?: DownloadRefusal; next_attempt_at: string }
   | { status: "idle" };
 
 const recordPath = (dataDir: string) => join(modelsRoot(dataDir), ".auto-download.json");
+
+function readRefusal(raw: unknown): DownloadRefusal | undefined {
+  if (!raw || typeof raw !== "object" || !("status" in raw) || !("host" in raw)) return undefined;
+  return typeof raw.status === "number" && typeof raw.host === "string" ? { status: raw.status, host: raw.host } : undefined;
+}
 
 function readRecord(dataDir: string): AttemptRecord | undefined {
   let raw: unknown;
@@ -66,7 +98,8 @@ function readRecord(dataDir: string): AttemptRecord | undefined {
   if (!raw || typeof raw !== "object" || !("last_attempt_at" in raw) || typeof raw.last_attempt_at !== "string") return undefined;
   const failures = "failures" in raw && typeof raw.failures === "number" ? raw.failures : 0;
   const error = "error" in raw && typeof raw.error === "string" ? raw.error : undefined;
-  return { last_attempt_at: raw.last_attempt_at, failures, ...(error !== undefined ? { error } : {}) };
+  const refused = "refused" in raw ? readRefusal(raw.refused) : undefined;
+  return { last_attempt_at: raw.last_attempt_at, failures, ...(error !== undefined ? { error } : {}), ...(refused ? { refused } : {}) };
 }
 
 /** When the next attempt may start after `record`'s failures (0 = now). */
@@ -81,8 +114,13 @@ export function activeDownload(ctx: CliContext): LockRecord | undefined {
   return liveLock(ctx.dataDir, "model-download", ctx.io.now());
 }
 
-/** The app's injectionModelFetchDeps, for the CLI's data directory. */
-function fetchDeps(ctx: CliContext, onModel: (model: InjectionModelId) => void): InjectionModelFetchDeps {
+/** The app's injectionModelFetchDeps, for the CLI's data directory.
+ * `onFailed` hears each model's failure, with the refusal behind it if any. */
+function fetchDeps(
+  ctx: CliContext,
+  onModel: (model: InjectionModelId) => void,
+  onFailed: (model: InjectionModelId, refused: DownloadRefusal | undefined) => void = () => {},
+): InjectionModelFetchDeps {
   const root = modelsRoot(ctx.dataDir);
   return {
     plan: () => modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env),
@@ -97,6 +135,7 @@ function fetchDeps(ctx: CliContext, onModel: (model: InjectionModelId) => void):
         await downloadModel(root, manifest, { ...(source === undefined ? {} : { source }), ...(ctx.io.fetch ? { fetchImpl: ctx.io.fetch } : {}) });
         return { ok: true };
       } catch (err) {
+        onFailed(model, downloadRefusal(err));
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
     },
@@ -160,11 +199,21 @@ export async function runAutoDownload(ctx: CliContext): Promise<{ ok: boolean; e
   try {
     // The app started meanwhile: it downloads for itself. Not a failure.
     if (ctx.running()) return { ok: true, fetched: [] };
-    const result = await fetchInjectionModels(fetchDeps(ctx, (model) => updateLock(ctx.dataDir, "model-download", process.pid, { model })));
+    const failed = new Map<InjectionModelId, DownloadRefusal | undefined>();
+    const result = await fetchInjectionModels(
+      fetchDeps(
+        ctx,
+        (model) => updateLock(ctx.dataDir, "model-download", process.pid, { model }),
+        (model, refused) => failed.set(model, refused),
+      ),
+    );
     const previous = readRecord(ctx.dataDir);
+    // fetchInjectionModels reports the first model that failed (doorman-1
+    // before stock, in the order they are fetched); keep that one's refusal.
+    const refused = [...failed.values()][0];
     const record: AttemptRecord = result.ok
       ? { last_attempt_at: started, failures: 0 }
-      : { last_attempt_at: started, failures: (previous?.failures ?? 0) + 1, error: result.error ?? "download failed" };
+      : { last_attempt_at: started, failures: (previous?.failures ?? 0) + 1, error: result.error ?? "download failed", ...(refused ? { refused } : {}) };
     writeFileSync(recordPath(ctx.dataDir), JSON.stringify(record));
     return result;
   } finally {
@@ -183,7 +232,7 @@ export function autoDownloadView(ctx: CliContext): AutoDownloadView {
   }
   const record = readRecord(ctx.dataDir);
   if (record?.error !== undefined && record.failures > 0) {
-    return { status: "failed", error: record.error, next_attempt_at: new Date(nextAttemptAt(record)).toISOString() };
+    return { status: "failed", error: record.error, ...(record.refused ? { refused: record.refused } : {}), next_attempt_at: new Date(nextAttemptAt(record)).toISOString() };
   }
   return { status: "idle" };
 }
