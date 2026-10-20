@@ -66,12 +66,13 @@ the masked evidence back from the transcripts instead.
 
 ## Docker Sandboxes
 
-To run Claude Code in a [Docker Sandbox](https://docs.docker.com/ai/sandboxes/)
+To run a coding agent in a [Docker Sandbox](https://docs.docker.com/ai/sandboxes/)
 with Doorman guarding it, add the
 [Doorman kit](https://github.com/PinataCloud/doorman/tree/main/integrations/sbx-kit)
-(kits are experimental in `sbx`). `sbx` only accepts kits from sources you
-allow, so allow this one once (keep any sources you already allow in the
-list):
+(kits are experimental in `sbx`). It works with the `sbx` agents `claude`,
+`codex`, `copilot`, `cursor`, `droid`, `gemini` and `opencode`. `sbx` only
+accepts kits from sources you allow, so allow this one once (keep any sources
+you already allow in the list), then start the agent (Claude Code here):
 
 ```sh
 sbx settings set kit.allowedSources '["docker.io/","git+https://github.com/PinataCloud/doorman.git"]'
@@ -90,8 +91,9 @@ sbx policy allow network --sandbox my-project "huggingface.co,**.hf.co"
 ```
 
 The desktop app can't run inside a sandbox. Answer held calls from the host
-with `sbx exec -it my-project doorman watch`; with nobody watching, Claude
-Code asks in its own prompt.
+with `sbx exec -it my-project doorman watch`. With nobody watching, Claude
+Code, Copilot CLI, Cursor and Factory Droid ask in their own prompt; the
+others deny the call.
 
 ## Updates
 
