@@ -51,7 +51,7 @@ Download the build for your machine from the
 | Mac with Apple silicon | `Doorman-<version>-arm64.dmg` | Open it and drag Doorman into Applications. Signed and notarized, so it opens like any app. |
 | Mac with Intel | `Doorman-<version>.dmg` | The same. |
 | Windows 10 or 11 (x64 or Arm) | `Doorman-Setup-<version>.exe` | Run the installer. It is unsigned, so SmartScreen may say "Windows protected your PC": choose **More info**, then **Run anyway**. It installs for your user only, with no admin prompt. |
-| Linux (x64) | `Doorman-<version>.AppImage` | `chmod +x Doorman-*.AppImage`, then run it. No libfuse2 needed. |
+| Linux (x64) | `Doorman-<version>.AppImage` | `chmod +x Doorman-*.AppImage`, then run it. No libfuse2 needed. Running it adds Doorman, with its icon, to your app launcher, pointing at wherever the AppImage is (a later run from a new place moves the entry), so keep it somewhere permanent such as `~/Applications`. |
 | Linux (arm64) | `Doorman-<version>-arm64.AppImage` | The same. |
 
 On first launch, a short setup:
@@ -74,7 +74,14 @@ them itself.
 
 **To remove it**, turn Real time protection off first (Settings), which takes
 the guard's hook out of every agent, then delete the app. Its data stays in
-the [data directory](#layout) until you delete that too.
+the [data directory](#layout) until you delete that too. On Linux, the
+launcher entry hides itself once the AppImage is gone; to remove it and its
+icons too:
+
+```sh
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}"/applications/cloud.pinata.doorman.desktop \
+      "${XDG_DATA_HOME:-$HOME/.local/share}"/icons/hicolor/*/apps/cloud.pinata.doorman.png
+```
 
 ### Command line
 
@@ -259,6 +266,17 @@ turn a feature on, and every write keeps a `.bak` beside the file:
   `<userData>/doorman/mcp/doorman-mcp.js` (`main/mcp-install.ts`).
 - **The VS Code extension** (`pinata.doorman`): installed through
   `code --install-extension`.
+
+One exception, on Linux only: the **AppImage** adds itself to your app
+launcher on every launch, because without a launcher entry GNOME shows its
+window with a generic icon, labelled `cloud.pinata.doorman`. It writes
+`~/.local/share/applications/cloud.pinata.doorman.desktop` and
+`~/.local/share/icons/hicolor/<size>/apps/cloud.pinata.doorman.png` (under
+`$XDG_DATA_HOME` when that is set), and keeps the entry pointing at wherever
+the AppImage last ran from. It never overwrites an entry of that name it
+didn't write, and writes nothing when AppImageLauncher or a similar tool has
+already integrated the AppImage. [To remove it](#desktop-app): delete those
+files.
 
 ## Layout
 

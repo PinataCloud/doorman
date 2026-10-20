@@ -130,12 +130,21 @@ linux:
   # the .desktop file's Exec line. The default would be the product name
   # verbatim ("Doorman"), which is shouting for a binary.
   executableName: doorman
-  # Names the installed .desktop file after `desktopName` in package.json and
-  # writes the matching StartupWMClass. Electron derives its GTK app_id from
-  # the same field, so this is what makes a desktop environment link the
-  # running window to its launcher entry (correct icon in the dock / alt-tab,
-  # no phantom second entry) instead of showing a generic one.
+  # Names the AppImage's embedded .desktop file after `desktopName` in
+  # package.json and writes the matching StartupWMClass. Electron derives its
+  # Wayland app_id / X11 WM_CLASS from the same field (`cloud.pinata.doorman`),
+  # so this is what makes a desktop environment link the running window to its
+  # launcher entry (correct icon and name in the dock / alt-tab, no phantom
+  # second entry). The embedded file only counts once something installs it
+  # (AppImageLauncher, Gear Lever); a plain run of the AppImage writes the app's
+  # own entry under ~/.local/share instead (main/lib/linux-desktop-entry.ts).
   syncDesktopName: true
+  # The 1024 px brand PNG, for the window icon (X11 _NET_WM_ICON) and the
+  # hicolor icons the AppImage run installs. The AppImage's own icon sits at
+  # its root, outside Resources, where the app can't count on finding it.
+  extraResources:
+    - from: assets/doorman-app-icon.png
+      to: assets/doorman-app-icon.png
   target:
     - target: AppImage
       arch: [x64, arm64]
