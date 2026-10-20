@@ -144,6 +144,7 @@ import { EvidenceVault, sandboxVaultCrypto } from "./lib/evidence-vault.js";
 import { surfaceShown } from "./lib/surface-scope.js";
 import { maskTurnText } from "./lib/masking.js";
 import { homeIsRedirected } from "./lib/sandbox.js";
+import { desktopPaths, integrateAppImage } from "./lib/linux-desktop-entry.js";
 import {
   approvalContext,
   exposureContext,
@@ -1250,6 +1251,46 @@ function writePrefs(prefs: Prefs): void {
   }
 }
 
+// ---- Linux desktop integration -----------------------------------------------------
+
+/**
+ * A downloaded AppImage that is simply run has no launcher entry, so GNOME
+ * shows its window with a generic icon and the raw app_id as its name. Write
+ * the entry and icon for it (lib/linux-desktop-entry.ts); a distro package or a
+ * dev run has no $APPIMAGE and is left to its own packaging. Runs before any
+ * window exists, so the shell finds the entry for the very first one.
+ */
+function integrateLinuxAppImage(): void {
+  const appImage = process.env.APPIMAGE;
+  if (process.platform !== "linux" || !app.isPackaged || !appImage) return;
+  try {
+    const paths = desktopPaths(process.env, homedir());
+    // Decoded only if an icon has to be written: a current install costs one
+    // file read and a stat per icon size.
+    let master: Electron.NativeImage | undefined;
+    const outcome = integrateAppImage({
+      appImage,
+      version: app.getVersion(),
+      paths,
+      renderIcon: (size) => {
+        master ??= nativeImage.createFromPath(join(assetRoot(), "doorman-app-icon.png"));
+        return master.isEmpty() ? null : master.resize({ width: size, height: size, quality: "best" }).toPNG();
+      },
+    });
+    if (outcome.written.length === 0) return;
+    console.log(`[doorman] desktop entry ${outcome.status}: ${paths.desktopFile}`);
+    // Best-effort cache refreshes; a desktop without these tools notices the
+    // new files by itself. The icon cache is refreshed, never created: a
+    // hicolor directory without one is simply scanned.
+    execFile("update-desktop-database", ["-q", paths.applicationsDir], () => {});
+    if (existsSync(join(paths.hicolorDir, "icon-theme.cache"))) {
+      execFile("gtk-update-icon-cache", ["-q", "-t", "-f", paths.hicolorDir], () => {});
+    }
+  } catch (err) {
+    console.warn("[doorman] couldn't write the desktop entry:", err);
+  }
+}
+
 // ---- window ---------------------------------------------------------------------
 
 function createWindow(): BrowserWindow {
@@ -1271,11 +1312,18 @@ function createWindow(): BrowserWindow {
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 14 } }
       : { autoHideMenuBar: true }),
-    // A packaged Windows or Linux build takes its window icon from the exe /
-    // desktop entry; a dev run is Electron's own binary, so name it here.
-    ...(process.platform !== "darwin" && !app.isPackaged
-      ? { icon: join(assetRoot(), process.platform === "win32" ? "doorman-app-icon-win.png" : "doorman-app-icon.png") }
-      : {}),
+    // A packaged Windows build takes its window icon from the exe; a dev run
+    // is Electron's own binary, so it is named here. Linux always names it: a
+    // packaged AppImage has no icon of its own for the window manager, and the
+    // X11 _NET_WM_ICON (Xwayland, KDE, XFCE) is the only icon some shells use
+    // for a window with no matching desktop entry (integrateLinuxAppImage).
+    // At 256 px: X11 carries the icon uncompressed, and the 1024 px master
+    // would be a 4 MB property every taskbar and switcher reads.
+    ...(process.platform === "linux"
+      ? { icon: nativeImage.createFromPath(join(assetRoot(), "doorman-app-icon.png")).resize({ width: 256, height: 256, quality: "best" }) }
+      : process.platform === "win32" && !app.isPackaged
+        ? { icon: join(assetRoot(), "doorman-app-icon-win.png") }
+        : {}),
     // Opaque: the sidebar is solid plum, so vibrancy would only show through
     // during load as a mismatched blur.
     backgroundColor: windowCanvas(),
@@ -2482,6 +2530,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     registerProtocol();
+    integrateLinuxAppImage();
 
     // The data directory is shared with the doorman CLI: mark it as the app's
     // before anything here writes to it, and let a CLI command that is writing

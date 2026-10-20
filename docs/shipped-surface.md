@@ -40,6 +40,10 @@ Doorman.app/Contents/
     vscode/doorman.vsix      the VS Code companion, installed by path
 ```
 
+The Linux AppImage's `resources/assets/` also carries `doorman-app-icon.png`
+(the 1024 px brand tile, `linux.extraResources`): the window icon, and the
+source of the icons the AppImage installs for the desktop (below).
+
 Inside `app.asar`:
 
 - `package.json` — name, version, description, author, licence
@@ -91,6 +95,24 @@ Covered in the README (*What it writes outside its own directory*): the guard's
 hook entries and plugin directories, MCP server registrations, and the VS Code
 extension — each only when its feature is on, each with a `.bak` beside the
 file it changes.
+
+One write is not behind a feature: the **Linux AppImage**, on every launch
+(`main/lib/linux-desktop-entry.ts`), makes sure the desktop has a launcher
+entry for it, because without one GNOME shows the window with a generic icon
+and labels it `cloud.pinata.doorman`. Both paths are under the user's data
+directory (`$XDG_DATA_HOME`, default `~/.local/share`):
+
+- `applications/cloud.pinata.doorman.desktop` — `Exec`/`TryExec` point at the
+  running `.AppImage`; marked `X-Doorman-AppImage=true`, rewritten only while
+  it carries that marker and differs (the AppImage moved, a new version).
+- `icons/hicolor/<n>x<n>/apps/cloud.pinata.doorman.png`, n = 512, 256, 128,
+  64, 48, 32.
+
+It then runs `update-desktop-database` on that `applications/` directory (which
+writes its `mimeinfo.cache`) and, only where an `icon-theme.cache` already
+exists, `gtk-update-icon-cache`. Nothing is written by a dev run, a non-AppImage
+install, over an entry of the same name it didn't write, or when another entry
+(AppImageLauncher, Gear Lever) already launches the same AppImage.
 
 ## Must never ship — checked at the last audit
 
