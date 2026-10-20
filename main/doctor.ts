@@ -25,7 +25,8 @@ import { hookWritesAllowed, SANDBOX_READ_ONLY } from "./lib/sandbox.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { GUARD_FILES, guardCommand, guardDir, installGuard } from "./enforcement.js";
+import { GUARD_FILES, checkGuardRuntime, guardCommand, guardDir, installGuard } from "./enforcement.js";
+import { runtimeLabel } from "./lib/node-launcher.js";
 import { createSourceIo } from "./lib/source-io.js";
 import type { SourceIo } from "./lib/transcript-sources.js";
 import { GUARD_COMMAND_MARKER, type GuardPolicy } from "./guard/policy.js";
@@ -112,7 +113,7 @@ export class DoctorRunner {
     this.emit({ status: "checking", last_reason: opts.reason });
     try {
       if (opts.refresh) this.invalidateEditorProbe();
-      let report = diagnose(this.input());
+      let report = diagnose(this.input(opts));
       const paused: string[] = [];
       let outcome: DoctorState["last_repair"] | undefined;
       if (opts.repair !== "none") {
@@ -143,7 +144,7 @@ export class DoctorRunner {
             }
           }
           // Re-read the world the repairs just changed.
-          report = diagnose(this.input());
+          report = diagnose(this.input(opts));
         }
       }
       this.emit({
@@ -161,7 +162,16 @@ export class DoctorRunner {
     return this.state;
   }
 
-  private input(): DoctorInput {
+  /** The guard.runtime row's input: fresh probes on a manual run, otherwise
+   * cached per runtime file. A diagnose-only run writes nothing. */
+  private guardRuntime(opts: RunOptions): DoctorInput["guardRuntime"] {
+    const report = checkGuardRuntime(this.deps.userDataDir, { fresh: opts.refresh === true, persist: opts.repair !== "none" });
+    if (!report) return undefined;
+    if (report.working && report.using) return { ok: true, runsOn: runtimeLabel(report.using.kind, report.using.path) };
+    return { ok: false, error: report.problem ?? "The guard can't start", repairable: report.ok };
+  }
+
+  private input(opts: RunOptions): DoctorInput {
     return {
       home: homedir(),
       codexHome: process.env.CODEX_HOME,
@@ -174,6 +184,7 @@ export class DoctorRunner {
       guardFiles: GUARD_FILES,
       guardCommandMarker: GUARD_COMMAND_MARKER,
       guardCommandFor: (hostId) => guardCommand(this.deps.userDataDir, hostId),
+      guardRuntime: this.deps.guardWanted() ? this.guardRuntime(opts) : undefined,
       env: process.env,
       fs: {
         exists: (p) => existsSync(p),
@@ -318,7 +329,8 @@ export class DoctorRunner {
         return true;
       }
       case "install-guard": {
-        const outcome = installGuard(this.deps.userDataDir, this.deps.policy());
+        // Fresh probes: a repair should not trust the results it is repairing.
+        const outcome = installGuard(this.deps.userDataDir, this.deps.policy(), { fresh: true });
         if (!outcome.ok) this.deps.log(`guard install failed: ${outcome.error}`);
         return outcome.ok;
       }

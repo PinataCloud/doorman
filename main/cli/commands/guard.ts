@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { checkGuardIntegrity, guardHostStates, installGuard, uninstallGuard } from "../../enforcement.js";
+import { checkGuardIntegrity, checkGuardRuntime, guardHostStates, installGuard, uninstallGuard } from "../../enforcement.js";
 import type { UnattendedPolicy } from "../../guard/policy.js";
 import { describeIntegrity } from "../../lib/guard-integrity.js";
 import type { CliCommand } from "../command.js";
@@ -31,6 +31,11 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
   }));
   // A read: report a drifted bundle, don't re-copy it (install does that).
   const integrity = checkGuardIntegrity(ctx.dataDir, prefs.guard_wanted, { heal: false });
+  // Wired is not working: run the launcher once the way an agent starts the
+  // hook, and each runtime it may use. A read, so nothing is rewritten.
+  const installed = hosts.some((h) => h.installed);
+  const runtime = installed ? checkGuardRuntime(ctx.dataDir, { fresh: true, persist: false }) : undefined;
+  const broken = runtime !== undefined && !runtime.working;
   const running = ctx.running();
   const answering = running
     ? { by: running.version?.startsWith("cli-") ? "doorman watch" : "Doorman", ...(running.pid !== undefined ? { pid: running.pid } : {}) }
@@ -41,6 +46,7 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
     policy_file: existsSync(join(ctx.guardDir, "policy.json")),
     hosts,
     integrity,
+    runtime: runtime ?? null,
     answering,
     confirm: policy.confirm,
   };
@@ -48,11 +54,11 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
   const s = ctx.style;
   const shown = all ? hosts : hosts.filter((h) => h.present);
   const absent = new Set(hosts.filter((h) => !h.present).map((h) => h.label)).size;
-  const installed = hosts.some((h) => h.installed);
   const sandbox = dockerSandbox(ctx.io.env);
   const switchedOff = prefs.guard_wanted ? "" : s.dim("  (switched off)");
-  const state =
-    integrity.status === "healthy"
+  const state = broken
+    ? ui.mark("error", `${s.error("not working")}${switchedOff}`)
+    : integrity.status === "healthy"
       ? ui.mark("ok", s.ok("installed"))
       : integrity.status === "tampered"
         ? ui.mark("error", `${s.error("altered")}${switchedOff}`)
@@ -68,6 +74,10 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
     ? undefined
     : !prefs.guard_wanted
       ? "`doorman guard install` turns it on."
+      : broken
+        ? runtime.ok
+          ? "`doorman guard install` switches it to a runtime that works."
+          : "Install Node.js or reinstall Doorman, then run `doorman guard install`."
       : integrity.status === "tampered"
         ? "`doorman guard install` restores it."
         : integrity.status === "unknown" && !all
@@ -88,6 +98,7 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
       : ["  No supported agent found on this machine."]),
     ...(!all && absent > 0 ? [s.dim(`  ${absent} other agent${absent === 1 ? "" : "s"} not on this machine (--all lists them)`)] : []),
     ...(integrity.status === "tampered" || (installed && integrity.status !== "healthy") ? [`  ${ui.mark("error", s.error(describeIntegrity(integrity)))}`] : []),
+    ...(broken && runtime.problem ? [`  ${ui.mark("error", s.error(runtime.problem))}`] : []),
     "",
     ...ui.kv([
       ["bundle", `${tilde(ctx.guardDir, ctx.io.home)}${data.policy_file ? "" : s.warn("  (no policy.json yet)")}`],
@@ -96,7 +107,7 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
     ]),
     ...(next ? ["", ui.next(next)] : []),
   ];
-  return { data, text };
+  return { data, text, ...(broken ? { exitCode: 1 } : {}) };
 }
 
 /** What a held call does while neither the app nor `doorman watch` answers:
@@ -155,7 +166,8 @@ const guardInstall: CliCommand = {
   async run(ctx) {
     // setGuardWanted(true): install, and only then record the intent.
     ctx.requireWritable("Turn the guard on");
-    const outcome = installGuard(ctx.dataDir, ctx.policy());
+    // Fresh probes: an explicit install re-checks every runtime it may use.
+    const outcome = installGuard(ctx.dataDir, ctx.policy(), { fresh: true });
     if (!outcome.ok) {
       throw new CliError(outcome.error, 1, outcome.no_agents ? "Run `doorman guard status --all` to see the agents Doorman supports." : undefined);
     }
@@ -171,7 +183,9 @@ const guardInstall: CliCommand = {
         codex_restart_required: outcome.codex_restart_required,
         failed_hosts: outcome.failures,
       },
-      text: [ctx.ui.mark("ok", ctx.style.ok("Guard on.")), ...notes, "", ...report.text],
+      // Wired but unable to start is not "on": the report below says why.
+      text: [report.exitCode ? ui.mark("error", s.error("Guard wired, but it can't start.")) : ui.mark("ok", s.ok("Guard on.")), ...notes, "", ...report.text],
+      ...(report.exitCode ? { exitCode: report.exitCode } : {}),
     };
   },
 };

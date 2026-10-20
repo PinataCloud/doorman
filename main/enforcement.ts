@@ -40,7 +40,7 @@ import { DEFAULT_HOST, HOSTS, documentReadable } from "./guard/hosts/index.js";
 import { hermesHome, hermesHost, withoutLegacyAllowlistEntries } from "./guard/hosts/hermes.js";
 import type { GuardHostDescriptor, HostArtifact } from "./guard/hosts/types.js";
 import { buildInfo } from "./lib/build-info.js";
-import { LAUNCHER, launcherHash, launcherOnDiskHash, nodeCommandPrefix, readRuntimes, usesLauncher, writeLauncher } from "./lib/node-launcher.js";
+import { LAUNCHER, launcherHash, launcherOnDiskHash, nodeCommandPrefix, probeLauncher, readRuntimes, runtimeHealth, updateRuntimes, usesLauncher, writeLauncher, type RuntimeHealth } from "./lib/node-launcher.js";
 import { assessGuardIntegrity, type GuardIntegrityReport } from "./lib/guard-integrity.js";
 import {
   heartbeatPath,
@@ -380,12 +380,14 @@ function bundleWriter(): GuardBundleStamp["writer"] {
  * Copy the compiled guard bundle into userData (idempotent, cheap) — unless a
  * NEWER Doorman build's bundle is there intact: that one stays, so the app and
  * the CLI never downgrade each other's guard. Returns whether it copied.
+ * `fresh` probes every recorded runtime again rather than only the ones whose
+ * file changed (lib/node-launcher.ts): what an explicit install does.
  */
-export function refreshGuardBundle(userDataDir: string): boolean {
+export function refreshGuardBundle(userDataDir: string, options: { fresh?: boolean } = {}): boolean {
   const target = guardDir(userDataDir);
   mkdirSync(target, { recursive: true });
   // This build's runtime goes into the launcher whoever's bundle stays.
-  writeLauncher(target);
+  writeLauncher(target, undefined, options);
   const own = buildInfo();
   const stamp = readGuardBundleStamp(userDataDir);
   if (stamp && stamp.revision > own.revision && stampIntact(userDataDir, stamp)) return false;
@@ -505,7 +507,7 @@ export interface GuardHostFailure {
  * whatever they had before (an older entry, or none), untouched.
  */
 export type GuardInstallOutcome =
-  | { ok: true; codex_restart_required: boolean; failures: GuardHostFailure[] }
+  | { ok: true; codex_restart_required: boolean; failures: GuardHostFailure[]; runtime_error?: string }
   | { ok: false; error: string; failures?: GuardHostFailure[]; no_agents?: true };
 
 /** One sentence per failing host, named — what `guard_sync_error` carries.
@@ -523,20 +525,24 @@ export interface GuardProblem {
 }
 
 /** The problem to show for a guard outcome, or undefined when every present
- * host took it. A partial install is a problem too: an agent the guard
- * couldn't reach runs an older policy, or none. No agent on this machine is
- * NOT one — nothing is out of date, there is just nothing to guard yet, and
- * the screens say that on their own. */
+ * host took it and the guard can start. A partial install is a problem too:
+ * an agent the guard couldn't reach runs an older policy, or none. So is a
+ * guard wired everywhere that no runtime on this machine can start
+ * (`runtime_error`): every agent lets a hook that can't start through. No
+ * agent on this machine is NOT one — nothing is out of date, there is just
+ * nothing to guard yet, and the screens say that on their own. */
 export function guardProblem(outcome: {
   ok: boolean;
   error?: string;
   failures?: readonly GuardHostFailure[];
   no_agents?: true;
+  runtime_error?: string;
 }): GuardProblem | undefined {
   if (outcome.no_agents) return undefined;
   const failures = [...(outcome.failures ?? [])];
   if (!outcome.ok) return { error: outcome.error ?? "unknown error", failures };
-  return failures.length > 0 ? { error: describeGuardFailures(failures), failures } : undefined;
+  const sentences = [...(outcome.runtime_error ? [outcome.runtime_error.replace(/\.+$/, "")] : []), ...(failures.length > 0 ? [describeGuardFailures(failures)] : [])];
+  return sentences.length > 0 ? { error: sentences.join(". "), failures } : undefined;
 }
 
 /** guardProblem's sentence alone. */
@@ -546,7 +552,9 @@ export function guardInstallProblem(outcome: GuardInstallOutcome): string | unde
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-export function installGuard(userDataDir: string, policy: GuardPolicy): GuardInstallOutcome {
+/** `fresh`: probe every runtime again (an explicit install, a repair), not
+ * only the ones whose file changed since the last probe. */
+export function installGuard(userDataDir: string, policy: GuardPolicy, options: { fresh?: boolean } = {}): GuardInstallOutcome {
   try {
     // The effective per-hook timeout: it must EXCEED the hold window, or the
     // host kills the guard mid-hold and a killed hook fails open (which would
@@ -605,7 +613,10 @@ export function installGuard(userDataDir: string, policy: GuardPolicy): GuardIns
     // No host could take the guard: write nothing (not even the policy, as
     // before) and keep the switch off rather than read "enforcing".
     if (plans.length === 0) return { ok: false, error: describeGuardFailures(failures), failures };
-    refreshGuardBundle(userDataDir);
+    refreshGuardBundle(userDataDir, options);
+    // Wired or not, a hook no runtime here can start is one every agent lets
+    // through: the outcome says so, and so does every screen showing it.
+    const runtime = usesLauncher() ? runtimeHealth(readRuntimes(guardDir(userDataDir))) : undefined;
     writeGuardPolicy(userDataDir, policy);
     // Write only what changed: this runs on every boot and policy sync, and a
     // no-op rewrite still reformats the file and churns its mtime — plus, on
@@ -650,7 +661,7 @@ export function installGuard(userDataDir: string, policy: GuardPolicy): GuardIns
       }
     }
     if (installed === 0) return { ok: false, error: describeGuardFailures(failures), failures };
-    return { ok: true, codex_restart_required: codexChanged, failures };
+    return { ok: true, codex_restart_required: codexChanged, failures, ...(runtime && !runtime.ok && runtime.error ? { runtime_error: runtime.error } : {}) };
   } catch (err) {
     return { ok: false, error: errorText(err) };
   }
@@ -1021,6 +1032,36 @@ export function guardBundleHashes(userDataDir: string): {
     copied[file] = fileHash(join(target, file));
   }
   return launcher({ shipped, copied });
+}
+
+/** Can the guard start: the runtimes it may run on, as last (or just) probed. */
+export interface GuardRuntimeReport extends RuntimeHealth {
+  /** The launcher on disk, run on a probe script the way an agent starts the
+   * hook. Only on a fresh check. */
+  launcher?: { ok: true } | { ok: false; error: string };
+  /** A runtime works and, when it was run, the launcher started. */
+  working: boolean;
+  /** One sentence when it isn't working. */
+  problem?: string;
+}
+
+/**
+ * Probe the guard's runtimes (lib/node-launcher.ts): the doctor's and
+ * `guard status`'s question, "would an agent's hook start at all?". Cached
+ * per runtime file unless `fresh`, which also runs the launcher on disk end
+ * to end. `persist: false` reports without rewriting runtimes.json or the
+ * launcher. Undefined where there is nothing to check: Windows (a bare
+ * `node`), or no build that writes the launcher has run here yet.
+ */
+export function checkGuardRuntime(userDataDir: string, options: { fresh?: boolean; persist?: boolean } = {}): GuardRuntimeReport | undefined {
+  if (!usesLauncher()) return undefined;
+  const target = guardDir(userDataDir);
+  if (!existsSync(join(target, "runtimes.json"))) return undefined;
+  const health = updateRuntimes(target, options);
+  if (!options.fresh) return { ...health, working: health.ok, ...(health.error ? { problem: health.error } : {}) };
+  const launcher = probeLauncher(target);
+  const problem = !health.ok ? health.error : launcher.ok ? undefined : `The guard can't start on this computer, so agents run their tools unguarded (${launcher.error})`;
+  return { ...health, launcher, working: health.ok && launcher.ok, ...(problem ? { problem } : {}) };
 }
 
 /**
