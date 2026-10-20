@@ -546,13 +546,20 @@ export const copilotHost: GuardHostDescriptor = {
   // The VS Code user-data directories are spelled out here rather than imported
   // because this directory is copied verbatim into userData and run with plain
   // `node` — nothing in main/guard/ may import outside it. lib/vscode.ts holds
-  // the canonical family list, and test/vscode.test.ts fails if the two
-  // ever disagree.
+  // the canonical family list, and test/hosts-copilot.test.ts fails if the two
+  // ever disagree. Every platform's spelling is listed: one that is not this
+  // machine's simply never exists.
   presencePaths: [
     ".copilot",
     "Library/Application Support/Code",
     "Library/Application Support/Code - Insiders",
     "Library/Application Support/VSCodium",
+    "AppData/Roaming/Code",
+    "AppData/Roaming/Code - Insiders",
+    "AppData/Roaming/VSCodium",
+    ".config/Code",
+    ".config/Code - Insiders",
+    ".config/VSCodium",
   ],
   dialects: [vscodeDialect],
 };

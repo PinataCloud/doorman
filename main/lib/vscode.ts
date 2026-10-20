@@ -87,13 +87,15 @@
  * callbacks.
  */
 
+import { join, posix, win32 } from "node:path";
 import { parseJsonc } from "../guard/jsonc.js";
 
 export interface VscodeVariant {
   /** Stable id; `vscode` is the shadow-AI/coverage id already in use. */
   id: "vscode" | "vscode-insiders" | "vscodium";
   label: string;
-  /** Home-relative user-data directory (the one holding `User/`). */
+  /** Home-relative user-data directory (the one holding `User/`), for the
+   * platform the list was built for (`vscodeVariants`). */
   supportRel: string;
   /** Home-relative extensions directory the CLI installs into. */
   extensionsRel: string;
@@ -101,6 +103,11 @@ export interface VscodeVariant {
   appPaths: string[];
   /** URL scheme for `…://file/…` deep links and `…://extension/…`. */
   scheme: string;
+  /** The build's own command-line name: `code`, `code-insiders`, `codium`. */
+  cliName: string;
+  /** The folder the Windows installers create, under `%LOCALAPPDATA%\Programs`
+   * (the per-user installer) or `%ProgramFiles%` (the system one). */
+  windowsInstallDir: string;
   /**
    * Home-relative application-shared data folder (`product.json`'s
    * `sharedDataFolderName`), where 1.138-era builds keep the trusted-folder
@@ -113,37 +120,66 @@ export interface VscodeVariant {
 /** Bundle-relative path of the `code` CLI inside every VS Code-derived app. */
 export const VSCODE_CLI_REL = "Contents/Resources/app/bin";
 
-export const VSCODE_VARIANTS: readonly VscodeVariant[] = [
+/**
+ * Home-relative folder Electron apps keep per-user data in: the default of
+ * `app.getPath("appData")` on each platform. VS Code and Claude Desktop both
+ * live under it (`<appData>/Code`, `<appData>/Claude`). A relocated
+ * `%APPDATA%` or `$XDG_CONFIG_HOME` is not followed: every path built from
+ * this is home-relative.
+ */
+export function appDataRel(platform: NodeJS.Platform = process.platform): string {
+  if (platform === "darwin") return "Library/Application Support";
+  if (platform === "win32") return "AppData/Roaming";
+  return ".config";
+}
+
+/** The family, with each build's user-data folder NAME (`product.json`'s
+ * `nameLong`-derived data folder, the same on every platform). */
+const FAMILY: ReadonlyArray<Omit<VscodeVariant, "supportRel"> & { dataFolder: string }> = [
   {
     id: "vscode",
     label: "VS Code",
-    supportRel: "Library/Application Support/Code",
+    dataFolder: "Code",
     extensionsRel: ".vscode",
     appPaths: ["/Applications/Visual Studio Code.app"],
     scheme: "vscode",
+    cliName: "code",
+    windowsInstallDir: "Microsoft VS Code",
     // 1.138.0's product.json, read 2026-09-21.
     sharedDataRel: ".vscode-shared",
   },
   {
     id: "vscode-insiders",
     label: "VS Code Insiders",
-    supportRel: "Library/Application Support/Code - Insiders",
+    dataFolder: "Code - Insiders",
     extensionsRel: ".vscode-insiders",
     appPaths: ["/Applications/Visual Studio Code - Insiders.app"],
     scheme: "vscode-insiders",
+    cliName: "code-insiders",
+    windowsInstallDir: "Microsoft VS Code Insiders",
   },
   {
     id: "vscodium",
     label: "VSCodium",
-    supportRel: "Library/Application Support/VSCodium",
+    dataFolder: "VSCodium",
     extensionsRel: ".vscode-oss",
     appPaths: ["/Applications/VSCodium.app"],
     scheme: "vscodium",
+    cliName: "codium",
+    windowsInstallDir: "VSCodium",
     // Code - OSS's product.json on microsoft/vscode main, read 2026-09-21;
     // VSCodium inherits it (its own overrides set dataFolderName only).
     sharedDataRel: ".vscode-oss-shared",
   },
 ];
+
+/** The family as one platform lays it out: `~/Library/Application Support/Code`
+ * on macOS, `%APPDATA%\Code` on Windows, `~/.config/Code` on Linux. */
+export function vscodeVariants(platform: NodeJS.Platform = process.platform): readonly VscodeVariant[] {
+  return FAMILY.map(({ dataFolder, ...variant }) => ({ ...variant, supportRel: `${appDataRel(platform)}/${dataFolder}` }));
+}
+
+export const VSCODE_VARIANTS: readonly VscodeVariant[] = vscodeVariants();
 
 export const DEFAULT_VARIANT = VSCODE_VARIANTS[0]!;
 
@@ -153,16 +189,88 @@ function trimSlash(path: string): string {
 
 /** `<home>/<supportRel>/User` — the default profile's directory. */
 export function userDir(variant: VscodeVariant, home: string): string {
-  return `${trimSlash(home)}/${variant.supportRel}/User`;
+  return join(home, variant.supportRel, "User");
 }
 
-/** The CLI binary inside an installed bundle, or undefined when this build is
- * not on the Mac. The name differs per build (`code`, `code-insiders`,
- * `codium`), so every candidate in the bin directory is offered and the caller
- * takes the first that exists. */
-export function cliCandidates(variant: VscodeVariant): string[] {
-  const names = variant.id === "vscode-insiders" ? ["code-insiders", "code"] : variant.id === "vscodium" ? ["codium", "code"] : ["code"];
-  return variant.appPaths.flatMap((app) => names.map((name) => `${trimSlash(app)}/${VSCODE_CLI_REL}/${name}`));
+/** Where a CLI lookup runs: the platform, the home, and the environment it
+ * reads (`PATH`; on Windows `%LOCALAPPDATA%` and `%ProgramFiles%`). */
+export interface CliPlace {
+  platform: NodeJS.Platform;
+  home: string;
+  env: NodeJS.ProcessEnv;
+}
+
+/** The absolute directories on `PATH`, in order. A relative entry would
+ * resolve against whatever directory the app runs in, so it is skipped. */
+function pathDirs(place: CliPlace): string[] {
+  const windows = place.platform === "win32";
+  const raw = (windows ? (place.env.PATH ?? place.env.Path) : place.env.PATH) ?? "";
+  const p = windows ? win32 : posix;
+  return raw
+    .split(windows ? ";" : ":")
+    .map((dir) => dir.trim().replace(/^"(.*)"$/, "$1"))
+    .filter((dir) => dir !== "" && p.isAbsolute(dir));
+}
+
+/**
+ * Every place this build's `code` command line may be, most specific first;
+ * the caller takes the first that exists.
+ *
+ * macOS: only INSIDE the application bundle, never the PATH — a GUI-launched
+ * Mac app inherits launchd's minimal PATH, which has no `code`. The name
+ * differs per build, so every candidate in the bin directory is offered.
+ *
+ * Windows: `bin\<name>.cmd` under the per-user install
+ * (`%LOCALAPPDATA%\Programs\<dir>`), then the system one
+ * (`%ProgramFiles%\<dir>`), then each `PATH` directory. Linux: the .deb/.rpm
+ * (`/usr/bin`, `/usr/share/<name>/bin`), the snap, `~/.local/bin`, then
+ * `PATH`. Off macOS only the build's own name is looked for: a bare `code`
+ * on PATH is stable VS Code, not Insiders.
+ */
+export function cliCandidates(variant: VscodeVariant, place: CliPlace): string[] {
+  if (place.platform === "darwin") {
+    const names = variant.id === "vscode-insiders" ? ["code-insiders", "code"] : variant.id === "vscodium" ? ["codium", "code"] : ["code"];
+    return variant.appPaths.flatMap((app) => names.map((name) => `${trimSlash(app)}/${VSCODE_CLI_REL}/${name}`));
+  }
+  const name = variant.cliName;
+  let out: string[];
+  if (place.platform === "win32") {
+    const local = place.env.LOCALAPPDATA?.trim() || win32.join(place.home, "AppData", "Local");
+    const programFiles = place.env.ProgramFiles?.trim() || "C:\\Program Files";
+    const cmd = `${name}.cmd`;
+    out = [
+      win32.join(local, "Programs", variant.windowsInstallDir, "bin", cmd),
+      win32.join(programFiles, variant.windowsInstallDir, "bin", cmd),
+      ...pathDirs(place).map((dir) => win32.join(dir, cmd)),
+    ];
+  } else {
+    out = [
+      `/usr/bin/${name}`,
+      `/usr/share/${name}/bin/${name}`,
+      `/snap/bin/${name}`,
+      ...(place.home ? [posix.join(place.home, ".local", "bin", name)] : []),
+      ...pathDirs(place).map((dir) => posix.join(dir, name)),
+    ];
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * How to spawn a found CLI. On Windows the CLI is a `.cmd` script, which Node
+ * refuses to run directly (CVE-2024-27980), so it goes through `cmd.exe /d /s
+ * /c` with every part quoted. cmd expands `%NAME%` even inside quotes and has
+ * no escape for `"`, so a part holding either is refused (undefined) rather
+ * than handed to the shell.
+ */
+export function cliInvocation(
+  cli: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): { file: string; args: string[]; windowsVerbatimArguments?: true } | undefined {
+  if (platform !== "win32" || !/\.(cmd|bat)$/i.test(cli)) return { file: cli, args: [...args] };
+  const parts = [cli, ...args];
+  if (parts.some((part) => /["%]/.test(part))) return undefined;
+  return { file: "cmd.exe", args: ["/d", "/s", "/c", `"${parts.map((part) => `"${part}"`).join(" ")}"`], windowsVerbatimArguments: true };
 }
 
 /** This build is installed here (its bundle, or a user directory it wrote). */
@@ -192,10 +300,10 @@ export function profiles(
   const base = userDir(variant, home);
   if (!io.exists(base)) return [];
   const out: VscodeProfile[] = [{ id: "", dir: base, default: true }];
-  const root = `${base}/profiles`;
+  const root = join(base, "profiles");
   if (io.exists(root)) {
     for (const name of io.listDir(root).sort()) {
-      const dir = `${root}/${name}`;
+      const dir = join(root, name);
       if (io.exists(dir)) out.push({ id: name, dir, default: false });
     }
   }
@@ -329,8 +437,8 @@ export function sharedDataFolder(variant: VscodeVariant, readText: (path: string
  */
 export function trustDatabases(variant: VscodeVariant, home: string, sharedFolder: string | undefined): string[] {
   const out: string[] = [];
-  if (sharedFolder) out.push(`${trimSlash(home)}/${sharedFolder}/sharedStorage/state.vscdb`);
-  out.push(`${userDir(variant, home)}/globalStorage/state.vscdb`);
+  if (sharedFolder) out.push(join(home, sharedFolder, "sharedStorage", "state.vscdb"));
+  out.push(join(userDir(variant, home), "globalStorage", "state.vscdb"));
   return out;
 }
 

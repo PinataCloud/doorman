@@ -13,16 +13,18 @@
  * running editor picks the new version up on its next window reload; nothing
  * here restarts or interrupts one.
  *
- * The `code` the app finds is the one INSIDE the application bundle, never
- * whatever is on the PATH: a GUI-launched Mac app inherits launchd's minimal
- * PATH (the same reason the doctor's Node probe has to ask a login shell), so
- * a PATH lookup would report "VS Code has no CLI" on a machine that plainly
- * has one. Each build in the family (lib/vscode.ts) carries its own.
+ * On macOS the `code` the app finds is the one INSIDE the application bundle,
+ * never whatever is on the PATH: a GUI-launched Mac app inherits launchd's
+ * minimal PATH (the same reason the doctor's Node probe has to ask a login
+ * shell), so a PATH lookup would report "VS Code has no CLI" on a machine that
+ * plainly has one. On Windows and Linux it is looked for where each
+ * installer puts it, then on the PATH (lib/vscode.ts cliCandidates). Each
+ * build in the family carries its own.
  *
  * Sandboxed runs write nothing, same rule as every other installer here.
  */
 
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -43,7 +45,7 @@ import {
   type EditorOpenScreen,
   type EditorStatus,
 } from "./lib/vscode-ext.js";
-import { VSCODE_VARIANTS, cliCandidates, variantPresent, type VscodeVariant } from "./lib/vscode.js";
+import { VSCODE_VARIANTS, cliCandidates, cliInvocation, variantPresent, type VscodeVariant } from "./lib/vscode.js";
 
 /** The editor CLI is a local process we spawn and wait for; an editor that
  * hangs must not hang the app's boot. */
@@ -56,7 +58,7 @@ export interface EditorTarget {
 }
 
 /**
- * Every VS Code-family build on this Mac that we can drive, in family order.
+ * Every VS Code-family build on this machine that we can drive, in family order.
  * A build that is present but whose CLI is missing (a damaged bundle, or a
  * distribution that strips it) is deliberately NOT returned — the caller
  * reports "installed, but no command line" rather than silently doing nothing.
@@ -65,7 +67,7 @@ export function editorTargets(home: string = homedir()): EditorTarget[] {
   const out: EditorTarget[] = [];
   for (const variant of VSCODE_VARIANTS) {
     if (!variantPresent(variant, home, existsSync)) continue;
-    const cli = cliCandidates(variant).find((path) => existsSync(path));
+    const cli = cliCandidates(variant, { platform: process.platform, home, env: process.env }).find((path) => existsSync(path));
     if (cli) out.push({ variant, cli });
   }
   return out;
@@ -74,7 +76,7 @@ export function editorTargets(home: string = homedir()): EditorTarget[] {
 /** Builds that are here but offer no command line — the warn case. */
 export function editorsWithoutCli(home: string = homedir()): VscodeVariant[] {
   return VSCODE_VARIANTS.filter(
-    (variant) => variantPresent(variant, home, existsSync) && !cliCandidates(variant).some((path) => existsSync(path)),
+    (variant) => variantPresent(variant, home, existsSync) && !cliCandidates(variant, { platform: process.platform, home, env: process.env }).some((path) => existsSync(path)),
   );
 }
 
@@ -87,18 +89,19 @@ export function vsixPath(): string {
 }
 
 function run(cli: string, args: string[]): { ok: boolean; stdout: string; error?: string } {
-  try {
-    const stdout = execFileSync(cli, args, {
-      encoding: "utf8",
-      timeout: CLI_TIMEOUT_MS,
-      // The CLI writes Node deprecation warnings to stderr on the current
-      // build; they are not failures and parseExtensionList drops them anyway.
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return { ok: true, stdout };
-  } catch (err) {
-    return { ok: false, stdout: "", error: err instanceof Error ? err.message : String(err) };
-  }
+  const invocation = cliInvocation(cli, args);
+  if (!invocation) return { ok: false, stdout: "", error: `can't pass a path with " or % to ${cli} through cmd.exe` };
+  const result = spawnSync(invocation.file, invocation.args, {
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    encoding: "utf8",
+    timeout: CLI_TIMEOUT_MS,
+    // The CLI writes Node deprecation warnings to stderr on the current
+    // build; they are not failures and parseExtensionList drops them anyway.
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.error) return { ok: false, stdout: "", error: result.error.message };
+  if (result.status !== 0) return { ok: false, stdout: "", error: `${cli} ${args.join(" ")} failed (${result.signal ?? `exit ${result.status}`})` };
+  return { ok: true, stdout: result.stdout };
 }
 
 export interface EditorExtensionStatus {

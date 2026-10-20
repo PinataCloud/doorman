@@ -156,10 +156,12 @@ describe("the folder a chat belongs to", () => {
 
 describe("the source descriptor", () => {
   it("discovers both formats, in every build of the family", () => {
+    // The user-data folder per platform: macOS, Windows (%APPDATA%), Linux.
+    const appData = process.platform === "darwin" ? "Library/Application Support" : process.platform === "win32" ? "AppData/Roaming" : ".config";
     expect(vscodeCopilotSource.roots("/h", {})).toEqual([
-      "/h/Library/Application Support/Code/User/workspaceStorage",
-      "/h/Library/Application Support/Code - Insiders/User/workspaceStorage",
-      "/h/Library/Application Support/VSCodium/User/workspaceStorage",
+      `/h/${appData}/Code/User/workspaceStorage`,
+      `/h/${appData}/Code - Insiders/User/workspaceStorage`,
+      `/h/${appData}/VSCodium/User/workspaceStorage`,
     ]);
     const found = vscodeCopilotSource.discover(
       "/ws",

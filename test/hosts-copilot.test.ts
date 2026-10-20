@@ -14,7 +14,7 @@ import { hostBySource, hostLabel, sourceForPayload } from "../main/guard/hosts/i
 import { GUARD_COMMAND_MARKER, HOOK_TIMEOUT_SLACK_SECONDS } from "../main/guard/policy.js";
 import { evaluateToolCall } from "../main/guard/decision.js";
 import { defaultPolicy } from "../main/guard/policy.js";
-import { VSCODE_VARIANTS } from "../main/lib/vscode.js";
+import { vscodeVariants } from "../main/lib/vscode.js";
 
 /**
  * The Copilot CLI host adapter. Two invariants flip on this host and both are
@@ -240,20 +240,28 @@ describe("documents", () => {
   // This ONE document guards VS Code's agent mode as well as the CLI's, so a
   // machine with only VS Code still has to count as "a host to install into" —
   // `~/.copilot` is created by the CLI SDK and may not exist there yet.
-  it("presence is the Copilot CLI's config directory AND every VS Code build", () => {
+  it("presence is the Copilot CLI's config directory AND every VS Code build, on every platform", () => {
     expect(copilotHost.presencePaths).toEqual([
       ".copilot",
       "Library/Application Support/Code",
       "Library/Application Support/Code - Insiders",
       "Library/Application Support/VSCodium",
+      "AppData/Roaming/Code",
+      "AppData/Roaming/Code - Insiders",
+      "AppData/Roaming/VSCodium",
+      ".config/Code",
+      ".config/Code - Insiders",
+      ".config/VSCodium",
     ]);
   });
 
   it("names the same VS Code builds lib/vscode.ts does", () => {
     // guard/ may not import outside itself, so the list above is spelled twice.
     // This is the alarm for the day they drift.
-    for (const variant of VSCODE_VARIANTS) {
-      expect(copilotHost.presencePaths).toContain(variant.supportRel);
+    for (const platform of ["darwin", "win32", "linux"] as const) {
+      for (const variant of vscodeVariants(platform)) {
+        expect(copilotHost.presencePaths, platform).toContain(variant.supportRel);
+      }
     }
   });
 });

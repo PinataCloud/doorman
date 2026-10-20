@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -14,6 +15,7 @@ import {
   VSCODE_VARIANTS,
   assessSettings,
   cliCandidates,
+  cliInvocation,
   extensionLink,
   fileLink,
   folderTrusted,
@@ -26,6 +28,7 @@ import {
   trustDatabases,
   userDir,
   variantPresent,
+  vscodeVariants,
 } from "../main/lib/vscode.js";
 import { createSourceIo } from "../main/lib/source-io.js";
 import { parseJsonc, stripJsonc } from "../main/guard/jsonc.js";
@@ -67,7 +70,7 @@ function input(over: Partial<DoctorInput> & { files?: Record<string, string>; di
     fs: {
       exists: (p) => p in files || dirs.has(p),
       read: (p) => files[p],
-      listDir: (p) => [...dirs].filter((d) => d.startsWith(`${p}/`)).map((d) => d.slice(p.length + 1).split("/")[0]!),
+      listDir: (p) => [...dirs].filter((d) => d.startsWith(`${p}${sep}`)).map((d) => d.slice(p.length + 1).split(sep)[0]!),
     },
     ...over,
   };
@@ -85,19 +88,102 @@ describe("the VS Code family", () => {
   });
 
   it("gives each build its own user directory, extensions directory and URL scheme", () => {
-    expect(userDir(VSCODE_VARIANTS[0]!, HOME)).toBe(`${HOME}/Library/Application Support/Code/User`);
-    expect(userDir(VSCODE_VARIANTS[1]!, HOME)).toBe(`${HOME}/Library/Application Support/Code - Insiders/User`);
+    expect(userDir(VSCODE_VARIANTS[0]!, HOME)).toBe(join(HOME, VSCODE_VARIANTS[0]!.supportRel, "User"));
+    expect(new Set(VSCODE_VARIANTS.map((v) => v.supportRel)).size).toBe(3);
     expect(new Set(VSCODE_VARIANTS.map((v) => v.extensionsRel)).size).toBe(3);
     expect(new Set(VSCODE_VARIANTS.map((v) => v.scheme)).size).toBe(3);
   });
 
-  it("looks for the CLI inside the app bundle, never on the PATH", () => {
+  it("keeps each build's user data where that platform's VS Code does", () => {
+    const rels = (platform: NodeJS.Platform) => vscodeVariants(platform).map((v) => v.supportRel);
+    expect(rels("darwin")).toEqual(["Library/Application Support/Code", "Library/Application Support/Code - Insiders", "Library/Application Support/VSCodium"]);
+    // %APPDATA%, at its default under the profile.
+    expect(rels("win32")).toEqual(["AppData/Roaming/Code", "AppData/Roaming/Code - Insiders", "AppData/Roaming/VSCodium"]);
+    expect(rels("linux")).toEqual([".config/Code", ".config/Code - Insiders", ".config/VSCodium"]);
+    expect(userDir(vscodeVariants("win32")[0]!, HOME)).toBe(join(HOME, "AppData", "Roaming", "Code", "User"));
+    expect(userDir(vscodeVariants("linux")[2]!, HOME)).toBe(join(HOME, ".config", "VSCodium", "User"));
+    // Only the user-data folder moves; ids, schemes and shared-data names do not.
+    expect(vscodeVariants("win32").map((v) => [v.id, v.scheme, v.sharedDataRel])).toEqual(vscodeVariants("darwin").map((v) => [v.id, v.scheme, v.sharedDataRel]));
+  });
+
+  it("looks for the CLI inside the app bundle on macOS, never on the PATH", () => {
     // A GUI-launched Mac app inherits launchd's PATH, which has no `code`.
-    for (const candidate of cliCandidates(DEFAULT_VARIANT)) {
+    const mac = { platform: "darwin" as const, home: HOME, env: { PATH: "/usr/local/bin:/opt/homebrew/bin" } };
+    for (const candidate of cliCandidates(DEFAULT_VARIANT, mac)) {
       expect(candidate.startsWith("/Applications/")).toBe(true);
       expect(candidate).toContain("Contents/Resources/app/bin/");
     }
-    expect(cliCandidates(VSCODE_VARIANTS[1]!).some((c) => c.endsWith("/code-insiders"))).toBe(true);
+    expect(cliCandidates(VSCODE_VARIANTS[1]!, mac).some((c) => c.endsWith("/code-insiders"))).toBe(true);
+  });
+
+  it("looks for code.cmd where the Windows installers put it, then on the PATH", () => {
+    const [stable, insiders, codium] = vscodeVariants("win32");
+    const env = {
+      LOCALAPPDATA: "C:\\Users\\dev\\AppData\\Local",
+      ProgramFiles: "D:\\Apps",
+      // A quoted entry is unwrapped; a relative one would follow the app's cwd and is skipped.
+      Path: 'C:\\Windows\\system32;"C:\\Tools\\VS Code\\bin";.\\bin;;',
+    };
+    const win = { platform: "win32" as const, home: "C:\\Users\\dev", env };
+    expect(cliCandidates(stable!, win)).toEqual([
+      "C:\\Users\\dev\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd",
+      "D:\\Apps\\Microsoft VS Code\\bin\\code.cmd",
+      "C:\\Windows\\system32\\code.cmd",
+      "C:\\Tools\\VS Code\\bin\\code.cmd",
+    ]);
+    expect(cliCandidates(insiders!, win).slice(0, 2)).toEqual([
+      "C:\\Users\\dev\\AppData\\Local\\Programs\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd",
+      "D:\\Apps\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd",
+    ]);
+    expect(cliCandidates(codium!, win)[0]).toBe("C:\\Users\\dev\\AppData\\Local\\Programs\\VSCodium\\bin\\codium.cmd");
+    // No environment at all: the defaults under the profile and C:\Program Files.
+    expect(cliCandidates(stable!, { platform: "win32", home: "C:\\Users\\dev", env: {} })).toEqual([
+      "C:\\Users\\dev\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd",
+      "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd",
+    ]);
+    // Insiders never settles for stable's `code` on the PATH.
+    expect(cliCandidates(insiders!, win).some((c) => c.endsWith("\\code.cmd"))).toBe(false);
+  });
+
+  it("looks for the CLI where the Linux packages put it, then ~/.local/bin and the PATH", () => {
+    const [stable, insiders, codium] = vscodeVariants("linux");
+    const linux = { platform: "linux" as const, home: "/home/dev", env: { PATH: "/usr/local/bin:/usr/bin:bin" } };
+    expect(cliCandidates(stable!, linux)).toEqual([
+      "/usr/bin/code",
+      "/usr/share/code/bin/code",
+      "/snap/bin/code",
+      "/home/dev/.local/bin/code",
+      "/usr/local/bin/code",
+    ]);
+    expect(cliCandidates(insiders!, linux)).toContain("/usr/share/code-insiders/bin/code-insiders");
+    expect(cliCandidates(insiders!, linux).some((c) => c.endsWith("/code"))).toBe(false);
+    expect(cliCandidates(codium!, linux)).toContain("/snap/bin/codium");
+  });
+
+  it("runs a Windows .cmd through cmd.exe with every part quoted, and refuses what cmd would rewrite", () => {
+    expect(cliInvocation("/usr/bin/code", ["--list-extensions"], "linux")).toEqual({ file: "/usr/bin/code", args: ["--list-extensions"] });
+    expect(cliInvocation("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code", ["-v"], "darwin")).toEqual({
+      file: "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+      args: ["-v"],
+    });
+    const cmd = "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd";
+    expect(cliInvocation(cmd, ["--install-extension", "C:\\a b\\doorman.vsix", "--force"], "win32")).toEqual({
+      file: "cmd.exe",
+      args: ["/d", "/s", "/c", `""${cmd}" "--install-extension" "C:\\a b\\doorman.vsix" "--force""`],
+      windowsVerbatimArguments: true,
+    });
+    expect(cliInvocation(cmd, ["--install-extension", "C:\\%TEMP%\\x.vsix"], "win32")).toBeUndefined();
+    expect(cliInvocation(cmd, ['say "hi"'], "win32")).toBeUndefined();
+  });
+
+  it.runIf(process.platform === "win32")("passes paths with spaces through cmd.exe intact", () => {
+    const dir = mkdtempSync(join(tmpdir(), "doorman code cli "));
+    const script = join(dir, "code.cmd");
+    writeFileSync(script, "@echo off\r\necho [%~1] [%~2]\r\n");
+    const call = cliInvocation(script, ["--install-extension", join(dir, "doorman ext.vsix")])!;
+    const out = spawnSync(call.file, call.args, { encoding: "utf8", windowsVerbatimArguments: call.windowsVerbatimArguments });
+    expect(out.status).toBe(0);
+    expect(out.stdout.trim()).toBe(`[--install-extension] [${join(dir, "doorman ext.vsix")}]`);
   });
 
   it("counts a build as present from its bundle OR its user directory", () => {
@@ -111,13 +197,13 @@ describe("the VS Code family", () => {
   it("enumerates the default profile plus every named one", () => {
     const base = userDir(DEFAULT_VARIANT, HOME);
     const io = {
-      exists: (p: string) => p === base || p === `${base}/profiles` || p.startsWith(`${base}/profiles/`),
-      listDir: (p: string) => (p === `${base}/profiles` ? ["-ab12", "work"] : []),
+      exists: (p: string) => p === base || p === join(base, "profiles") || p.startsWith(join(base, "profiles", "")),
+      listDir: (p: string) => (p === join(base, "profiles") ? ["-ab12", "work"] : []),
     };
     expect(profiles(DEFAULT_VARIANT, HOME, io)).toEqual([
       { id: "", dir: base, default: true },
-      { id: "-ab12", dir: `${base}/profiles/-ab12`, default: false },
-      { id: "work", dir: `${base}/profiles/work`, default: false },
+      { id: "-ab12", dir: join(base, "profiles", "-ab12"), default: false },
+      { id: "work", dir: join(base, "profiles", "work"), default: false },
     ]);
     // A build that isn't here has no profiles at all, not one empty default.
     expect(profiles(DEFAULT_VARIANT, HOME, { exists: () => false, listDir: () => [] })).toEqual([]);
@@ -263,17 +349,17 @@ describe("workspace trust", () => {
     // bundle it is unknown rather than guessed.
     expect(sharedDataFolder(VSCODE_VARIANTS[1]!, () => undefined)).toBeUndefined();
     expect(trustDatabases(DEFAULT_VARIANT, HOME, ".vscode-shared")).toEqual([
-      `${HOME}/.vscode-shared/sharedStorage/state.vscdb`,
-      `${HOME}/Library/Application Support/Code/User/globalStorage/state.vscdb`,
+      join(HOME, ".vscode-shared", "sharedStorage", "state.vscdb"),
+      join(userDir(DEFAULT_VARIANT, HOME), "globalStorage", "state.vscdb"),
     ]);
     expect(trustDatabases(VSCODE_VARIANTS[1]!, HOME, undefined)).toEqual([
-      `${HOME}/Library/Application Support/Code - Insiders/User/globalStorage/state.vscdb`,
+      join(userDir(VSCODE_VARIANTS[1]!, HOME), "globalStorage", "state.vscdb"),
     ]);
   });
 
   describe("the verdict for one build", () => {
-    const shared = `${HOME}/.vscode-shared/sharedStorage/state.vscdb`;
-    const global = `${HOME}/Library/Application Support/Code/User/globalStorage/state.vscdb`;
+    const shared = join(HOME, ".vscode-shared", "sharedStorage", "state.vscdb");
+    const global = join(userDir(DEFAULT_VARIANT, HOME), "globalStorage", "state.vscdb");
     const folders = ["/Users/tester/repos/app", "/Users/tester/Downloads/cert (2)", "/Users/tester/scratch"];
     const db = (rows: Record<string, string | undefined>, at = shared) => ({
       exists: (p: string) => p === at || folders.includes(p),
@@ -358,7 +444,7 @@ describe("the setup check for VS Code", () => {
   });
 
   describe("with the trusted-folder list readable", () => {
-    const shared = `${HOME}/.vscode-shared/sharedStorage/state.vscdb`;
+    const shared = join(HOME, ".vscode-shared", "sharedStorage", "state.vscdb");
     const trustRow = JSON.stringify({ uriTrustInfo: [{ uri: { $mid: 1, fsPath: `${HOME}/repos`, path: `${HOME}/repos`, scheme: "file" }, trusted: true }] });
     const recentRow = (...folders: string[]) => JSON.stringify({ entries: folders.map((f) => ({ folderUri: `file://${f}` })) });
     const withTrust = (rows: Record<string, string>, folders: string[], settings: Record<string, unknown> = {}) => {
@@ -431,7 +517,7 @@ describe("the setup check for VS Code", () => {
     const base = userDir(DEFAULT_VARIANT, HOME);
     const report = diagnose(
       input({
-        dirs: [base, `${base}/profiles`, `${base}/profiles/work`],
+        dirs: [base, join(base, "profiles"), join(base, "profiles", "work")],
         files: {
           [join(base, "settings.json")]: "{}",
           [join(base, "profiles", "work", "settings.json")]: JSON.stringify({ "chat.useHooks": false }),
@@ -487,8 +573,8 @@ describe("the setup check for VS Code", () => {
  * inference: it knows its own trust and the settings after policy.
  */
 describe("the setup check with open windows reporting", () => {
-  const settingsFile = `${userDir(DEFAULT_VARIANT, HOME)}/settings.json`;
-  const shared = `${HOME}/.vscode-shared/sharedStorage/state.vscdb`;
+  const settingsFile = join(userDir(DEFAULT_VARIANT, HOME), "settings.json");
+  const shared = join(HOME, ".vscode-shared", "sharedStorage", "state.vscdb");
   const window = (over: Partial<EditorWindowReport>): EditorWindowReport => ({
     id: "w1",
     at: new Date().toISOString(),
@@ -586,18 +672,18 @@ describe("MCP documents across builds and profiles", () => {
   it("registers in every build present and every named profile, once each", () => {
     const stable = userDir(VSCODE_VARIANTS[0]!, HOME);
     const insiders = userDir(VSCODE_VARIANTS[1]!, HOME);
-    const dirs = new Set([stable, insiders, `${stable}/profiles`, `${stable}/profiles/work`]);
+    const dirs = new Set([stable, insiders, join(stable, "profiles"), join(stable, "profiles", "work")]);
     const io = {
       exists: (p: string) => dirs.has(p),
-      listDir: (p: string) => (p === `${stable}/profiles` ? ["work"] : []),
+      listDir: (p: string) => (p === join(stable, "profiles") ? ["work"] : []),
     };
     const paths = resolveRegistrationDocuments(HOME, {}, io).map((d) => d.path);
     // Grouped by build — all of stable's documents, then Insiders' — because
     // that is the order the Settings card lists them in.
     expect(paths).toEqual([
-      `${stable}/mcp.json`,
-      `${stable}/profiles/work/mcp.json`,
-      `${insiders}/mcp.json`,
+      join(stable, "mcp.json"),
+      join(stable, "profiles", "work", "mcp.json"),
+      join(insiders, "mcp.json"),
     ]);
     expect(new Set(paths).size).toBe(paths.length);
   });
@@ -606,25 +692,50 @@ describe("MCP documents across builds and profiles", () => {
     const stable = userDir(VSCODE_VARIANTS[0]!, HOME);
     const io = { exists: (p: string) => p === stable, listDir: () => [] };
     const paths = resolveRegistrationDocuments(HOME, {}, io).map((d) => d.path);
-    expect(paths).toEqual([`${stable}/mcp.json`]);
+    expect(paths).toEqual([join(stable, "mcp.json")]);
   });
 
   it("still reaches a document when the host is gone, so uninstall is total", () => {
     const io = { exists: () => false, listDir: () => [] };
     expect(resolveRegistrationDocuments(HOME, {}, io)).toEqual([]);
     const all = resolveRegistrationDocuments(HOME, {}, io, undefined, { requirePresence: false });
-    expect(all.map((d) => d.path)).toContain(`${userDir(VSCODE_VARIANTS[0]!, HOME)}/mcp.json`);
+    expect(all.map((d) => d.path)).toContain(join(userDir(VSCODE_VARIANTS[0]!, HOME), "mcp.json"));
   });
 
   it("scans every build's mcp.json and every profile's for poisoning", () => {
     const stable = userDir(VSCODE_VARIANTS[0]!, HOME);
     const io = {
-      exists: (p: string) => p === stable || p === `${stable}/profiles` || p === `${stable}/profiles/work`,
-      listDir: (p: string) => (p === `${stable}/profiles` ? ["work"] : []),
+      exists: (p: string) => p === stable || p === join(stable, "profiles") || p === join(stable, "profiles", "work"),
+      listDir: (p: string) => (p === join(stable, "profiles") ? ["work"] : []),
     };
     const paths = mcpConfigPaths(HOME, io);
     for (const variant of VSCODE_VARIANTS) expect(paths).toContain(join(userDir(variant, HOME), "mcp.json"));
     expect(paths).toContain(join(stable, "profiles", "work", "mcp.json"));
+  });
+
+  it("finds the user-level MCP configs where Windows and Linux keep them", () => {
+    const none = { exists: () => false, listDir: () => [] };
+    const win = mcpConfigPaths(HOME, none, "win32");
+    expect(win).toContain(join(HOME, "AppData", "Roaming", "Claude", "claude_desktop_config.json"));
+    expect(win).toContain(join(HOME, "AppData", "Roaming", "Code", "User", "mcp.json"));
+    expect(win).toContain(join(HOME, "AppData", "Roaming", "Code - Insiders", "User", "mcp.json"));
+    expect(win).toContain(join(HOME, "AppData", "Roaming", "VSCodium", "User", "mcp.json"));
+    const linux = mcpConfigPaths(HOME, none, "linux");
+    expect(linux).toContain(join(HOME, ".config", "Code", "User", "mcp.json"));
+    expect(linux).toContain(join(HOME, ".config", "VSCodium", "User", "mcp.json"));
+    expect(linux).toContain(join(HOME, ".config", "Claude", "claude_desktop_config.json"));
+    // macOS is where it was.
+    const mac = mcpConfigPaths(HOME, none, "darwin");
+    expect(mac).toContain(join(HOME, "Library", "Application Support", "Claude", "claude_desktop_config.json"));
+    expect(mac).toContain(join(HOME, "Library", "Application Support", "Code", "User", "mcp.json"));
+    for (const paths of [win, linux]) expect(paths.some((p) => p.includes("Library"))).toBe(false);
+    // A Windows profile is found under its own build, too.
+    const stable = userDir(vscodeVariants("win32")[0]!, HOME);
+    const io = {
+      exists: (p: string) => p === stable || p === join(stable, "profiles") || p === join(stable, "profiles", "work"),
+      listDir: (p: string) => (p === join(stable, "profiles") ? ["work"] : []),
+    };
+    expect(mcpConfigPaths(HOME, io, "win32")).toContain(join(stable, "profiles", "work", "mcp.json"));
   });
 });
 
@@ -781,7 +892,7 @@ describe.skipIf(!existsSync(`${homedir()}/Library/Application Support/Code/User`
 
   it("still ships the `code` CLI at the path the installer drives", () => {
     if (!existsSync(DEFAULT_VARIANT.appPaths[0]!)) return;
-    expect(cliCandidates(DEFAULT_VARIANT).some((c) => existsSync(c))).toBe(true);
+    expect(cliCandidates(DEFAULT_VARIANT, { platform: process.platform, home: homedir(), env: process.env }).some((c) => existsSync(c))).toBe(true);
   });
 
   it("still names the shared-data folder we recorded, in its own product.json", () => {

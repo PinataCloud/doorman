@@ -28,7 +28,7 @@ import type { McpPermissionSet, McpToolClass } from "../guard/policy.js";
 import { GATEWAY_MARKER } from "./gateway-config.js";
 import type { FindingRow } from "./findings.js";
 import type { LedgerTurn } from "./turns.js";
-import { VSCODE_VARIANTS, profiles } from "./vscode.js";
+import { appDataRel, profiles, vscodeVariants } from "./vscode.js";
 
 /** What the gateway has observed of one tool — gateway-install.ts
  * foldObservedTools, re-declared structurally so this module stays pure. */
@@ -115,7 +115,8 @@ export interface McpInventoryState {
 const TOOLS_CAP = 12;
 
 /**
- * The USER-LEVEL MCP config files worth watching, one per host, home-relative.
+ * The USER-LEVEL MCP config files worth watching, one per host, home-relative,
+ * as one platform lays them out.
  *
  * Every one of these is a place an agent's tool surface is configured, and
  * until this list existed only Claude Code's was read — so a poisoned server
@@ -128,33 +129,38 @@ const TOOLS_CAP = 12;
  * the app the person actually installed. Paths are relative to home; a file
  * that does not exist is simply never read.
  */
-export const USER_MCP_CONFIGS: ReadonlyArray<{ host: string; label: string; rel: string }> = [
-  // Claude Code's own — the one this app has always watched. Listed here too so
-  // there is exactly one inventory of config locations.
-  { host: "claude-code", label: "Claude Code", rel: ".claude.json" },
-  { host: "claude-desktop", label: "Claude Desktop", rel: "Library/Application Support/Claude/claude_desktop_config.json" },
-  { host: "cursor", label: "Cursor", rel: ".cursor/mcp.json" },
-  { host: "windsurf", label: "Windsurf", rel: ".codeium/windsurf/mcp_config.json" },
-  // One row per VS Code BUILD. Profiles are covered by mcpConfigPaths() below,
-  // which enumerates them at scan time — they cannot be spelled as a fixed
-  // relative path, and a poisoned server added inside a profile was invisible
-  // while the identical entry in the default profile raised a finding.
-  ...VSCODE_VARIANTS.map((variant) => ({
-    host: "vscode-copilot",
-    label: variant.label,
-    rel: `${variant.supportRel}/User/mcp.json`,
-  })),
-  // Copilot CLI's user-level MCP config (`mcpServers`, `type: "local"` — the
-  // `url ? http : stdio` inference below reads it fine). VS Code's Copilot
-  // agent host reads this file too. Added 2026-09-08 with the app's own server.
-  { host: "copilot-cli", label: "Copilot CLI", rel: ".copilot/mcp-config.json" },
-  { host: "zed", label: "Zed", rel: ".config/zed/settings.json" },
-  { host: "gemini-cli", label: "Gemini CLI", rel: ".gemini/settings.json" },
-  // NOT here: Codex's `~/.codex/config.toml`. Its `[mcp_servers]` block is TOML,
-  // and everything downstream (extractMcpServers, scanMcpConfigText) parses
-  // JSON — listing the path would add a file that is read, fails to parse and
-  // silently contributes nothing. It needs a TOML reader first.
-];
+export function userMcpConfigs(platform: NodeJS.Platform = process.platform): ReadonlyArray<{ host: string; label: string; rel: string }> {
+  return [
+    // Claude Code's own — the one this app has always watched. Listed here too so
+    // there is exactly one inventory of config locations.
+    { host: "claude-code", label: "Claude Code", rel: ".claude.json" },
+    // Under the app-data folder: `~/Library/Application Support/Claude` on
+    // macOS, `%APPDATA%\Claude` on Windows. There is no official Linux build;
+    // the community ones keep Electron's default, `~/.config/Claude`.
+    { host: "claude-desktop", label: "Claude Desktop", rel: `${appDataRel(platform)}/Claude/claude_desktop_config.json` },
+    { host: "cursor", label: "Cursor", rel: ".cursor/mcp.json" },
+    { host: "windsurf", label: "Windsurf", rel: ".codeium/windsurf/mcp_config.json" },
+    // One row per VS Code BUILD. Profiles are covered by mcpConfigPaths() below,
+    // which enumerates them at scan time — they cannot be spelled as a fixed
+    // relative path, and a poisoned server added inside a profile was invisible
+    // while the identical entry in the default profile raised a finding.
+    ...vscodeVariants(platform).map((variant) => ({
+      host: "vscode-copilot",
+      label: variant.label,
+      rel: `${variant.supportRel}/User/mcp.json`,
+    })),
+    // Copilot CLI's user-level MCP config (`mcpServers`, `type: "local"` — the
+    // `url ? http : stdio` inference below reads it fine). VS Code's Copilot
+    // agent host reads this file too. Added 2026-09-08 with the app's own server.
+    { host: "copilot-cli", label: "Copilot CLI", rel: ".copilot/mcp-config.json" },
+    { host: "zed", label: "Zed", rel: ".config/zed/settings.json" },
+    { host: "gemini-cli", label: "Gemini CLI", rel: ".gemini/settings.json" },
+    // NOT here: Codex's `~/.codex/config.toml`. Its `[mcp_servers]` block is TOML,
+    // and everything downstream (extractMcpServers, scanMcpConfigText) parses
+    // JSON — listing the path would add a file that is read, fails to parse and
+    // silently contributes nothing. It needs a TOML reader first.
+  ];
+}
 
 /**
  * The config path a renderer asked to rewrite, IF the app itself discovered
@@ -176,7 +182,7 @@ export function discoveredMcpConfig(
  * Every user-level MCP config on THIS machine, absolute: the fixed list above
  * joined to home, plus each VS Code profile's own `mcp.json`.
  *
- * A profile path cannot live in `USER_MCP_CONFIGS` — its directory name is an
+ * A profile path cannot live in `userMcpConfigs` — its directory name is an
  * id VS Code mints — so it has to be enumerated against the real filesystem.
  * The caller hands in the two reads; a machine with no profiles gets exactly
  * the fixed list back.
@@ -189,9 +195,10 @@ export function discoveredMcpConfig(
 export function mcpConfigPaths(
   home: string,
   io: { exists(path: string): boolean; listDir(path: string): string[] },
+  platform: NodeJS.Platform = process.platform,
 ): string[] {
-  const base = USER_MCP_CONFIGS.map((entry) => join(home, entry.rel));
-  const profilePaths = VSCODE_VARIANTS.flatMap((variant) =>
+  const base = userMcpConfigs(platform).map((entry) => join(home, entry.rel));
+  const profilePaths = vscodeVariants(platform).flatMap((variant) =>
     profiles(variant, home, io)
       .filter((profile) => !profile.default)
       .map((profile) => join(profile.dir, "mcp.json")),
@@ -199,13 +206,16 @@ export function mcpConfigPaths(
   return [...new Set([...base, ...profilePaths])];
 }
 
+/** Every platform's locations, for naming a path wherever it was written. */
+const CONFIGS_ANY_PLATFORM = (["darwin", "win32", "linux"] as const).flatMap((platform) => userMcpConfigs(platform));
+
 /** The host id whose config a path belongs to, for naming a finding. Falls
  * back to undefined for a project `.mcp.json`, which belongs to the repo
  * rather than to any one app. `rel` is spelled with `/`; a Windows path may
  * use `\`, so the path is compared with its separators unified. */
 export function mcpConfigHost(path: string): { host: string; label: string } | undefined {
   const unified = path.replace(/\\/g, "/");
-  for (const entry of USER_MCP_CONFIGS) {
+  for (const entry of CONFIGS_ANY_PLATFORM) {
     if (unified.endsWith(entry.rel)) return { host: entry.host, label: entry.label };
   }
   return undefined;
