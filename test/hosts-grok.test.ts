@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { grokHost } from "../main/guard/hosts/grok.js";
 import { GUARD_COMMAND_MARKER } from "../main/guard/policy.js";
@@ -13,7 +14,7 @@ describe("Grok Build hooks", () => {
     expect(JSON.parse(installed).hooks.PreToolUse.at(-1).hooks[0].timeout).toBe(75);
     expect(JSON.parse(grokHost.remove(installed)!)).toEqual(JSON.parse(original));
     expect(() => grokHost.merge("{broken", command, 60)).toThrow();
-    expect(grokHost.documents("/dev", { GROK_HOME: "/grok-alt" })[0]?.path).toBe("/grok-alt/hooks/doorman.json");
+    expect(grokHost.documents("/dev", { GROK_HOME: "/grok-alt" })[0]?.path).toBe(join("/grok-alt", "hooks", "doorman.json"));
     expect(grokHost.presencePathsFor?.("/dev", { GROK_HOME: "/grok-alt" })).toEqual(["/grok-alt"]);
   });
   it("normalizes camelCase hook payloads, MCP names and file edits", () => {

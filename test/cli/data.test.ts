@@ -10,6 +10,10 @@ import type { CliEnvironment } from "../../main/cli/context.js";
 import { main } from "../../main/cli/index.js";
 import { guardDir } from "../../main/enforcement.js";
 import { heartbeatPath } from "../../main/guard/handshake.js";
+import { CaptureEngine } from "../../main/capture.js";
+import { defaultPolicy } from "../../main/guard/policy.js";
+import { summarizeFindings } from "../../main/lib/findings.js";
+import { defaultPrefs, hiddenConfidenceBands } from "../../main/state.js";
 
 /**
  * The Radar, Ledger, Usage and Analytics commands against a real store built
@@ -218,6 +222,44 @@ describe("doorman data commands", () => {
     expect(refused.err).toContain("Doorman is running");
     rmSync(heartbeatPath(guardDir(join(appData, "Doorman"))));
     expect(envOf(await json<FindingsJson>(["findings"]))?.status).toBe("open");
+  });
+
+  it("findings and status count what the app shows, on a copy, without scanning", async () => {
+    // A second session in another project, its transcript then deleted: the
+    // app's scan hides its findings. The CLI opened its copy of the store
+    // knowing no transcript and counted them again (8 open in `doorman
+    // status`, 7 in the app).
+    const OTHER = "6f66b1c2-3d4e-4f5a-9b0c-1d2e3f4a5b6c";
+    const otherFile = join(home, ".claude", "projects", "-Users-dev-app", `${OTHER}.jsonl`);
+    const other = transcript().replaceAll(SESSION, OTHER).replaceAll("/Users/dev/app", "/Users/dev/other").replaceAll("prompt-1", "prompt-2").replaceAll("msg_", "msg_o");
+    writeFileSync(otherFile, `${other}\n`);
+    const app = new CaptureEngine({
+      storeDir: join(appData, "Doorman", "store"),
+      claudeProjectsDir: join(home, ".claude", "projects"),
+      codexSessionsDir: join(home, ".codex", "sessions"),
+      home,
+      env: { HOME: home },
+      policy: () => defaultPolicy(),
+      retentionDays: () => 30,
+      onUpdate: () => {},
+      onNewFindings: () => {},
+      log: () => {},
+    });
+    await app.start();
+    app.stop();
+    rmSync(otherFile);
+    await app.scan();
+    expect([...app.ledger.values()].some((r) => r.session_id === OTHER)).toBe(true);
+    expect(app.shownFindings().some((r) => r.session_id === OTHER)).toBe(false);
+    const shown = summarizeFindings(app.shownFindings(), { hide_confidence: hiddenConfidenceBands(defaultPrefs()) });
+    expect(shown.open_exposures).toBeGreaterThanOrEqual(2);
+
+    appRunning();
+    const list = await json<FindingsJson>(["findings"]);
+    expect(list.open_exposures).toBe(shown.open_exposures);
+    expect(list.exposures.map((e) => e.place)).not.toContain("dev/other");
+    const status = await json<{ exposures: { open: number; by_severity: Record<string, number> } }>(["status"]);
+    expect(status.exposures).toEqual({ open: shown.open_exposures, by_severity: shown.by_severity_exposures });
   });
 
   it("sessions, session and search read like the Ledger, masked", async () => {

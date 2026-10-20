@@ -211,3 +211,25 @@ export function integrateAppImage(opts: IntegrateOptions): IntegrationResult {
   if (written.length === 0) return { status: "current", written };
   return { status: existing === null ? "installed" : "updated", written };
 }
+
+/** Runs a tool; `done` gets the spawn or exit error (`code` "ENOENT" when the
+ * tool isn't installed), null on success. */
+export type RunTool = (cmd: string, args: string[], done: (err: { code?: string | number | null } | null) => void) => void;
+
+/**
+ * Best-effort cache refreshes after the entry or an icon was written; a
+ * desktop without these tools notices the new files by itself. Errors are
+ * ignored. The icon cache is refreshed, never created: a hicolor directory
+ * without one is simply scanned. KDE Plasma reads launcher entries from its
+ * own KService cache (sycoca), so it is rebuilt too: kbuildsycoca6, or
+ * kbuildsycoca5 where only Plasma 5 is installed.
+ */
+export function refreshDesktopCaches(paths: DesktopPaths, run: RunTool): void {
+  run("update-desktop-database", ["-q", paths.applicationsDir], () => {});
+  if (existsSync(join(paths.hicolorDir, "icon-theme.cache"))) {
+    run("gtk-update-icon-cache", ["-q", "-t", "-f", paths.hicolorDir], () => {});
+  }
+  run("kbuildsycoca6", [], (err) => {
+    if (err?.code === "ENOENT") run("kbuildsycoca5", [], () => {});
+  });
+}

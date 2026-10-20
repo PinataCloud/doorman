@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assessGuardIntegrity,
@@ -179,7 +179,9 @@ describe("assessGuardIntegrity", () => {
 describe("guardAuxiliaryPaths", () => {
   it("lists every plugin artefact and companion document the watcher must watch, honouring the hosts' home overrides", () => {
     const home = homedir();
-    const defaults = guardAuxiliaryPaths({});
+    // Hermes's paths are joined with `/` (as Hermes spells them), which on
+    // Windows is a mixed `C:\…\.hermes/plugins/…`: the same file.
+    const defaults = guardAuxiliaryPaths({}).map((p) => normalize(p));
     expect(defaults).toContain(join(home, ".openclaw", "extensions", "doorman-guard", "index.js"));
     expect(defaults).toContain(join(home, ".openclaw", "extensions", "doorman-guard", "openclaw.plugin.json"));
     // Hermes is a plugin host since 2026-09-10: its two plugin files, no consent companion.
@@ -188,9 +190,9 @@ describe("guardAuxiliaryPaths", () => {
     expect(defaults).not.toContain(join(home, ".hermes", "shell-hooks-allowlist.json"));
     // Never a hook document itself — those are guardDocumentPaths' job.
     expect(defaults).not.toContain(join(home, ".openclaw", "openclaw.json"));
-    const moved = guardAuxiliaryPaths({ OPENCLAW_STATE_DIR: "/srv/claw", HERMES_HOME: "/srv/hermes" });
-    expect(moved).toContain("/srv/claw/extensions/doorman-guard/index.js");
-    expect(moved).toContain("/srv/hermes/plugins/doorman-guard/__init__.py");
+    const moved = guardAuxiliaryPaths({ OPENCLAW_STATE_DIR: "/srv/claw", HERMES_HOME: "/srv/hermes" }).map((p) => normalize(p));
+    expect(moved).toContain(join("/srv/claw", "extensions", "doorman-guard", "index.js"));
+    expect(moved).toContain(join("/srv/hermes", "plugins", "doorman-guard", "__init__.py"));
   });
 });
 

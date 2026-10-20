@@ -235,7 +235,8 @@ describe("evidence vault", () => {
     expect(vault.put("f1", "export TOKEN=[redacted:github]", evidence)).toBe(true);
     const file = join(dir, "evidence-vault.jsonl");
     expect(readFileSync(file, "utf8")).not.toContain("ghp_SECRETVALUE");
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // POSIX modes; Windows has none (its profile ACL keeps the file the user's).
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
     const back = new EvidenceVault(dir, fakeKeychain()).get("f1", "export TOKEN=[redacted:github]");
     expect(back?.raw).toBe(evidence.raw);
     expect(back?.secrets).toEqual(evidence.secrets);
@@ -627,7 +628,8 @@ describe("dev-sandbox cipher", () => {
       const vault = new EvidenceVault(dir, sandboxVaultCrypto(dir));
       vault.put("f1", "a", { raw: "SECRET-VALUE-123", truncated: false, at: "2026-09-01T10:00:00.000Z", secrets: [] });
       expect(readFileSync(join(dir, "evidence-vault.jsonl"), "utf8")).not.toContain("SECRET-VALUE-123");
-      expect(statSync(join(dir, "evidence-vault.sandbox-key")).mode & 0o777).toBe(0o600);
+      // POSIX modes; Windows has none (its profile ACL keeps the file the user's).
+      if (process.platform !== "win32") expect(statSync(join(dir, "evidence-vault.sandbox-key")).mode & 0o777).toBe(0o600);
       expect(new EvidenceVault(dir, sandboxVaultCrypto(dir)).get("f1", "a")?.raw).toBe("SECRET-VALUE-123");
     } finally {
       rmSync(dir, { recursive: true, force: true });

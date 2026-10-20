@@ -51,7 +51,7 @@ Download the build for your machine from the
 | Mac with Apple silicon | `Doorman-<version>-arm64.dmg` | Open it and drag Doorman into Applications. Signed and notarized, so it opens like any app. |
 | Mac with Intel | `Doorman-<version>.dmg` | The same. |
 | Windows 10 or 11 (x64 or Arm) | `Doorman-Setup-<version>.exe` | Run the installer. It is unsigned, so SmartScreen may say "Windows protected your PC": choose **More info**, then **Run anyway**. It installs for your user only, with no admin prompt. |
-| Linux (x64) | `Doorman-<version>.AppImage` | `chmod +x Doorman-*.AppImage`, then run it. No libfuse2 needed. Running it adds Doorman, with its icon, to your app launcher, pointing at wherever the AppImage is (a later run from a new place moves the entry), so keep it somewhere permanent such as `~/Applications`. |
+| Linux (x64) | `Doorman-<version>.AppImage` | `chmod +x Doorman-*.AppImage`, then run it. It needs FUSE 3 (`fusermount3`, from the `fuse3` package; most desktops have it, a minimal install such as Arch may not), but not libfuse2. Without FUSE, run it with `--appimage-extract-and-run`. Running it adds Doorman, with its icon, to your app launcher, pointing at wherever the AppImage is (a later run from a new place moves the entry), so keep it somewhere permanent such as `~/Applications`. |
 | Linux (arm64) | `Doorman-<version>-arm64.AppImage` | The same. |
 
 On first launch, a short setup:
@@ -401,7 +401,7 @@ A Finder launch inherits nothing from a shell. For a packaged app, use
 
 ```
 npm run build        # macOS: dmg + zip, arm64 and x64
-npm run build:linux  # AppImage, x64 and arm64 (static AppImage runtime, no libfuse2 needed)
+npm run build:linux  # AppImage, x64 and arm64 (static AppImage runtime: needs FUSE 3, not libfuse2)
 npm run build:win    # one NSIS installer covering x64 and arm64, per-user, unsigned
 ```
 

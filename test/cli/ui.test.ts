@@ -291,6 +291,7 @@ describe("the dispatcher on a terminal", () => {
   let home: string;
   let appData: string;
   const savedHome = process.env.HOME;
+  const savedProfile = process.env.USERPROFILE;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "doorman-cli-ui-"));
@@ -298,14 +299,18 @@ describe("the dispatcher on a terminal", () => {
     appData = join(root, "appdata");
     mkdirSync(join(home, ".claude"), { recursive: true });
     mkdirSync(appData, { recursive: true });
-    // The guard's agent detection reads the real HOME (os.homedir()), not the
-    // CLI's injected env: without this the test saw the machine's own ~/.claude.
+    // The guard's agent detection reads the real home (os.homedir(): HOME on
+    // POSIX, USERPROFILE on Windows), not the CLI's injected env: without this
+    // the test saw the machine's own ~/.claude.
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
   });
 
   afterEach(() => {
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
+    if (savedProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = savedProfile;
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -377,6 +382,7 @@ describe("ASCII mode", () => {
   let home: string;
   let appData: string;
   const savedHome = process.env.HOME;
+  const savedProfile = process.env.USERPROFILE;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "doorman-cli-ascii-"));
@@ -393,13 +399,17 @@ describe("ASCII mode", () => {
       { type: "assistant", timestamp: at(28), sessionId: SESSION, cwd: "/Users/dev/app", message: { id: "m2", model: "claude-opus-5", role: "assistant", content: [{ type: "text", text: "Pushed." }], usage } },
     ];
     writeFileSync(join(project, `${SESSION}.jsonl`), `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
-    // The guard's agent detection reads the real HOME.
+    // The guard's agent detection reads the real home (HOME, or USERPROFILE
+    // on Windows).
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
   });
 
   afterEach(() => {
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
+    if (savedProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = savedProfile;
     rmSync(root, { recursive: true, force: true });
   });
 

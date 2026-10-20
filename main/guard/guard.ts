@@ -44,7 +44,7 @@ import { evaluatePrompt, evaluateToolCall, guardSelfWrite, parsePolicy, type Exc
 import { decideEnforcement, type GuardFinding } from "./policy.js";
 import { secondOpinion, secondOpinionRawText, type SecondOpinionTelemetry } from "./second-opinion.js";
 import { MAX_COMMAND_CHARS, sanitizeExcerpt, scanWindow, type SecurityDetectorId } from "./security-detect.js";
-import { appListening, presenceTerm, writePresence, type ApprovalResolution } from "./handshake.js";
+import { appListening, presenceTerm, toolCallPreview, writePresence, type ApprovalResolution } from "./handshake.js";
 import { holdForHuman, hostEmit, unattendedOutcome, type HoldTelemetry } from "./hold.js";
 import { priorDecision, writeDedup } from "./dedup.js";
 import { HOOK_TIMEOUT_SLACK_SECONDS } from "./policy.js";
@@ -432,6 +432,9 @@ async function main(): Promise<void> {
     const heldKeys = spooled
       .filter((f) => decision.detectors.includes(f.detector))
       .map((f) => ({ detector: f.detector, ...(f.key_name === undefined ? {} : { key_name: f.key_name }) }));
+    // The card shows the command (or path, URL, MCP call), not the input's
+    // JSON. Built from the redacted input, so the masks carry over.
+    const shown = toolCallPreview(toolName, redacted);
     const held = await holdForHuman(guardDir, policy, decision, {
       host: host.id,
       source,
@@ -439,7 +442,8 @@ async function main(): Promise<void> {
       tool_name: toolName,
       target,
       cwd,
-      redacted,
+      redacted: shown.preview,
+      ...(shown.description === undefined ? {} : { description: shown.description }),
       held_keys: heldKeys,
       detector_labels: usedLabels,
     }, {

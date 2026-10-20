@@ -37,7 +37,7 @@ describe("identity and documents", () => {
     expect(kimiHost.label).toBe("Kimi Code");
     expect(kimiHost.source).toBe("kimi-code");
     const user = kimiHost.documents("/Users/dev", {}).find((d) => d.level === "user");
-    expect(user?.path).toBe("/Users/dev/.kimi-code/config.toml");
+    expect(user?.path).toBe(join("/Users/dev", ".kimi-code", "config.toml"));
   });
 });
 

@@ -123,7 +123,7 @@ export function buildSecurityReport(inputs: ReportInputs): SecurityReport {
   const count = (mode: string) => rules.filter((d) => (modes[d] ?? "observe") === mode).length;
   const open = inputs.findings.filter((f) => f.status === "open");
   const grouped = countSecurityGroups(open);
-  const exposures = countExposures(open);
+  const exposures = countExposures(open, inputs.findings);
   const labels = customDetectorLabels(policy.custom_rules ?? []);
   const max = inputs.max_rows ?? 500;
   const sorted = [...inputs.findings].sort((a, b) => (a.last_seen_at < b.last_seen_at ? 1 : -1));

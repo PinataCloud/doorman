@@ -37,7 +37,7 @@ describe("identity and documents", () => {
     expect(gooseHost.label).toBe("Goose");
     expect(gooseHost.source).toBe("goose");
     const user = gooseHost.documents("/Users/dev", {}).find((d) => d.level === "user");
-    expect(user?.path).toBe("/Users/dev/.agents/plugins/doorman/hooks/hooks.json");
+    expect(user?.path).toBe(join("/Users/dev", ".agents", "plugins", "doorman", "hooks", "hooks.json"));
   });
 });
 

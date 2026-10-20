@@ -13,7 +13,7 @@ import {
   hostLabels,
 } from "../main/guard/hosts/index.js";
 import type { HostDocumentFormat } from "../main/guard/hosts/types.js";
-import { GUARD_COMMAND_MARKER } from "../main/guard/policy.js";
+import { carriesGuardMarker, GUARD_COMMAND_MARKER } from "../main/guard/policy.js";
 import { guardCommand } from "../main/enforcement.js";
 
 /**
@@ -137,7 +137,9 @@ describe("the guard host registry", () => {
     expect(guardCommand("/u", "claude")).toBe(guardCommand("/u"));
     for (const [, host] of each) {
       const command = guardCommand("/u", host.id);
-      expect(command).toContain(GUARD_COMMAND_MARKER);
+      // On Windows the bundle path is written with `\`; the marker is matched
+      // on forward slashes either way.
+      expect(carriesGuardMarker(command)).toBe(true);
       if (host.id !== DEFAULT_HOST.id) expect(command).toContain(`--host ${host.id}`);
     }
   });

@@ -53,6 +53,7 @@ function ApprovalPanel({ state }) {
         {request.target ? " → " + request.target : ""}
       </div>
       {request.context_note ? <div className="ap-context">{request.context_note}</div> : null}
+      {request.description ? <div className="ap-desc" title={request.description}>{request.description}</div> : null}
       <Evidence excerpt={request.preview} />
       <div className="ap-actions">
         <button className="btn danger primary" disabled={!!busy} onClick={() => answer("deny")}>
@@ -113,7 +114,7 @@ function ApprovalOverlay({ state }) {
           {request.target ? (
             <div className="fc">
               <div className="k">Target</div>
-              <div className="v mono">{request.target}</div>
+              <div className="v mono">{breakPath(request.target)}</div>
             </div>
           ) : null}
           <div className="fc">
@@ -129,7 +130,7 @@ function ApprovalOverlay({ state }) {
           {request.server ? (
             <div className="fc">
               <div className="k">Server</div>
-              <div className="v mono">{request.server}{request.tool_class ? " · " + request.tool_class : ""}</div>
+              <div className="v mono">{breakPath(request.server)}{request.tool_class ? " · " + request.tool_class : ""}</div>
             </div>
           ) : null}
         </div>
@@ -139,6 +140,7 @@ function ApprovalOverlay({ state }) {
         ) : null}
 
         <div className="ap-label">What the agent is about to run</div>
+        {request.description ? <div className="ap-desc">{request.description}</div> : null}
         <Evidence excerpt={request.preview} />
 
         <div className="ap-actions">
@@ -234,9 +236,22 @@ function approvalFootnote(request, state) {
   );
 }
 
+/** The last two parts of a path, with the separator it was written with
+    (a Windows path keeps its backslashes). */
 function shortPath(path) {
-  const parts = String(path).split("/").filter(Boolean);
-  return parts.length <= 2 ? path : "…/" + parts.slice(-2).join("/");
+  const text = String(path);
+  const sep = text.includes("\\") && !text.includes("/") ? "\\" : "/";
+  const parts = text.split(/[\\/]/).filter(Boolean);
+  return parts.length <= 2 ? text : "…" + sep + parts.slice(-2).join(sep);
+}
+
+/** A long value (a path, a URL) with a line-break opportunity after every
+    separator, so it wraps at a folder boundary inside its column instead of
+    widening the card. */
+function breakPath(text) {
+  return String(text)
+    .split(/(?<=[\\/])/)
+    .flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
 }
 
 /** Ticks once a second against the request's own deadline, so a re-render or a

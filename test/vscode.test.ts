@@ -335,7 +335,8 @@ describe("workspace trust", () => {
 });
 
 describe("the setup check for VS Code", () => {
-  const settingsFile = `${userDir(DEFAULT_VARIANT, HOME)}/settings.json`;
+  // The doctor reads each profile's settings.json with path.join.
+  const settingsFile = join(userDir(DEFAULT_VARIANT, HOME), "settings.json");
   const withCode = (settings: Record<string, unknown>, over: Partial<DoctorInput> = {}) =>
     diagnose(
       input({
@@ -432,8 +433,8 @@ describe("the setup check for VS Code", () => {
       input({
         dirs: [base, `${base}/profiles`, `${base}/profiles/work`],
         files: {
-          [`${base}/settings.json`]: "{}",
-          [`${base}/profiles/work/settings.json`]: JSON.stringify({ "chat.useHooks": false }),
+          [join(base, "settings.json")]: "{}",
+          [join(base, "profiles", "work", "settings.json")]: JSON.stringify({ "chat.useHooks": false }),
         },
       }),
     );
@@ -622,8 +623,8 @@ describe("MCP documents across builds and profiles", () => {
       listDir: (p: string) => (p === `${stable}/profiles` ? ["work"] : []),
     };
     const paths = mcpConfigPaths(HOME, io);
-    for (const variant of VSCODE_VARIANTS) expect(paths).toContain(`${userDir(variant, HOME)}/mcp.json`);
-    expect(paths).toContain(`${stable}/profiles/work/mcp.json`);
+    for (const variant of VSCODE_VARIANTS) expect(paths).toContain(join(userDir(variant, HOME), "mcp.json"));
+    expect(paths).toContain(join(stable, "profiles", "work", "mcp.json"));
   });
 });
 

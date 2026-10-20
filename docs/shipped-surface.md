@@ -109,10 +109,12 @@ directory (`$XDG_DATA_HOME`, default `~/.local/share`):
   64, 48, 32.
 
 It then runs `update-desktop-database` on that `applications/` directory (which
-writes its `mimeinfo.cache`) and, only where an `icon-theme.cache` already
-exists, `gtk-update-icon-cache`. Nothing is written by a dev run, a non-AppImage
-install, over an entry of the same name it didn't write, or when another entry
-(AppImageLauncher, Gear Lever) already launches the same AppImage.
+writes its `mimeinfo.cache`), only where an `icon-theme.cache` already exists,
+`gtk-update-icon-cache`, and `kbuildsycoca6` (else `kbuildsycoca5`) where
+installed, which rewrites KDE's own app cache under `~/.cache`. Nothing is
+written by a dev run, a non-AppImage install, over an entry of the same name it
+didn't write, or when another entry (AppImageLauncher, Gear Lever) already
+launches the same AppImage.
 
 ## Must never ship — checked at the last audit
 

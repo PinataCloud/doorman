@@ -945,6 +945,24 @@ describe("the record column's evidence strip (app.css)", () => {
   });
 });
 
+describe("the hold card's columns (app.css)", () => {
+  const css = readFileSync(new URL("app.css", rendererDir), "utf8");
+  it("wraps a long value inside its column instead of widening the card", () => {
+    // THE BUG (Windows): a guard path as the Target had no break point, so
+    // the column row grew past the card, the card scrolled sideways and the
+    // Rules column sat off screen. The row may wrap, a column may shrink, and
+    // its value breaks (after a separator via breakPath's <wbr>, else anywhere).
+    const rule = (selector: string) => {
+      const at = css.indexOf(`${selector} {`);
+      expect(at, selector).toBeGreaterThanOrEqual(0);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    expect(rule(".approval .fcols")).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule(".approval .fcols .fc")).toMatch(/min-width:\s*0/);
+    expect(rule(".approval .fcols .fc .v")).toMatch(/overflow-wrap:\s*anywhere/);
+  });
+});
+
 describe("floating layers stay clickable, dismissable and on screen", () => {
   const app = readFileSync(new URL("app.jsx", rendererDir), "utf8");
   const css = readFileSync(new URL("app.css", rendererDir), "utf8");

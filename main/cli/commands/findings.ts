@@ -106,6 +106,7 @@ export const findingsCommand: CliCommand = {
   ],
   notes: [
     "One row per exposure (rule x place), worst first, as the Radar's cards. Rows in confidence bands the Radar hides, and false positives unless you show them there, are left out here too.",
+    "So are findings whose transcript is gone or no longer holds them, as of the last scan (the app's, or `--scan`).",
     "The ID column is the card's newest worst finding: pass it to `doorman findings show`.",
   ],
   examples: [

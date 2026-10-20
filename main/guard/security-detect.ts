@@ -939,15 +939,51 @@ function withLeadingRedirectsLast(head: string): string {
 }
 
 function stripInvocationWrappers(head: string): string {
-  let current = head;
+  let current = withWindowsProgramName(head);
   for (let round = 0; round < 8; round += 1) {
     let next = withLeadingRedirectsLast(current);
     for (const wrapper of INVOCATION_WRAPPERS) next = next.replace(wrapper, "");
-    next = next.trim();
+    next = withWindowsProgramName(next.trim());
     if (next === current) break;
     current = next;
   }
   return current;
+}
+
+/** A program file Windows runs by its extension: `curl.exe`, `npm.cmd`. */
+const WINDOWS_PROGRAM_EXT_RE = /\.(?:exe|com|cmd|bat)$/i;
+
+/**
+ * A head whose program word is a Windows program path, with that word cut down
+ * to the bare name every pattern here anchors on: `C:\Windows\System32\curl.exe
+ * …`, `"C:\Program Files\Git\bin\bash.exe" -c …` and `curl.exe …` become
+ * `curl …` / `bash -c …`. A backslash there is a separator, not an escape, and
+ * Windows runs an unquoted `C:\Program Files\…\bash.exe` too (CreateProcess
+ * tries each space in turn), so that spelling is read whole. Any other head is
+ * returned as it came: a POSIX `\curl` or `/usr/bin/curl` is left alone.
+ */
+function withWindowsProgramName(head: string): string {
+  let word: string;
+  let rest: string;
+  const quoted = /^(["'])([^"']*)\1(?=\s|$)/.exec(head);
+  if (quoted) {
+    word = quoted[2]!;
+    rest = head.slice(quoted[0].length);
+  } else {
+    let end = head.search(/\s|$/);
+    if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(head)) {
+      // The shortest run of words ending in a program file, when only the
+      // last component of it is a single word.
+      const ext = /\.(?:exe|com|cmd|bat)(?=\s|$)/i.exec(head);
+      const candidate = ext === null ? "" : head.slice(0, ext.index + ext[0].length);
+      if (candidate !== "" && !/["']/.test(candidate) && !/\s/.test(candidate.split(/[\\/]/).pop()!)) end = candidate.length;
+    }
+    word = head.slice(0, end);
+    rest = head.slice(end);
+  }
+  if (!/^(?:[A-Za-z]:[\\/]|\\\\)/.test(word) && !WINDOWS_PROGRAM_EXT_RE.test(word)) return head;
+  const name = (word.split(/[\\/]/).pop() ?? word).replace(WINDOWS_PROGRAM_EXT_RE, "").toLowerCase();
+  return name === "" ? head : `${name}${rest}`;
 }
 
 /** Cut a `# comment` off a segment — quote-aware, and only a `#` that starts a
@@ -1540,11 +1576,14 @@ export function secretPathsReadIn(command: string, firstOnly = false): Array<{ n
       if (forms.some((form) => pattern.test(form)) && add(name, head)) return found;
     }
     // A globbed argument the shell may expand INTO a credential file:
-    // `cat .e?v`, `cat ~/.ssh/id_*`. A leading `*`/`?` never matches a dotfile
-    // (shell semantics), so `cat *.md` stays quiet.
-    for (const word of new Set([...forms[1]!.split(/\s+/), ...forms[2]!.split(/\s+/)])) {
+    // `cat .e?v`, `cat ~/.ssh/id_*`, `type %USERPROFILE%\.ss?\id_*`. A leading
+    // `*`/`?` never matches a dotfile (shell semantics), so `cat *.md` stays
+    // quiet. A backslash is also read as the Windows separator it is there.
+    const words = forms[1]!.split(/\s+/);
+    const windowsWords = words.filter((w) => w.includes("\\")).map((w) => w.replace(/\\/g, "/"));
+    for (const word of new Set([...words, ...forms[2]!.split(/\s+/), ...windowsWords])) {
       if (!/[?*[]/.test(word)) continue;
-      const re = globToRegExp(word.replace(/^~\//, "").replace(/^\$\{?HOME\}?\//, ""));
+      const re = globToRegExp(withoutHomePrefix(word));
       if (re === undefined) continue;
       const base = word.split("/").pop() ?? "";
       const hits = GLOB_SECRET_SAMPLES.filter(([, sample]) => {
@@ -1555,6 +1594,16 @@ export function secretPathsReadIn(command: string, firstOnly = false): Array<{ n
     }
   }
   return found;
+}
+
+/** A path without the home directory leading it, the way POSIX shells (`~/`,
+ * `$HOME/`), cmd (`%USERPROFILE%/`) and PowerShell (`$env:USERPROFILE/`)
+ * spell it; the path is already `/`-separated. */
+function withoutHomePrefix(path: string): string {
+  return path
+    .replace(/^~\//, "")
+    .replace(/^\$\{?HOME\}?\//, "")
+    .replace(/^(?:%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%|\$\{?env:USERPROFILE\}?)\//i, "");
 }
 
 /** Concrete credential paths a glob is tested against, with the entry name

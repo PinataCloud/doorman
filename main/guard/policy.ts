@@ -747,12 +747,31 @@ export function normalizeMcpPermission(value: unknown): McpPermissionMode {
 
 /** Does a working directory fall under a scope prefix? A prefix matches itself
  * and its descendants, never a sibling that merely shares a spelling
- * (`/repo` does not cover `/repo-old`). */
+ * (`/repo` does not cover `/repo-old`). A Windows path (`C:\repo`, `c:/repo`,
+ * `\\server\share`) on either side is compared the way Windows reads it:
+ * either separator, case folded, so `C:\repo` covers `c:/Repo\sub`. A custom
+ * rule's scope uses the same test (custom-rules.ts ruleAppliesToCwd). */
 export function cwdWithinPrefix(cwd: string | undefined, prefix: string | undefined): boolean {
   if (!prefix) return true;
   if (!cwd) return false;
+  if (WINDOWS_PATH_RE.test(prefix) || WINDOWS_PATH_RE.test(cwd)) {
+    const p = windowsPathKey(prefix);
+    const c = windowsPathKey(cwd);
+    return c === p || c.startsWith(`${p}\\`);
+  }
   const p = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
   return cwd === p || cwd.startsWith(`${p}/`);
+}
+
+/** A drive-letter path or a UNC share. */
+const WINDOWS_PATH_RE = /^(?:[A-Za-z]:(?:[\\/]|$)|\\\\[^\\/])/;
+
+/** A Windows path as cwdWithinPrefix compares it: `\`-separated, repeats and
+ * a trailing separator dropped, folded through upper case the way NTFS
+ * compares names. A UNC path keeps its leading `\\`. */
+function windowsPathKey(path: string): string {
+  const key = path.replace(/[\\/]+/g, "\\").replace(/\\+$/, "").toUpperCase().toLowerCase();
+  return path.startsWith("\\\\") ? `\\${key}` : key;
 }
 
 /**

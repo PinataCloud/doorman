@@ -4,13 +4,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CliEnvironment } from "../../main/cli/context.js";
 import { main } from "../../main/cli/index.js";
 import { guardDir } from "../../main/enforcement.js";
 import { heartbeatPath } from "../../main/guard/handshake.js";
+import { carriesGuardMarker } from "../../main/guard/policy.js";
 import { renderLauncher } from "../../main/lib/node-launcher.js";
 
 /**
@@ -55,7 +56,7 @@ describe("doorman guard and policy commands", () => {
   let home: string;
   let appData: string;
   let dataDir: string;
-  const saved = { HOME: process.env.HOME, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "doorman-cli-guard-"));
@@ -64,8 +65,10 @@ describe("doorman guard and policy commands", () => {
     dataDir = join(appData, "Doorman");
     mkdirSync(join(home, ".claude"), { recursive: true });
     mkdirSync(appData, { recursive: true });
-    // enforcement.ts resolves every hook document from homedir().
+    // enforcement.ts resolves every hook document from homedir(), which reads
+    // HOME on POSIX and USERPROFILE on Windows.
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     process.env.DOORMAN_APPDATA_DIR = appData;
   });
 
@@ -105,7 +108,10 @@ describe("doorman guard and policy commands", () => {
 
   const guardPolicy = (): Json => JSON.parse(readFileSync(join(guardDir(dataDir), "policy.json"), "utf8")) as Json;
   const prefs = (): Json => JSON.parse(readFileSync(join(dataDir, "prefs.json"), "utf8")) as Json;
-  const holdHeartbeat = (pid: number) => {
+  /** Another Doorman's heartbeat, from a pid that is alive and is not this
+   * process (the CLI skips its own): the runner that started this worker. */
+  const OTHER_PID = process.ppid;
+  const holdHeartbeat = (pid: number = OTHER_PID) => {
     mkdirSync(guardDir(dataDir), { recursive: true });
     writeFileSync(heartbeatPath(guardDir(dataDir)), `${JSON.stringify({ at: new Date().toISOString(), pid, version: "0.2.0" })}\n`);
   };
@@ -137,10 +143,10 @@ describe("doorman guard and policy commands", () => {
   });
 
   it("refuses every write while another Doorman holds the heartbeat", async () => {
-    holdHeartbeat(1);
+    holdHeartbeat();
     const refused = await run(["rules", "set", "secret_egress", "block"]);
     expect(refused.code).toBe(1);
-    expect(refused.err).toContain("Doorman is running (pid 1)");
+    expect(refused.err).toContain(`Doorman is running (pid ${OTHER_PID})`);
     for (const argv of [["policy", "level", "relaxed"], ["packs", "disable", "crypto_operations"], ["exceptions", "add", "any", "npm"], ["guard", "install"]]) {
       expect((await run(argv)).code, argv.join(" ")).toBe(1);
     }
@@ -180,19 +186,21 @@ describe("doorman guard and policy commands", () => {
   });
 
   it("adds, lists and removes exceptions the way the exceptions editor writes them", async () => {
+    // --project is resolved to an absolute directory: on Windows that names a drive.
+    const project = resolve("/work/repo");
     const added = await run(["exceptions", "add", "secret_egress", "api\\.internal", "--project", "/work/repo/", "--days", "30", "--note", "staging"]);
     expect(added.code).toBe(0);
     await run(["exceptions", "add", "any", "npm"]);
     const ignore = guardPolicy().ignore as Json[];
     expect(ignore).toHaveLength(2);
-    expect(ignore[0]).toMatchObject({ detector: "secret_egress", pattern: "api\\.internal", cwd_prefix: "/work/repo", note: "staging", origin: "manual" });
+    expect(ignore[0]).toMatchObject({ detector: "secret_egress", pattern: "api\\.internal", cwd_prefix: project, note: "staging", origin: "manual" });
     expect(Date.parse(ignore[0]!.expires_at as string)).toBeGreaterThan(Date.now() + 29 * 86_400_000);
     expect(ignore[1]).toEqual({ pattern: "npm", origin: "manual" });
     // Patterns the engine would skip are refused up front.
     expect((await run(["exceptions", "add", "any", ".*"])).code).toBe(2);
     expect((await run(["exceptions", "add", "any", "(a+)+"])).code).toBe(2);
     expect((await run(["exceptions", "add", "not_a_rule", "x"])).code).toBe(2);
-    expect((await run(["exceptions"])).out).toContain("/work/repo · until");
+    expect((await run(["exceptions"])).out).toContain(`${project} · until`);
     await run(["exceptions", "remove", "1"]);
     expect(guardPolicy().ignore).toEqual([{ pattern: "npm", origin: "manual" }]);
     expect((await run(["exceptions", "remove", "5"])).code).toBe(2);
@@ -224,7 +232,7 @@ describe("doorman guard and policy commands", () => {
     expect(noTty.code).toBe(1);
     expect(noTty.err).toContain("--auto deny");
     expect((await run(["watch", "--auto", "allow"])).code).toBe(2);
-    holdHeartbeat(1);
+    holdHeartbeat();
     const busy = await run(["watch", "--auto", "deny"]);
     expect(busy.code).toBe(1);
     expect(busy.err).toContain("already answering held calls");
@@ -239,7 +247,8 @@ describe("doorman guard and policy commands", () => {
       const installed = await run(["guard", "install"], cli);
       expect(installed.code, installed.err).toBe(0);
       const doc = readFileSync(settings(), "utf8");
-      expect(doc).toContain(join(guardDir(dataDir), "guard.js"));
+      // JSON escapes a Windows path's `\`.
+      expect(doc).toContain(JSON.stringify(join(guardDir(dataDir), "guard.js")).slice(1, -1));
       expect(JSON.parse(doc).theme).toBe("dark");
       expect(existsSync(join(guardDir(dataDir), "guard.js"))).toBe(true);
       expect(existsSync(join(guardDir(dataDir), "policy.json"))).toBe(true);
@@ -257,7 +266,7 @@ describe("doorman guard and policy commands", () => {
       expect(readFileSync(settings(), "utf8")).toContain('"timeout": 45');
 
       expect((await run(["guard", "uninstall"], cli)).code).toBe(0);
-      expect(readFileSync(settings(), "utf8")).not.toContain("doorman/guard");
+      expect(carriesGuardMarker(readFileSync(settings(), "utf8"))).toBe(false);
       expect(prefs().guard_wanted).toBe(false);
     });
 
@@ -340,11 +349,11 @@ describe("doorman guard and policy commands", () => {
       const w = await watching(cli, ["watch", "--auto", "deny"]);
       expect(JSON.parse(await runGuard("/work/repo")).hookSpecificOutput.permissionDecision).toBe("deny");
       expect(w.seen.err).toContain("Denied (--auto deny).");
-      holdHeartbeat(1);
+      holdHeartbeat();
       expect(await w.done).toBe(0);
       expect(w.seen.err).toContain("took over");
       // The app's heartbeat is left alone.
-      expect(JSON.parse(readFileSync(heartbeatPath(guardDir(dataDir)), "utf8")).pid).toBe(1);
+      expect(JSON.parse(readFileSync(heartbeatPath(guardDir(dataDir)), "utf8")).pid).toBe(OTHER_PID);
     }, 30_000);
   });
 });

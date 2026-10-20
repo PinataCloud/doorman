@@ -463,7 +463,7 @@ export const OPENCLAW_PLUGIN_SOURCE = `// Doorman Guardrails — OpenClaw plugin
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export const PLUGIN_ID = ${JSON.stringify(OPENCLAW_PLUGIN_ID)};
 const EVENT = ${JSON.stringify(EVENT)};
@@ -566,7 +566,7 @@ export function runtimeVersion(api, argv = process.argv, read = readFileSync) {
   try {
     const entry = typeof argv[1] === "string" ? argv[1] : "";
     if (entry === "") return undefined;
-    const pkg = JSON.parse(String(read(join(entry.replace(/\\/[^/]*$/, ""), "package.json"), "utf8")));
+    const pkg = JSON.parse(String(read(join(dirname(entry), "package.json"), "utf8")));
     return isRecord(pkg) && typeof pkg.version === "string" ? pkg.version : undefined;
   } catch {
     return undefined;

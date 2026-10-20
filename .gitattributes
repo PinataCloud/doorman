@@ -1,0 +1,27 @@
+# LF everywhere, whatever core.autocrlf says. A Windows checkout that turned
+# LF into CRLF put CRs into the built guard bundle, so the app's bundle and the
+# CLI's no longer matched and each read the other's as altered.
+* text=auto eol=lf
+
+# Binary: never converted, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.car binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.onnx binary
+*.wasm binary
+*.node binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.pdf binary
+*.db binary
+*.sqlite binary

@@ -41,10 +41,12 @@ describe("guardSelfWrite", () => {
 });
 
 describe("guardSelfWrite — macOS symlinked roots", () => {
+  // macOS rules on any OS: Windows has no /private, and reads these paths its own way.
+  const mac = { platform: "darwin" } as const;
   it("treats /private/var and /var as the same directory", () => {
     const real = "/private/var/folders/xy/T/guard";
-    expect(guardSelfWrite("Bash", { command: `echo x > pending/a.reply.json` }, "/var/folders/xy/T/guard", [real], HOME)).toBeDefined();
-    expect(guardSelfWrite("Write", { file_path: "/private/var/folders/xy/T/guard/policy.json" }, "/r", ["/var/folders/xy/T/guard"], HOME)).toBeDefined();
+    expect(guardSelfWrite("Bash", { command: `echo x > pending/a.reply.json` }, "/var/folders/xy/T/guard", [real], HOME, mac)).toBeDefined();
+    expect(guardSelfWrite("Write", { file_path: "/private/var/folders/xy/T/guard/policy.json" }, "/r", ["/var/folders/xy/T/guard"], HOME, mac)).toBeDefined();
   });
 });
 

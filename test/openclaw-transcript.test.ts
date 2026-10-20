@@ -59,8 +59,8 @@ describe("the descriptor", () => {
   });
 
   it("roots at <state>/agents, honouring OPENCLAW_STATE_DIR", () => {
-    expect(openclawSource.roots("/Users/dev", {})).toEqual(["/Users/dev/.openclaw/agents"]);
-    expect(openclawSource.roots("/Users/dev", { OPENCLAW_STATE_DIR: "/srv/claw" })).toEqual(["/srv/claw/agents"]);
+    expect(openclawSource.roots("/Users/dev", {})).toEqual([path.join("/Users/dev", ".openclaw", "agents")]);
+    expect(openclawSource.roots("/Users/dev", { OPENCLAW_STATE_DIR: "/srv/claw" })).toEqual([path.join("/srv/claw", "agents")]);
   });
 
   it("discovers every agent's session files and skips the index", () => {

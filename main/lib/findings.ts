@@ -549,7 +549,17 @@ export interface SummaryOptions {
   hide_confidence?: readonly FindingConfidence[];
 }
 
+/**
+ * The headline numbers over the rows a surface shows (CaptureEngine
+ * `shownFindings`). Places are resolved over EVERY row passed in, triaged and
+ * hidden-band rows included, exactly as lib/app-views.ts `radarRows` stamps
+ * the cards: a project root learned from a reviewed row folds this week's
+ * subdirectory into it on the Radar, so it must here too, or the hero and
+ * `doorman status` count two exposures where the feed and `doorman findings`
+ * show one card.
+ */
 export function summarizeFindings(rows: Iterable<FindingRow>, options: SummaryOptions = {}): RadarSummary {
+  const every = [...rows];
   const hidden = new Set(options.hide_confidence ?? []);
   const summary: RadarSummary = {
     open: 0,
@@ -563,7 +573,7 @@ export function summarizeFindings(rows: Iterable<FindingRow>, options: SummaryOp
   };
   const sessions = new Set<string>();
   const openRows: FindingRow[] = [];
-  for (const row of rows) {
+  for (const row of every) {
     if (row.status !== "open") continue;
     if (hidden.has(confidenceOf(row))) continue;
     openRows.push(row);
@@ -579,18 +589,23 @@ export function summarizeFindings(rows: Iterable<FindingRow>, options: SummaryOp
   const grouped = countSecurityGroups(openRows);
   summary.open_groups = grouped.groups;
   summary.by_severity_groups = grouped.by_severity;
-  const exposures = countExposures(openRows);
+  const exposures = countExposures(openRows, every);
   summary.open_exposures = exposures.count;
   summary.by_severity_exposures = exposures.by_severity;
   return summary;
 }
 
-/** Distinct exposures over a row set, each at its WORST row's severity. */
-export function countExposures(rows: readonly FindingRow[]): {
+/** Distinct exposures over `rows`, each at its WORST row's severity. Places
+ * are resolved over `placesFrom`, the whole row set the rows were picked from,
+ * so the keys are the ones the Radar's cards group on (`radarRows`). */
+export function countExposures(
+  rows: readonly FindingRow[],
+  placesFrom: Iterable<Pick<FindingRow, "cwd">>,
+): {
   count: number;
   by_severity: Record<SecuritySeverity, number>;
 } {
-  const resolver = createPlaceResolver(rows);
+  const resolver = createPlaceResolver(placesFrom);
   const worst = new Map<string, SecuritySeverity>();
   for (const row of rows) {
     const key = exposureKey(row.detector, resolver.placeOf(row));

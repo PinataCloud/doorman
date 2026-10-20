@@ -1,3 +1,7 @@
+import { spawn } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   agentAncestorPid,
@@ -6,6 +10,7 @@ import {
   parseLsofCwd,
   parseLstart,
   parsePsTable,
+  readProcessInventory,
   sourceForCommand,
   terminalAncestor,
   type ProcessRow,
@@ -81,6 +86,24 @@ describe("agent-processes: ps and lsof parsing", () => {
     const map = parseLsofCwd("p63645\nfcwd\nn/Users/dev/repos/hitman\np64469\nfcwd\nn/Users/dev/repos/doorman\n");
     expect(map.get(63645)).toBe("/Users/dev/repos/hitman");
     expect(map.get(64469)).toBe("/Users/dev/repos/doorman");
+  });
+
+  // ps and lsof (a Mac) or /proc (Linux); Windows has neither.
+  it.skipIf(process.platform === "win32")("finds a running agent and the directory it runs in", async () => {
+    // An agent named `claude` that waits on its stdin until killed (this
+    // node under another name: Ubuntu's coreutils are one multi-call binary
+    // that refuses an unknown name), started in a directory of its own.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "doorman-agent-")));
+    symlinkSync(process.execPath, join(dir, "claude"));
+    const child = spawn(join(dir, "claude"), ["-e", "process.stdin.resume()"], { cwd: dir, stdio: ["pipe", "ignore", "ignore"] });
+    try {
+      await new Promise<void>((resolve, reject) => child.once("spawn", resolve).once("error", reject));
+      const inventory = await readProcessInventory();
+      expect(inventory.agents.find((a) => a.pid === child.pid)).toMatchObject({ source: "claude-code", cwd: dir });
+    } finally {
+      child.kill();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -289,6 +312,55 @@ describe("live-sessions fold", () => {
     expect(live.sessions[0]!.pid).toBeUndefined();
   });
 
+  it("a session whose agent has exited is history, not working or waiting, however recent its last turn", () => {
+    // Ubuntu, a minute after several `claude -p` runs had exited, beside one
+    // interactive session: "3 working · 1 waiting for you". Each run's hook
+    // left a presence record naming its pid; the table no longer has them.
+    const ago = (ms: number) => new Date(nowZ.getTime() - ms).toISOString();
+    const run = (id: string, endedMs: number, pid: number) => ({
+      session: session({ id, ended_at: ago(endedMs), cwd: "/home/dev/scratch", last_role: "assistant", last_turn_tools: 0 }),
+      presence: { session_id: id, source: "claude-code", pid, cwd: "/home/dev/scratch", at: ago(endedMs + 5_000) },
+    });
+    const runs = [run("P1", 20_000, 7001), run("P2", 60_000, 7002), run("P3", WORKING_MS + 10_000, 7003)];
+    const live = foldLiveSessions({
+      now: nowZ,
+      agents,
+      rows,
+      presence: [
+        ...runs.map((r) => r.presence),
+        // A long-running interactive session, pinned to its live process.
+        { session_id: "A", source: "claude-code", pid: 63645, at: ago(5 * 60_000) },
+      ],
+      sessions: [...runs.map((r) => r.session), session({ id: "A", ended_at: ago(30_000) })],
+      approvals: [],
+    });
+    expect(live.sessions.filter((r) => r.session_id?.startsWith("P"))).toEqual([]);
+    expect(live.sessions.find((r) => r.session_id === "A")).toMatchObject({ join: "presence", pid: 63645, state: "working" });
+    expect(live.counts).toMatchObject({ working: 1, waiting: 0 });
+  });
+
+  it("a recent session is still shown when its exit cannot be known", () => {
+    const ago = (ms: number) => new Date(nowZ.getTime() - ms).toISOString();
+    const recent = session({ id: "R", ended_at: ago(20_000), cwd: "/home/dev/scratch" });
+    const gone = { session_id: "R", source: "claude-code", pid: 7001, at: ago(25_000) };
+    const fold = (over: Partial<Parameters<typeof foldLiveSessions>[0]>) =>
+      foldLiveSessions({ now: nowZ, agents: [], rows, presence: [gone], sessions: [recent], approvals: [], ...over }).sessions.map((r) => r.session_id);
+    // No presence record: the agent may run where ps cannot see it.
+    expect(fold({ presence: [] })).toEqual(["R"]);
+    // No process table (ps unavailable): nothing is known to have exited.
+    expect(fold({ rows: [] })).toEqual(["R"]);
+    // The record names a pid that is still there.
+    expect(fold({ presence: [{ ...gone, pid: 5001 }] })).toEqual(["R"]);
+    // Written after the table was read: the table cannot know its pid yet.
+    expect(fold({ rowsAt: new Date(nowZ.getTime() - 30_000) })).toEqual(["R"]);
+    // A visible agent of the same host joined to nothing could be the
+    // session's own (its hook ran under a shell wrapper that has exited).
+    const noCwd = agentProcesses(rows, new Map()).filter((a) => a.pid === 63645);
+    expect(fold({ agents: noCwd })).toContain("R");
+    // ...but not one that runs in another directory.
+    expect(fold({ agents: agents.filter((a) => a.pid === 63645) })).not.toContain("R");
+  });
+
   it("a headless process is marked so the UI offers nothing to focus", () => {
     // Started 30 s ago with no turns yet: the start IS the newest fact — working.
     const headRows: ProcessRow[] = [{ pid: 9000, ppid: 1, started_at: new Date(nowZ.getTime() - 30_000).toISOString(), command: "claude -p hi" }];
@@ -308,8 +380,19 @@ describe("live-sessions fold", () => {
     const deadRecent = { session_id: "Y", source: "claude-code", pid: 424242, at: new Date(nowZ.getTime() - WORKING_MS / 2).toISOString() };
     const deadOld = { session_id: "Z", source: "claude-code", pid: 424242, at: new Date(nowZ.getTime() - WORKING_MS * 2).toISOString() };
     const ancient = { session_id: "W", source: "claude-code", pid: 63645, at: new Date(nowZ.getTime() - PRESENCE_STALE_MS - 1).toISOString() };
-    const stale = stalePresence([fresh, deadRecent, deadOld, ancient], rows, agents, nowZ);
+    const stale = stalePresence([fresh, deadRecent, deadOld, ancient], rows, agents, [], nowZ);
     expect(stale.map((r) => r.session_id).sort()).toEqual(["W", "Z"]);
+  });
+
+  it("stale presence keeps a dead pid's record while its session is still recent, so the session does not come back as live", () => {
+    const at = (ms: number) => new Date(nowZ.getTime() - ms).toISOString();
+    // The last hook ran two working windows ago; the final answer landed 30 s ago.
+    const dead = { session_id: "D", source: "claude-code", pid: 424242, at: at(WORKING_MS * 2) };
+    expect(stalePresence([dead], rows, agents, [session({ id: "D", ended_at: at(30_000) })], nowZ)).toEqual([]);
+    expect(stalePresence([dead], rows, agents, [session({ id: "D", ended_at: at(RECENT_NO_PROCESS_MS + 1) })], nowZ)).toEqual([dead]);
+    const fold = (sessions: SessionSummary[]) =>
+      foldLiveSessions({ now: nowZ, agents, rows, presence: [dead], sessions, approvals: [] }).sessions.filter((r) => r.session_id === "D");
+    expect(fold([session({ id: "D", ended_at: at(30_000), cwd: "/home/dev/scratch" })])).toEqual([]);
   });
 
   it("summary line names only non-zero states; empty state has no rows", () => {
@@ -321,7 +404,7 @@ describe("live-sessions fold", () => {
 
 describe("presence record contract (guard ↔ app)", () => {
   it("paths reject ids outside the safe alphabet", () => {
-    expect(presencePath("/g", "claude-code", "5c1e7d1a-1")).toBe("/g/presence/claude-code--5c1e7d1a-1.json");
+    expect(presencePath("/g", "claude-code", "5c1e7d1a-1")).toBe(join("/g", "presence", "claude-code--5c1e7d1a-1.json"));
     expect(presencePath("/g", "claude-code", "../etc")).toBeUndefined();
     expect(presencePath("/g", "Claude Code", "abc")).toBeUndefined();
   });

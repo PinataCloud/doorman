@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { AGENT_REMEDIES, agentFacingReason, remedyFor, type HoldResolution } from "../main/guard/remedy.js";
@@ -171,7 +172,7 @@ describe("agent-facing text never coaches a way around the guard", () => {
     let held = 0;
     for (const mode of ["ask", "block"]) {
       const modes = Object.fromEntries(detectorIds.filter((id) => !id.includes(":")).map((id) => [id, mode]));
-      const files = { [`${paths.guardDir}/policy.json`]: JSON.stringify({ version: 1, modes }) };
+      const files = { [join(paths.guardDir, "policy.json")]: JSON.stringify({ version: 1, modes }) };
       for (const command of commands) {
         const answer = checkToolCall({ command }, paths, io(files)).text;
         if (!answer.startsWith("Decision: allow")) held += 1;
@@ -188,7 +189,7 @@ describe("agent-facing text never coaches a way around the guard", () => {
         ),
       )
       .join("\n");
-    const explained = explainLastBlock({ limit: 20 }, paths, io({ [`${paths.guardDir}/spool.jsonl`]: spool })).text;
+    const explained = explainLastBlock({ limit: 20 }, paths, io({ [join(paths.guardDir, "spool.jsonl")]: spool })).text;
     expect(explained).toContain("Doorman flagged this tool call");
     expectNoBypassCoaching(explained, "explain_last_block");
   });

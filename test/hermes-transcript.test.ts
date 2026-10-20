@@ -9,7 +9,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hermesSource, parseHermesDatabase } from "../main/lib/hermes-transcript.js";
@@ -389,7 +389,9 @@ describe("against a real state.db", () => {
     // Left uncheckpointed in the WAL, the way a running gateway keeps it.
     insert.run("s1", "tool", "total 0", null, "c1", "terminal", T0 + 3);
 
-    expect(hermesSource.discover(join(home, ".hermes"), io)).toEqual([dbPath]);
+    // The descriptor joins with `/` (as Cursor's and Goose's do), which on
+    // Windows makes `C:\…\.hermes/state.db`: the same file, spelled mixed.
+    expect(hermesSource.discover(join(home, ".hermes"), io).map((p) => normalize(p))).toEqual([dbPath]);
     const { turns, titles, detect } = hermesSource.parse(dbPath, io);
     expect(turns.map((t) => [t.id, t.role])).toEqual([
       ["hermes:s1:1", "user"],

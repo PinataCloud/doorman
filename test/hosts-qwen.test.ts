@@ -39,7 +39,7 @@ describe("identity and documents", () => {
     expect(qwenHost.label).toBe("Qwen Code");
     expect(qwenHost.source).toBe("qwen-code");
     const user = qwenHost.documents("/Users/dev", {}).find((d) => d.level === "user");
-    expect(user?.path).toBe("/Users/dev/.qwen/settings.json");
+    expect(user?.path).toBe(join("/Users/dev", ".qwen", "settings.json"));
   });
 });
 

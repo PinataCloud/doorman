@@ -291,7 +291,9 @@ describe("capture engine — Reveal keeps only exact evidence; the ledger is own
     expect(vault.size()).toBe(1);
   });
 
-  it("writes the ledger files owner-only, and tightens ones an older build left world-readable", async () => {
+  // POSIX file modes; Windows has none to tighten (its profile ACL keeps the
+  // store the user's).
+  it.skipIf(process.platform === "win32")("writes the ledger files owner-only, and tightens ones an older build left world-readable", async () => {
     const storeDir = join(root, "store");
     mkdirSync(storeDir, { recursive: true });
     writeFileSync(join(storeDir, "cursors.json"), "{}\n");

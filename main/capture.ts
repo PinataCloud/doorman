@@ -15,6 +15,8 @@
  *   findings.jsonl — radar rows (append-only, last state per finding_id wins)
  *   cursors.json   — per-file size+mtime, so unchanged files are skipped, plus
  *                    the session ids each file parsed to (the on-disk test)
+ *   shown.json     — what the newest scan decided can be shown: the rails it
+ *                    listed, the sessions on disk, the evidence verdicts
  *   evidence-vault.jsonl — the raw window behind each detection, Keychain-
  *                    encrypted (lib/evidence-vault.ts; absent without a keychain)
  */
@@ -31,6 +33,7 @@ import {
   writeFileSync,
   type FSWatcher,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseClaudeTranscript, type DetectUnit } from "./lib/cc-transcript.js";
@@ -256,7 +259,7 @@ export interface CustomRuleDryRun {
 }
 
 /** Store files that carry raw text or finding context — kept owner-only. */
-const PRIVATE_STORE_FILES = ["findings.jsonl", "turns.jsonl", "cursors.json"] as const;
+const PRIVATE_STORE_FILES = ["findings.jsonl", "turns.jsonl", "cursors.json", "shown.json"] as const;
 /** How many scanned tool_output line ids a run remembers (see scanParsed). */
 const SCANNED_OUTPUT_LINES_MAX = 50_000;
 
@@ -272,6 +275,16 @@ const EVIDENCE_GRACE_MS = 10 * 60_000;
 const EVIDENCE_JUDGED_PER_SCAN = 24;
 /** The vault's key for a sighting: the finding and the excerpt the card shows. */
 const sightingKey = (row: Pick<FindingRow, "finding_id" | "excerpt">) => `${row.finding_id}\u0000${row.excerpt}`;
+/** A short stable digest: how shown.json names a sighting and a set of
+ * documents, so the file holds no excerpt and no path. */
+const digest = (text: string) => createHash("sha256").update(text).digest("base64url").slice(0, 22);
+/** An evidence verdict (judgeEvidence): whether the sighting could be shown,
+ * the digest of the documents it was judged against, and its own digest. */
+interface EvidenceVerdict {
+  ok: boolean;
+  cursor: string;
+  hash: string;
+}
 /** What a Reveal returns: the raw window, or why there is none. */
 type RevealResult = ({ ok: true } & RawEvidence) | { ok: false; error: string };
 
@@ -357,6 +370,8 @@ export class CaptureEngine {
    * `fileSessions` — which is persisted with each file's cursor, because an
    * unchanged file is not re-parsed after a restart and a session whose id is
    * not its filename would otherwise be hidden while its transcript exists.
+   * Saved in shown.json with `railsListed`, so an engine that has not scanned
+   * yet (the CLI, a relaunch) starts from the newest scan's listing.
    */
   private sessionsOnDisk = new Map<string, Set<string>>();
   private fileSessions = new Map<string, Set<string>>();
@@ -364,12 +379,15 @@ export class CaptureEngine {
    * Whether a sighting could be reproduced from its transcript the last time
    * the engine looked — keyed by sighting (finding id + excerpt)
    * like the vault, with the cursor of the files it was judged against, so a
-   * file that changes is judged again. A sighting the vault holds is never
-   * here: the vault IS its evidence. In memory only — after a restart the
-   * first scans rebuild it, and until a row is judged it is shown: a row is
-   * hidden on a verdict, never on a guess.
+   * file that changes is judged again. Until a row is judged it is shown: a
+   * row is hidden on a verdict, never on a guess. Saved in shown.json after
+   * every scan; only an engine with no vault (the CLI) reads them back, since
+   * it cannot judge a sighting the app could show from its vault. An engine
+   * with a vault rebuilds them over its first scans.
    */
-  private readonly evidenceVerdicts = new Map<string, { ok: boolean; cursor: string }>();
+  private readonly evidenceVerdicts = new Map<string, EvidenceVerdict>();
+  /** shown.json as last read or written, so an unchanged view is not rewritten. */
+  private shownSaved: string | undefined;
   /**
    * The rails the newest scan listed in full — every root present and read
    * without a throw. Wider than `sessionsOnDisk`: a host that keeps many
@@ -501,6 +519,7 @@ export class CaptureEngine {
     } catch {
       // none yet
     }
+    this.loadShown();
     const turnsPruned = this.pruneRetention();
     this.rebuildIndex();
     if (ledgerUpgraded || turnsPruned) this.rewriteStores();
@@ -1020,6 +1039,7 @@ export class CaptureEngine {
       if (this.judgeEvidence(Date.now())) changed = true;
       this.lastScanAt = new Date().toISOString();
       this.persistCursors();
+      this.persistShown();
       if (changed || this.status === "scanning") this.deps.onUpdate();
     } finally {
       this.scanning = false;
@@ -1472,19 +1492,81 @@ export class CaptureEngine {
   private recordVerdict(row: FindingRow, ok: boolean, cursor: string): boolean {
     const key = sightingKey(row);
     const previous = this.evidenceVerdicts.get(key);
-    this.evidenceVerdicts.set(key, { ok, cursor });
+    this.evidenceVerdicts.set(key, { ok, cursor, hash: previous?.hash ?? digest(key) });
     return (previous?.ok ?? true) !== ok;
   }
 
-  /** One string for the state of a set of documents — their sizes and
-   * mtimes — so a verdict can tell whether what it judged has changed. */
+  /** One digest for the state of a set of documents — their paths, sizes
+   * and mtimes — so a verdict can tell whether what it judged has changed. */
   private documentsCursor(paths: readonly string[]): string {
-    return paths
-      .map((path) => {
-        const c = this.documentCursor(path);
-        return `${path}@${c?.size ?? 0}@${c?.mtimeMs ?? 0}`;
-      })
-      .join("\n");
+    return digest(
+      paths
+        .map((path) => {
+          const c = this.documentCursor(path);
+          return `${path}@${c?.size ?? 0}@${c?.mtimeMs ?? 0}`;
+        })
+        .join("\n"),
+    );
+  }
+
+  /**
+   * Save what the newest scan decided can be shown (shown.json): the rails it
+   * listed in full, the sessions each holds on disk, and the evidence
+   * verdicts. The CLI reads the store, often a copy of it, without scanning;
+   * without this it knew of no transcript and no verdict, so `doorman status`
+   * and `doorman findings` counted every row the app had hidden. Written only
+   * when it changed.
+   */
+  private persistShown(): void {
+    const verdicts: Record<string, { ok: boolean; cursor: string }> = {};
+    for (const v of this.evidenceVerdicts.values()) verdicts[v.hash] = { ok: v.ok, cursor: v.cursor };
+    const text = `${JSON.stringify({
+      listed: [...this.railsListed],
+      on_disk: Object.fromEntries([...this.sessionsOnDisk].map(([rail, ids]) => [rail, [...ids]])),
+      verdicts,
+    })}\n`;
+    if (text === this.shownSaved) return;
+    try {
+      writeFileSync(this.path("shown.json"), text, { mode: 0o600 });
+      this.shownSaved = text;
+    } catch (err) {
+      this.deps.log(`couldn't write shown.json: ${String(err)}`);
+    }
+  }
+
+  /**
+   * Read back what persistShown saved, so an engine that has not scanned
+   * yet (the CLI, the app relaunching) hides what the app hides. The
+   * listing is taken as it was saved; a scan replaces it. The verdicts only
+   * when this engine has no vault: one with a vault judges for itself, since a
+   * verdict can rest on a vault blob it may not be able to open.
+   */
+  private loadShown(): void {
+    let text: string;
+    let saved: { listed?: unknown; on_disk?: unknown; verdicts?: unknown };
+    try {
+      text = readFileSync(this.path("shown.json"), "utf8");
+      saved = JSON.parse(text) as typeof saved;
+    } catch {
+      return; // none yet: every row is shown until the first scan, as before
+    }
+    if (!saved || typeof saved !== "object") return;
+    this.shownSaved = text;
+    if (Array.isArray(saved.listed)) for (const rail of saved.listed) if (typeof rail === "string") this.railsListed.add(rail);
+    if (saved.on_disk && typeof saved.on_disk === "object") {
+      for (const [rail, ids] of Object.entries(saved.on_disk)) {
+        if (Array.isArray(ids)) this.sessionsOnDisk.set(rail, new Set(ids.filter((id): id is string => typeof id === "string")));
+      }
+    }
+    if (this.deps.vault || !saved.verdicts || typeof saved.verdicts !== "object") return;
+    const verdicts = saved.verdicts as Record<string, { ok?: unknown; cursor?: unknown } | undefined>;
+    if (Object.keys(verdicts).length === 0) return;
+    for (const row of this.ledger.values()) {
+      const key = sightingKey(row);
+      const hash = digest(key);
+      const v = verdicts[hash];
+      if (typeof v?.ok === "boolean" && typeof v.cursor === "string") this.evidenceVerdicts.set(key, { ok: v.ok, cursor: v.cursor, hash });
+    }
   }
 
   /**
@@ -1543,7 +1625,8 @@ export class CaptureEngine {
    * Is a session's transcript still on disk, as far as the newest scan could
    * tell? True when the rail was not listed in full (root absent or
    * unreadable, a host that does not name sessions in paths) — an unmounted
-   * volume must hide nothing — and before the first scan.
+   * volume must hide nothing — and before any scan (this launch's or the one
+   * shown.json saved).
    */
   private sessionOnDisk(source: string, sessionId: string): boolean {
     const onDisk = this.sessionsOnDisk.get(source);
@@ -2327,6 +2410,7 @@ export class CaptureEngine {
     // What the click found is a verdict too: a card whose raw
     // window could not be produced does not stay up to fail again.
     if (this.judgedByEvidence(row) && this.recordVerdict(row, result.ok, this.documentsCursor(this.evidenceDocuments(row)))) {
+      this.persistShown();
       this.deps.onUpdate();
     }
     return result;

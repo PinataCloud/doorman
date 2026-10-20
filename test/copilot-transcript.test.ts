@@ -70,41 +70,41 @@ describe("copilotSource descriptor", () => {
 
   it("roots at ~/.copilot/session-state, and follows COPILOT_HOME when set", () => {
     expect(copilotSource.roots("/Users/dev", {})).toEqual([
-      "/Users/dev/.copilot/session-state",
+      join("/Users/dev", ".copilot", "session-state"),
     ]);
     expect(
       copilotSource.roots("/Users/dev", { COPILOT_HOME: "/opt/copilot-home" }),
-    ).toEqual(["/opt/copilot-home/session-state"]);
+    ).toEqual([join("/opt/copilot-home", "session-state")]);
     // An empty override is not an override.
     expect(copilotSource.roots("/Users/dev", { COPILOT_HOME: "" })).toEqual([
-      "/Users/dev/.copilot/session-state",
+      join("/Users/dev", ".copilot", "session-state"),
     ]);
   });
 
   it("discovers one events.jsonl per session directory, sorted", () => {
-    const root = "/home/.copilot/session-state";
+    const root = join("/home", ".copilot", "session-state");
     const io = fakeIo(
       {
-        [`${root}/bbb/events.jsonl`]: "",
-        [`${root}/aaa/events.jsonl`]: "",
+        [join(root, "bbb", "events.jsonl")]: "",
+        [join(root, "aaa", "events.jsonl")]: "",
         // A flat document (older layout) is accepted too.
-        [`${root}/ccc.jsonl`]: "",
+        [join(root, "ccc.jsonl")]: "",
         // Anything else in a session directory is not a document.
-        [`${root}/aaa/workspace.yaml`]: "id: aaa",
-        [`${root}/notes.txt`]: "",
+        [join(root, "aaa", "workspace.yaml")]: "id: aaa",
+        [join(root, "notes.txt")]: "",
       },
       {
         [root]: ["bbb", "aaa", "ccc.jsonl", "notes.txt", ".DS_Store", "empty"],
-        [`${root}/bbb`]: ["events.jsonl"],
-        [`${root}/aaa`]: ["events.jsonl", "workspace.yaml"],
+        [join(root, "bbb")]: ["events.jsonl"],
+        [join(root, "aaa")]: ["events.jsonl", "workspace.yaml"],
         // A session directory that has not been written yet yields nothing.
-        [`${root}/empty`]: [],
+        [join(root, "empty")]: [],
       },
     );
     expect(copilotSource.discover(root, io)).toEqual([
-      `${root}/aaa/events.jsonl`,
-      `${root}/bbb/events.jsonl`,
-      `${root}/ccc.jsonl`,
+      join(root, "aaa", "events.jsonl"),
+      join(root, "bbb", "events.jsonl"),
+      join(root, "ccc.jsonl"),
     ]);
   });
 
@@ -456,9 +456,12 @@ describe("parseCopilotSession", () => {
  */
 describe("session-store usage rows", () => {
   const SID = "3e6f1a2b-4c5d-4e7f-8a9b-0c1d2e3f4a5b";
-  const HOME = "/Users/dev/.copilot";
-  const EVENTS = `${HOME}/session-state/${SID}/events.jsonl`;
-  const DB = `${HOME}/session-store.db`;
+  // Built the way the descriptor builds them (path.join), so on Windows they
+  // carry `\`: the database must still be found next to the session.
+  const HOME = join("/Users/dev", ".copilot");
+  const EVENTS = join(HOME, "session-state", SID, "events.jsonl");
+  const WORKSPACE = join(HOME, "session-state", SID, "workspace.yaml");
+  const DB = join(HOME, "session-store.db");
 
   /** A log with two model calls on the main agent and one on a sub-agent, no
    * assistant.usage anywhere, and a shutdown whose totals would otherwise be
@@ -555,7 +558,7 @@ describe("session-store usage rows", () => {
   it("the descriptor prices a VS Code-hosted session from the table, under the VS Code rail", () => {
     const seen: { sql: string; params: readonly unknown[] }[] = [];
     const io = fakeIo(
-      { [EVENTS]: unsettledLog(), [`${HOME}/session-state/${SID}/workspace.yaml`]: `id: ${SID}\ncwd: /Users/dev/acme-api\nclient_name: vscode\n` },
+      { [EVENTS]: unsettledLog(), [WORKSPACE]: `id: ${SID}\ncwd: /Users/dev/acme-api\nclient_name: vscode\n` },
       {},
       {
         [DB]: (sql, params) => {
@@ -571,7 +574,7 @@ describe("session-store usage rows", () => {
   });
 
   it("a CLI session stays on its rail, and a missing or failing database means unpriced, never a throw", () => {
-    const cli = copilotSource.parse(EVENTS, fakeIo({ [EVENTS]: unsettledLog(), [`${HOME}/session-state/${SID}/workspace.yaml`]: "client_name: github/cli\n" }));
+    const cli = copilotSource.parse(EVENTS, fakeIo({ [EVENTS]: unsettledLog(), [WORKSPACE]: "client_name: github/cli\n" }));
     expect(cli.turns.every((t) => t.source === "copilot-cli")).toBe(true);
     expect(cli.turns.filter((t) => t.usage !== undefined).map((t) => t.id)).toEqual([`copilot:${SID}:shutdown:claude-sonnet-4.5`]);
     const failing = copilotSource.parse(

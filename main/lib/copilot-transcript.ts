@@ -159,7 +159,7 @@
  * sessions appear metered under their own name and never as "Copilot CLI".
  */
 
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { toolTarget, type DetectUnit, type TranscriptParseResult } from "./cc-transcript.js";
 import {
   describeQuota,
@@ -361,11 +361,12 @@ export const USAGE_ROWS_SQL =
   "FROM assistant_usage_events WHERE session_id = ? ORDER BY id";
 
 /** `session-state/<id>/events.jsonl` → the sibling `session-store.db` of that
- * Copilot home (CLI and VS Code-hosted sessions share one database). */
+ * Copilot home (CLI and VS Code-hosted sessions share one database). The
+ * descriptor's paths are `path.join`ed, so on Windows they use `\`. */
 export function copilotUsageDbPath(eventsPath: string): string | undefined {
-  const parts = eventsPath.split(/[\/]/);
+  const parts = eventsPath.split(/[\\/]/);
   if (parts.length < 4 || parts.at(-1) !== EVENTS_FILE) return undefined;
-  return [...parts.slice(0, -3), "session-store.db"].join("/");
+  return join(dirname(dirname(dirname(eventsPath))), "session-store.db");
 }
 
 /** `client_name:` out of a session's `workspace.yaml` — a flat key: value

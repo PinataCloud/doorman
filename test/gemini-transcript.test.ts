@@ -72,14 +72,15 @@ describe("geminiSource identity + roots", () => {
   });
 
   it("roots at ~/.gemini/tmp, and GEMINI_CLI_HOME adds the relocated dir first", () => {
-    expect(geminiSource.roots("/Users/dev", {})).toEqual(["/Users/dev/.gemini/tmp"]);
+    const home = path.join("/Users/dev", ".gemini", "tmp");
+    expect(geminiSource.roots("/Users/dev", {})).toEqual([home]);
     expect(
       geminiSource.roots("/Users/dev", { GEMINI_CLI_HOME: "/data/gem" } as NodeJS.ProcessEnv),
-    ).toEqual(["/data/gem/.gemini/tmp", "/Users/dev/.gemini/tmp"]);
+    ).toEqual([path.join("/data/gem", ".gemini", "tmp"), home]);
     // The override pointing back at home must not yield the same root twice.
     expect(
       geminiSource.roots("/Users/dev", { GEMINI_CLI_HOME: "/Users/dev" } as NodeJS.ProcessEnv),
-    ).toEqual(["/Users/dev/.gemini/tmp"]);
+    ).toEqual([home]);
   });
 });
 

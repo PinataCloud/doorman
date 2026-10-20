@@ -64,7 +64,9 @@ import { ruleShown } from "../guard/rule-scope.js";
 import { parsePolicy, type GuardPolicy, type McpPermissionMode } from "../guard/policy.js";
 import {
   appListening,
+  decidedAtMs,
   holdForVerdict,
+  toolCallPreview,
   writeRequest,
   clearExchange,
   type ApprovalResolution,
@@ -399,7 +401,7 @@ function main(): void {
     }
     const id = randomUUID();
     const heldAt = new Date().toISOString();
-    const preview = redact(JSON.stringify(call.arguments ?? {})).slice(0, 700);
+    const preview = toolCallPreview(`mcp__${args.server}__${call.name}`, redact(JSON.stringify(call.arguments ?? {}))).preview;
     // Set the moment the call has been forwarded or refused, so the catch below
     // can never answer a call twice.
     let settled = false;
@@ -423,6 +425,7 @@ function main(): void {
       });
       const held = await holdForVerdict(guardDir, id, policy.confirm.hold_seconds);
       const outcome = gatewayHoldOutcome(policy, held);
+      const decidedMs = decidedAtMs(held, Date.parse(heldAt), Date.now());
       append(callsPath, {
         tool: call.name,
         cls: decision.cls,
@@ -430,9 +433,9 @@ function main(): void {
         resolution: outcome.resolution,
         forwarded: outcome.forward,
         held_at: heldAt,
-        decided_at: new Date().toISOString(),
+        decided_at: new Date(decidedMs).toISOString(),
         decided_via: held.outcome === "answered" ? held.reply.via ?? "window" : held.outcome === "timeout" ? "timeout" : "app-absent",
-        hold_ms: Date.now() - Date.parse(heldAt),
+        hold_ms: Math.max(0, decidedMs - Date.parse(heldAt)),
         ...(decision.armed ? { injection: [decision.armed.marker] } : {}),
         reason: decision.reason,
       });

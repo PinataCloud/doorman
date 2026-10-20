@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CaptureEngine } from "../main/capture.js";
@@ -115,7 +116,7 @@ function mainSources(): Array<{ rel: string; text: string }> {
       else if (name.endsWith(".ts")) out.push({ rel: `${rel}${name}`, text: readFileSync(full, "utf8") });
     }
   };
-  walk(root.pathname, "");
+  walk(fileURLToPath(root), "");
   return out;
 }
 

@@ -37,7 +37,7 @@ describe("identity and documents", () => {
     expect(crushHost.label).toBe("Crush");
     expect(crushHost.source).toBe("crush");
     const user = crushHost.documents("/Users/dev", {}).find((d) => d.level === "user");
-    expect(user?.path).toBe("/Users/dev/.config/crush/crush.json");
+    expect(user?.path).toBe(join("/Users/dev", ".config", "crush", "crush.json"));
   });
 });
 

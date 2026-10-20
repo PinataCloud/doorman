@@ -38,7 +38,7 @@ describe("identity and documents", () => {
     expect(kiroHost.label).toBe("Kiro CLI");
     expect(kiroHost.source).toBe("kiro");
     const user = kiroHost.documents("/Users/dev", {}).find((d) => d.level === "user");
-    expect(user?.path).toBe("/Users/dev/.kiro/hooks/doorman.json");
+    expect(user?.path).toBe(join("/Users/dev", ".kiro", "hooks", "doorman.json"));
   });
 });
 

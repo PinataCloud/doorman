@@ -8,6 +8,7 @@ import {
   shortPath,
 } from "../main/lib/exposures.js";
 import { countExposures, summarizeFindings, summarizeRuleStats, type FindingRow } from "../main/lib/findings.js";
+import { exposureGroups, radarFeedRows, radarRows } from "../main/lib/app-views.js";
 
 /**
  * Exposures — the layer above things. What these pin: the place each family of
@@ -46,7 +47,7 @@ describe("places", () => {
     expect(places.placeOf(rows[1]!).key).toBe("project:/Users/x/repos/acme");
     expect(places.placeOf(rows[2]!).label).toBe("repos/other");
     // Sixty-seven names in one repo: two exposures here, not three things.
-    expect(countExposures(rows).count).toBe(2);
+    expect(countExposures(rows, rows).count).toBe(2);
   });
 
   it("projects a cwd-less file write onto a known root, else its directory", () => {
@@ -153,6 +154,30 @@ describe("exposure counts on the headline surfaces", () => {
     expect(summarizeFindings(leads, { hide_confidence: [] })).toEqual(every);
     // Absent means high: never folded.
     expect(summarizeFindings(rows, { hide_confidence: ["medium", "low"] })).toEqual(summarizeFindings(rows));
+  });
+
+  it("counts the exposures the Radar's cards show, with places learned from every row", () => {
+    // Two open rows in subdirectories, and a reviewed and a hidden-band row
+    // at the project root: the Radar (radarRows over every row) folds both
+    // subdirectories into the root, one card per rule. The hero and
+    // `doorman status` (summarizeFindings) used to resolve places over the
+    // open, shown rows only and count two.
+    const sightings = [
+      row({ cwd: "/r/app/web", key_name: "A" }),
+      row({ cwd: "/r/app/api", key_name: "B" }),
+      row({ cwd: "/r/app", key_name: "C", status: "resolved" }),
+      row({ detector: "env_dump", cwd: "/r/app/web", key_name: "environment" }),
+      row({ detector: "env_dump", cwd: "/r/app/api", key_name: "environment" }),
+      row({ detector: "env_dump", cwd: "/r/app", key_name: "environment", confidence: "low" }),
+    ];
+    const hide = ["low", "medium"] as const;
+    const cards = exposureGroups(radarFeedRows(radarRows(sightings, "/home/x"), { hiddenBands: hide, showFalsePositives: false })).filter(
+      (g) => g.bucket === "open",
+    );
+    expect(cards).toHaveLength(2);
+    const summary = summarizeFindings(sightings, { hide_confidence: hide });
+    expect(summary.open_exposures).toBe(cards.length);
+    expect(summary.by_severity_exposures.high).toBe(2);
   });
 
   it("windows rule stats in exposures first, things and sightings after", () => {

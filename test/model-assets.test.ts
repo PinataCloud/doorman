@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DOORMAN_MODEL_BASE_URL } from "../main/lib/model-sources.js";
 import { doormanModelSource, planInjectionModel } from "../main/lib/injection-model-choice.js";
@@ -346,7 +347,9 @@ describe("the doorman-1 download path", () => {
     expect(parseModelSource("https://models.example.test/doorman-1")).toEqual({ kind: "url", base: "https://models.example.test/doorman-1/" });
     expect(parseModelSource(" http://127.0.0.1:8000/pkg/ ")).toEqual({ kind: "url", base: "http://127.0.0.1:8000/pkg/" });
     expect(parseModelSource("/opt/models/doorman-1")).toEqual({ kind: "dir", dir: "/opt/models/doorman-1" });
-    expect(parseModelSource("file:///opt/models/doorman-1")).toEqual({ kind: "dir", dir: "/opt/models/doorman-1" });
+    // A file URL names a drive on Windows; built from this platform's own absolute path.
+    const abs = resolve("/opt/models/doorman-1");
+    expect(parseModelSource(pathToFileURL(abs).href)).toEqual({ kind: "dir", dir: abs });
     for (const bad of [undefined, "", "  ", "models/doorman-1", "s3://bucket/prefix", "ftp://x/y"]) expect(parseModelSource(bad), String(bad)).toBeUndefined();
   });
 

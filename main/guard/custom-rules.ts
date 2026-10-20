@@ -24,7 +24,7 @@
  * with plain `node`; nothing here may import from outside main/guard/.
  */
 
-import type { EnforcementMode } from "./policy.js";
+import { cwdWithinPrefix, type EnforcementMode } from "./policy.js";
 import { redact } from "./redact.js";
 import { isPathologicalPattern, sanitizeExcerpt, type SecuritySeverity } from "./security-detect.js";
 
@@ -324,11 +324,10 @@ function argValue(input: unknown, path: string): string | undefined {
 
 const cap = (s: string): string => (s.length > MATCH_INPUT_MAX ? s.slice(0, MATCH_INPUT_MAX) : s);
 
+/** Is the call's working directory under the rule's scope? The same test as
+ * an exception's (policy.ts cwdWithinPrefix), Windows paths included. */
 export function ruleAppliesToCwd(rule: Pick<CustomRule, "scope">, cwd: string | undefined): boolean {
-  const prefix = rule.scope?.cwd_prefix;
-  if (!prefix) return true;
-  if (!cwd) return false;
-  return cwd === prefix || cwd.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`);
+  return cwdWithinPrefix(cwd, rule.scope?.cwd_prefix);
 }
 
 /**

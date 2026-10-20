@@ -6,14 +6,16 @@
  * transcript cannot say whether the agent that wrote it is still alive, so
  * "active" used to mean "wrote something recently". This module reads `ps`
  * (pid, parent, tty, start time, command) and `lsof` (each agent's working
- * directory) and recognises the agent CLIs by their command line. The fold
- * that joins a process to a ledger session lives in live-sessions.ts.
+ * directory; `/proc/<pid>/cwd` on Linux) and recognises the agent CLIs by
+ * their command line. The fold that joins a process to a ledger session
+ * lives in live-sessions.ts.
  *
  * Pure parsers over the tools' text output, plus one runner that shells out.
  * Nothing here is uploaded; the process table never leaves the machine.
  */
 
 import { execFile } from "node:child_process";
+import { readlinkSync } from "node:fs";
 import type { TurnSource } from "./turns.js";
 
 /** One running agent. `tty` is the controlling terminal's device name
@@ -281,12 +283,10 @@ export async function readProcessInventory(now: Date = new Date()): Promise<Proc
     } else lookup.push(r);
   }
   if (lookup.length > 0) {
-    const lsof = await run(
-      "/usr/sbin/lsof",
-      ["-a", "-d", "cwd", "-Fpn", "-p", lookup.map((r) => r.pid).join(",")],
-      4_000,
-    );
-    const found = parseLsofCwd(lsof);
+    const found =
+      process.platform === "linux"
+        ? procCwds(lookup)
+        : parseLsofCwd(await run("/usr/sbin/lsof", ["-a", "-d", "cwd", "-Fpn", "-p", lookup.map((r) => r.pid).join(",")], 4_000));
     for (const r of lookup) {
       const cwd = found.get(r.pid);
       cwdCache.set(r.pid, { started_at: r.started_at, cwd });
@@ -297,4 +297,20 @@ export async function readProcessInventory(now: Date = new Date()): Promise<Proc
   const alive = new Set(candidates.map((r) => r.pid));
   for (const pid of cwdCache.keys()) if (!alive.has(pid)) cwdCache.delete(pid);
   return { at: now.toISOString(), rows, agents: agentProcesses(rows, cwds, process.pid) };
+}
+
+/** Linux: each process's cwd is its `/proc/<pid>/cwd` link. Ubuntu keeps
+ * lsof in /usr/bin, not /usr/sbin, when it installs it at all, so every
+ * agent there had no cwd and could not join its session. A process that has
+ * exited since ps, or is another user's, has no readable link and no cwd. */
+function procCwds(rows: readonly ProcessRow[]): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const r of rows) {
+    try {
+      out.set(r.pid, readlinkSync(`/proc/${r.pid}/cwd`));
+    } catch {
+      // gone, or not ours
+    }
+  }
+  return out;
 }

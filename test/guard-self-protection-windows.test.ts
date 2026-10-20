@@ -306,3 +306,53 @@ describe("guardSelfWrite on Windows — what stays allowed", () => {
     expect(shell(`git -C C:\\repo status`)).toBeUndefined();
   });
 });
+
+describe("guardSelfWrite on Windows — copies out of the directory", () => {
+  it("lets a copy whose destination is outside pass, whichever program copies", () => {
+    expect(shell(`cp "${G}\\spool.jsonl" C:\\wtest\\spool-copy`)).toBeUndefined();
+    expect(shell(`cp -r "${GF}/pending" /c/wtest/`)).toBeUndefined();
+    expect(shell(`cp -f "${G}\\spool.jsonl" C:\\wtest\\spool-copy`)).toBeUndefined();
+    expect(shell(`Copy-Item -Path "${G}\\spool.jsonl" -Destination C:\\wtest\\spool-copy`)).toBeUndefined();
+    expect(shell(`Copy-Item -Destination C:\\wtest\\spool-copy "${G}\\spool.jsonl"`)).toBeUndefined();
+    expect(shell(`Copy-Item -LiteralPath:"${G}\\spool.jsonl" -Dest C:\\wtest -Force`)).toBeUndefined();
+    expect(shell(`copy "${G}\\spool.jsonl" C:\\wtest\\spool-copy`)).toBeUndefined();
+    expect(shell(`copy /Y "%APPDATA%\\Doorman\\doorman\\guard\\spool.jsonl" C:\\wtest\\`)).toBeUndefined();
+    expect(shell(`xcopy "${G}\\spool.jsonl" C:\\wtest\\ /Y`)).toBeUndefined();
+    expect(shell(`robocopy "${G}" C:\\wtest spool.jsonl /NJH`)).toBeUndefined();
+  });
+
+  it("lets a POSIX guard directory be copied from under Windows rules too", () => {
+    const posixGuard = "/Users/u/Library/Application Support/Doorman/doorman/guard";
+    const onWindows = (command: string) => guardSelfWrite("Bash", { command }, "/repo", [posixGuard], "/Users/u", { platform: "win32", env: {} });
+    expect(onWindows(`cp "${posixGuard}/spool.jsonl" /tmp/spool-copy`)).toBeUndefined();
+    expect(onWindows(`cp -t /tmp '${posixGuard}/spool.jsonl'`)).toBeUndefined();
+    expect(onWindows(`cp /tmp/evil.js "${posixGuard}/guard.js"`)).toBeDefined();
+    expect(onWindows(`cp -t '${posixGuard}/pending' x.reply.json`)).toBeDefined();
+  });
+
+  it("still holds a copy into it, by any reading of the words", () => {
+    expect(shell(`cp "${G}\\spool.jsonl" "${G}\\pending\\a.reply.json"`)).toBeDefined();
+    expect(shell(`Copy-Item "${G}\\spool.jsonl" -Destination "${G}\\pending\\a.reply.json"`)).toBeDefined();
+    expect(shell(`Copy-Item -Destination:"${G}\\policy.json" C:\\tmp\\x.json`)).toBeDefined();
+    expect(shell(`copy C:\\tmp\\x.json + C:\\tmp\\y.json "${G}\\policy.json"`)).toBeDefined();
+    expect(shell(`copy /b "${G}\\policy.json" +,,`)).toBeDefined();
+    expect(shell(`robocopy C:\\tmp "${G}\\pending"`)).toBeDefined();
+    expect(shell(`robocopy "${G}" C:\\wtest /SAVE:${G}\\policy`)).toBeDefined();
+    expect(shell(`cd "${G}"; Copy-Item C:\\tmp\\x.json .`)).toBeDefined();
+  });
+
+  it("holds a copy with no destination when the working directory is the guard directory", () => {
+    expect(shell(`copy C:\\tmp\\policy.json`, G)).toBeDefined();
+    expect(shell(`xcopy C:\\tmp\\policy.json`, G)).toBeDefined();
+    expect(shell(`Copy-Item C:\\tmp\\policy.json`, G)).toBeDefined();
+    expect(shell(`Copy-Item C:\\tmp\\policy.json`)).toBeUndefined();
+  });
+});
+
+describe("guardSelfWrite on Windows — what the hold names", () => {
+  it("names the path with its drive and case, variables expanded", () => {
+    expect(shell(`cmd /c "echo {} > %APPDATA%\\Doorman\\doorman\\guard\\policy.json"`)).toBe(`${G}\\policy.json`);
+    expect(shell(`echo {} > %APPDATA%\\Doorman\\doorman\\guard\\policy.json`)).toBe(`${G}\\policy.json`);
+    expect(shell(`powershell -Command "Remove-Item '${GF}/pending/x.json'"`)).toBe(`${G}\\pending\\x.json`);
+  });
+});

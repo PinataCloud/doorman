@@ -56,16 +56,17 @@ describe("the fixtures themselves", () => {
 
 describe("paths", () => {
   it("resolves the config dir from OPENCODE_CONFIG_DIR, then XDG_CONFIG_HOME, then ~/.config", () => {
-    expect(opencodeConfigDir(HOME, {})).toBe("/Users/dev/.config/opencode");
-    expect(opencodeConfigDir(HOME, { XDG_CONFIG_HOME: "/xdg" })).toBe("/xdg/opencode");
+    const configDir = join(HOME, ".config", "opencode");
+    expect(opencodeConfigDir(HOME, {})).toBe(configDir);
+    expect(opencodeConfigDir(HOME, { XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "opencode"));
     expect(opencodeConfigDir(HOME, { OPENCODE_CONFIG_DIR: "/srv/oc " })).toBe("/srv/oc");
-    expect(opencodeSidecarPath(HOME, {})).toBe("/Users/dev/.config/opencode/doorman-guard.json");
+    expect(opencodeSidecarPath(HOME, {})).toBe(join(configDir, "doorman-guard.json"));
     // The plugin lives INSIDE the plugins directory; the sidecar beside it —
     // every file in that directory is loaded as a plugin.
-    expect(opencodePluginPath(HOME, {})).toBe("/Users/dev/.config/opencode/plugins/doorman-guard.js");
+    expect(opencodePluginPath(HOME, {})).toBe(join(configDir, "plugins", "doorman-guard.js"));
     expect(opencodeHost.documents(HOME, {})).toEqual([
-      { path: "/Users/dev/.config/opencode/doorman-guard.json", level: "user" },
-      { path: "/Users/dev/.config/opencode/opencode.json", level: "system" },
+      { path: join(configDir, "doorman-guard.json"), level: "user" },
+      { path: join(configDir, "opencode.json"), level: "system" },
     ]);
   });
 });
@@ -176,10 +177,10 @@ describe("output contract", () => {
 describe("the plugin artefact", () => {
   it("is one machine-independent file inside the plugins directory, with exactly one export", () => {
     const files = opencodeHost.artifacts!(HOME, {});
-    expect(files.map((f) => f.path)).toEqual(["/Users/dev/.config/opencode/plugins/doorman-guard.js"]);
+    expect(files.map((f) => f.path)).toEqual([join(HOME, ".config", "opencode", "plugins", "doorman-guard.js")]);
     expect(files[0]!.content).not.toContain("/Users/dev");
     expect(files[0]!.content).not.toContain(GUARD_COMMAND_MARKER);
-    expect(opencodeHost.artifacts!("/Users/other", { OPENCODE_CONFIG_DIR: "/srv/oc" })[0]!.path).toBe("/srv/oc/plugins/doorman-guard.js");
+    expect(opencodeHost.artifacts!("/Users/other", { OPENCODE_CONFIG_DIR: "/srv/oc" })[0]!.path).toBe(join("/srv/oc", "plugins", "doorman-guard.js"));
     // OpenCode calls every exported function as a plugin: only DoormanGuard may be exported.
     const exports = [...OPENCODE_PLUGIN_SOURCE.matchAll(/^export\s+(?:const|function|async function|default)\s+(\w+)/gm)].map((m) => m[1]);
     expect(exports).toEqual(["DoormanGuard"]);
@@ -225,8 +226,8 @@ describe("the plugin itself", () => {
     const mod = await load();
     const candidates = mod.DoormanGuard.internals.sidecarCandidates({ OPENCODE_CONFIG_DIR: "/srv/oc", HOME: "/Users/dev" }, selfUrl);
     expect(candidates[0]).toBe(join(dir, "doorman-guard.json"));
-    expect(candidates[1]).toBe("/srv/oc/doorman-guard.json");
-    expect(candidates[2]!.endsWith("/.config/opencode/doorman-guard.json")).toBe(true);
+    expect(candidates[1]).toBe(join("/srv/oc", "doorman-guard.json"));
+    expect(candidates[2]!.endsWith(join("/", ".config", "opencode", "doorman-guard.json"))).toBe(true);
     expect(mod.DoormanGuard.internals.readSidecar({}, selfUrl)).toBeUndefined();
     writeFileSync(join(dir, "doorman-guard.json"), opencodeHost.merge(undefined, COMMAND, HOLD));
     expect(mod.DoormanGuard.internals.readSidecar({}, selfUrl)).toMatchObject({ command: COMMAND });

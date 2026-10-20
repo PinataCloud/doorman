@@ -97,6 +97,9 @@ export interface LiveFoldInput {
   agents: readonly AgentProcess[];
   /** The whole process table, for walking a presence pid up to its agent. */
   rows: readonly ProcessRow[];
+  /** When `rows` was read; `now` when absent. A presence record written
+   * after it may name an agent the table has not seen yet. */
+  rowsAt?: Date;
   presence: readonly PresenceRecord[];
   sessions: readonly SessionSummary[];
   approvals: readonly { id: string; session_id?: string; cwd?: string; source?: string }[];
@@ -117,12 +120,15 @@ export function foldLiveSessions(input: LiveFoldInput): LiveState {
 
   // 1. Presence: session → agent pid, newest record per session wins, and a
   //    pid claimed by a newer record is released from an older one (a resumed
-  //    session in the same window).
+  //    session in the same window). `newestPresence` keeps every session's
+  //    newest record, pinned or not, for step 4.
   const pidBySession = new Map<string, { pid: number; at: string; record: PresenceRecord }>();
+  const newestPresence = new Map<string, PresenceRecord>();
   const sorted = [...input.presence].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   for (const rec of sorted) {
     const age = nowMs - Date.parse(rec.at);
     if (!Number.isFinite(age) || age > PRESENCE_STALE_MS) continue;
+    newestPresence.set(rec.session_id, rec);
     const pid = agentAncestorPid(rec.pid, table, agentPids);
     if (pid === undefined) continue;
     for (const [sid, v] of pidBySession) if (v.pid === pid && sid !== rec.session_id) pidBySession.delete(sid);
@@ -196,6 +202,7 @@ export function foldLiveSessions(input: LiveFoldInput): LiveState {
   // 3. Remaining processes: join by cwd to the newest same-source session
   //    that was active after the process started.
   const remaining = input.agents.filter((a) => !claimedPids.has(a.pid)).sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
+  const unjoined: AgentProcess[] = [];
   for (const proc of remaining) {
     let match: SessionSummary | undefined;
     if (proc.cwd) {
@@ -207,14 +214,19 @@ export function foldLiveSessions(input: LiveFoldInput): LiveState {
     }
     claimedPids.add(proc.pid);
     if (match) shownSessions.add(match.id);
+    else unjoined.push(proc);
     out.push(build(match, proc, undefined, match ? "cwd" : "none", proc.source));
   }
 
-  // 4. Sessions with very recent turns but no visible process.
+  // 4. Sessions with very recent turns but no visible process: the agent may
+  //    run where ps cannot see it. Not a session whose own agent is known to
+  //    have exited (agentExited): a `claude -p` run that ended a minute ago
+  //    is history, not "working".
   for (const s of input.sessions) {
     if (shownSessions.has(s.id)) continue;
     const age = nowMs - Date.parse(s.ended_at);
     if (!Number.isFinite(age) || age > RECENT_NO_PROCESS_MS) continue;
+    if (agentExited(newestPresence.get(s.id), s, table, unjoined, (input.rowsAt ?? input.now).getTime())) continue;
     shownSessions.add(s.id);
     out.push(build(s, undefined, undefined, "recent", s.source));
   }
@@ -223,6 +235,26 @@ export function foldLiveSessions(input: LiveFoldInput): LiveState {
   const counts: LiveCounts = { held: 0, working: 0, waiting: 0, idle: 0 };
   for (const row of out) counts[row.state] += 1;
   return { at: input.now.toISOString(), sessions: out, counts };
+}
+
+/**
+ * Whether the agent that wrote a session is known to have exited: the
+ * guard's newest presence record for the session, written before this
+ * tick's process table was read, names a pid the table no longer has, and
+ * no agent process left unjoined could be the session's (same host, a cwd
+ * that matches or is unknown), which covers a hook whose parent was a shell
+ * wrapper that has since exited. An empty table (ps unavailable) knows
+ * nothing, so nothing has exited.
+ */
+function agentExited(
+  record: PresenceRecord | undefined,
+  session: SessionSummary,
+  table: ReadonlyMap<number, ProcessRow>,
+  unjoined: readonly AgentProcess[],
+  rowsAtMs: number,
+): boolean {
+  if (!record || table.size === 0 || table.has(record.pid) || Date.parse(record.at) > rowsAtMs) return false;
+  return !unjoined.some((p) => p.source === session.source && (p.cwd === undefined || session.cwd === undefined || p.cwd === session.cwd));
 }
 
 /** "2 working · 1 waiting for you" — the tray and the rail header. Empty
@@ -237,18 +269,25 @@ export function liveSummaryLine(counts: LiveCounts): string {
 }
 
 /** Presence files whose pid no longer leads to an agent — the caller
- * deletes them so the folder does not grow with every session ever run. */
+ * deletes them so the folder does not grow with every session ever run. One
+ * is kept while its session still has a turn within RECENT_NO_PROCESS_MS:
+ * it is what tells the fold that session's agent exited (agentExited), and
+ * without it the session would read as live again until the window passed. */
 export function stalePresence(
   presence: readonly PresenceRecord[],
   rows: readonly ProcessRow[],
   agents: readonly AgentProcess[],
+  sessions: readonly Pick<SessionSummary, "id" | "ended_at">[],
   now: Date,
 ): PresenceRecord[] {
   const table = new Map(rows.map((r) => [r.pid, r]));
   const agentPids = new Set(agents.map((a) => a.pid));
+  const endedAt = new Map(sessions.map((s) => [s.id, Date.parse(s.ended_at)]));
   return presence.filter((rec) => {
     const age = now.getTime() - Date.parse(rec.at);
     if (!Number.isFinite(age) || age > PRESENCE_STALE_MS) return true;
-    return agentAncestorPid(rec.pid, table, agentPids) === undefined && age > WORKING_MS;
+    if (agentAncestorPid(rec.pid, table, agentPids) !== undefined || age <= WORKING_MS) return false;
+    const quietMs = now.getTime() - (endedAt.get(rec.session_id) ?? Number.NaN);
+    return !(quietMs <= RECENT_NO_PROCESS_MS); // an unknown session is not kept
   });
 }

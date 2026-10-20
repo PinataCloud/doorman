@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { MCP_FILES } from "../main/mcp-install.js";
@@ -61,8 +62,8 @@ describe("the MCP server bundle", () => {
 
   it("resolves the guard and the store from its own location in userData", () => {
     const paths = defaultPaths("/ud/doorman/mcp");
-    expect(paths.guardDir).toBe("/ud/doorman/guard");
-    expect(paths.storeDir).toBe("/ud/store");
+    expect(paths.guardDir).toBe(join("/ud", "doorman", "guard"));
+    expect(paths.storeDir).toBe(join("/ud", "store"));
   });
 });
 
@@ -111,7 +112,7 @@ describe("doorman_check_tool_call", () => {
   });
 
   it("follows the policy on disk: a rule set to block answers deny, one set to observe answers allow", () => {
-    const policy = (mode: string) => ({ [`${PATHS.guardDir}/policy.json`]: JSON.stringify({ version: 1, modes: { credential_in_tool_arg: mode } }) });
+    const policy = (mode: string) => ({ [join(PATHS.guardDir, "policy.json")]: JSON.stringify({ version: 1, modes: { credential_in_tool_arg: mode } }) });
     const deny = text(handleMessage(call(6, "doorman_check_tool_call", { command: CRED_CMD }), PATHS, io(policy("block"))));
     expect(deny).toMatch(/^Decision: deny/);
     expect(deny).toContain("Do not make this call or work around it; ask the user how to proceed.");
@@ -156,7 +157,7 @@ describe("doorman_explain_last_block", () => {
     .join("\n");
 
   it("names the rule, the host, the outcome and the remedy for the newest decisions, filtered by session", () => {
-    const answer = text(handleMessage(call(10, "doorman_explain_last_block", { session_id: "s1", limit: 1 }), PATHS, io({ [`${PATHS.guardDir}/spool.jsonl`]: spool })));
+    const answer = text(handleMessage(call(10, "doorman_explain_last_block", { session_id: "s1", limit: 1 }), PATHS, io({ [join(PATHS.guardDir, "spool.jsonl")]: spool })));
     expect(answer).toContain("Bash on Copilot CLI — the person denied it.");
     expect(answer).toContain("Credential in tool argument");
     expect(answer).toContain(AGENT_REMEDIES.credential_in_tool_arg);
@@ -164,7 +165,7 @@ describe("doorman_explain_last_block", () => {
   });
 
   it("labels a custom rule and names VS Code's rail; an allow is not a block", () => {
-    const answer = text(handleMessage(call(11, "doorman_explain_last_block", { cwd: "/v" }), PATHS, io({ [`${PATHS.guardDir}/spool.jsonl`]: spool })));
+    const answer = text(handleMessage(call(11, "doorman_explain_last_block", { cwd: "/v" }), PATHS, io({ [join(PATHS.guardDir, "spool.jsonl")]: spool })));
     expect(answer).toContain("Bash on VS Code + Copilot — blocked by policy.");
     expect(answer).toContain("No prod deploys");
     expect(answer).not.toContain("Write on");
@@ -185,7 +186,7 @@ describe("doorman_session_spend", () => {
   ]
     .map((r) => JSON.stringify(r))
     .join("\n");
-  const files = { [`${PATHS.storeDir}/turns.jsonl`]: turns };
+  const files = { [join(PATHS.storeDir, "turns.jsonl")]: turns };
 
   it("sums metered assistant turns by model within the window, counts the unmetered, names the agents — in tokens", () => {
     const answer = text(handleMessage(call(13, "doorman_session_spend", { cwd: "/w" }), PATHS, io(files)));

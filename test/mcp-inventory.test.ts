@@ -161,6 +161,10 @@ describe("config roots beyond Claude Code", () => {
     ).toBe("Claude Desktop");
     // A repo's own file belongs to the repo, not to any one app.
     expect(mcpConfigHost("/home/repos/thing/.mcp.json")).toBeUndefined();
+    // A Windows path spells the same file with `\`.
+    expect(mcpConfigHost("C:\\Users\\dev\\.cursor\\mcp.json")?.label).toBe("Cursor");
+    expect(mcpConfigHost("C:\\Users\\dev\\.codeium\\windsurf\\mcp_config.json")?.host).toBe("windsurf");
+    expect(mcpConfigHost("C:\\Users\\dev\\repos\\thing\\.mcp.json")).toBeUndefined();
   });
 
   it("lists no config path we cannot actually parse", () => {

@@ -39,7 +39,7 @@ describe("identity and documents", () => {
     expect(droidHost.label).toBe("Factory Droid");
     expect(droidHost.source).toBe("droid");
     const user = droidHost.documents("/Users/dev", {}).find((d) => d.level === "user");
-    expect(user?.path).toBe("/Users/dev/.factory/settings.json");
+    expect(user?.path).toBe(join("/Users/dev", ".factory", "settings.json"));
   });
 });
 

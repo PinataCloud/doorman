@@ -1208,6 +1208,15 @@ button.link {
 .approval .ap-actions .spacer { flex: 1; }
 .approval .ap-foot { margin-top: var(--s4); font-size: var(--t-2); color: var(--ink-3); }
 .approval .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+/* A long value (a Windows guard path as the Target) wraps inside its column
+   instead of widening the card past the window: a column may shrink, the row
+   may wrap, and a value breaks after a path separator (breakPath's <wbr>) or,
+   as a last resort, anywhere. */
+.approval .fcols { flex-wrap: wrap; row-gap: var(--s4); }
+.approval .fcols .fc { min-width: 0; }
+.approval .fcols .fc .v { overflow-wrap: anywhere; }
+/* The agent's own one-line account of a shell command, above the command. */
+.ap-desc { font-size: var(--t-2); color: var(--ink-2); margin: 0 0 var(--s3); overflow-wrap: anywhere; }
 button.btn.danger.primary { background: var(--bad); border-color: var(--bad); color: var(--on-fill); }
 button.btn.quiet { border-color: transparent; color: var(--ink-3); }
 button.btn.quiet:hover { border-color: var(--tan-2); }
@@ -1955,6 +1964,8 @@ body.doorman-panel { background: transparent; overflow: hidden; }
   white-space: nowrap;
 }
 .panel .evidence { max-height: 96px; overflow-y: auto; white-space: pre-wrap; margin-bottom: var(--s4); }
+/* The panel's window has a fixed height: the description gets two lines. */
+.panel .ap-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* Buttons must not be part of the drag region, or a click becomes a window move.
    The evidence strip's Copy button sits outside .ap-actions and needs the same
    exemption — inside the drag region a click on it moves the window instead. */

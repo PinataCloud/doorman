@@ -40,6 +40,8 @@ export const POLL_MS = 200;
 export const HEARTBEAT_STALE_MS = 45_000;
 /** Redacted preview of the tool input carried on the request. */
 export const PREVIEW_LIMIT = 700;
+/** A shell call's own one-line description, shown beside the command. */
+export const DESCRIPTION_LIMIT = 200;
 
 export function pendingDir(guardDir: string): string {
   return join(guardDir, "pending");
@@ -182,6 +184,9 @@ export interface ApprovalRequest {
   tool_class?: "read" | "write" | "act";
   max_severity?: SecuritySeverity;
   reason: string;
+  /** A shell call's `description` (what the agent says the command is for),
+   * redacted like the preview. Shown as its own line, never mixed into it. */
+  description?: string;
   preview: string;
   hold_seconds: number;
   on_timeout: "deny" | "ask";
@@ -296,6 +301,96 @@ export function writeRequest(guardDir: string, request: ApprovalRequest): void {
   writeFileSync(requestPath(guardDir, request.id), `${JSON.stringify(request, null, 2)}\n`);
 }
 
+/** What a held tool call's card shows: the part of the input a person reads
+ * to decide, not the input's JSON. */
+export interface ToolCallPreview {
+  preview: string;
+  description?: string;
+}
+
+const COMMAND_KEYS = ["command", "cmd", "script", "commandLine"] as const;
+const PATH_KEYS = ["file_path", "path", "notebook_path", "filePath", "absolute_path"] as const;
+const CONTENT_KEYS = ["content", "new_string", "new_source", "contents", "text"] as const;
+const URL_KEYS = ["url", "uri"] as const;
+
+function stringField(obj: Record<string, unknown>, keys: readonly string[]): { key: string; value: string } | undefined {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim() !== "") return { key, value };
+  }
+  return undefined;
+}
+
+/** One `name: value` line per field; a multi-line string under its name. */
+function fieldLines(obj: Record<string, unknown>, skip?: string): string[] {
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === skip || value === undefined) continue;
+    if (typeof value === "string") lines.push(value.includes("\n") ? `${key}:\n${value}` : `${key}: ${value}`);
+    else lines.push(`${key}: ${JSON.stringify(value)}`);
+  }
+  return lines;
+}
+
+/** An argv array (Codex's `["bash", "-lc", "…"]`) as one readable line. */
+function argvLine(argv: readonly string[]): string {
+  return argv.map((arg) => (arg === "" || /[\s'"\\$`]/.test(arg) ? `'${arg.replace(/'/g, `'\\''`)}'` : arg)).join(" ");
+}
+
+/**
+ * The card's preview of a held tool call, built from its ALREADY-REDACTED
+ * input JSON (decision.ts `redacted`), so every value shown is one the
+ * redactor has seen: a placeholder stays a placeholder. A shell call shows
+ * its command, with the agent's description apart; a file write its path and
+ * what it writes; a fetch its URL; an MCP call its server and tool, then the
+ * arguments one per line. Anything else (or input that no longer parses)
+ * reads one field per line, or as it came.
+ */
+export function toolCallPreview(toolName: string | undefined, redactedInput: string): ToolCallPreview {
+  const cap = (text: string): string => text.slice(0, PREVIEW_LIMIT);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(redactedInput);
+  } catch {
+    return { preview: cap(redactedInput) };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { preview: cap(redactedInput) };
+  const obj = parsed as Record<string, unknown>;
+
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(toolName ?? "");
+  if (mcp) return { preview: cap([`${mcp[1]} / ${mcp[2]}`, ...fieldLines(obj)].join("\n")) };
+
+  for (const key of COMMAND_KEYS) {
+    const value = obj[key];
+    const command =
+      typeof value === "string"
+        ? value
+        : Array.isArray(value) && value.length > 0 && value.every((a): a is string => typeof a === "string")
+          ? argvLine(value)
+          : undefined;
+    if (command === undefined || command.trim() === "") continue;
+    const description = typeof obj.description === "string" ? obj.description.trim().slice(0, DESCRIPTION_LIMIT) : "";
+    return { preview: cap(command), ...(description === "" ? {} : { description }) };
+  }
+
+  const path = stringField(obj, PATH_KEYS);
+  const content = stringField(obj, CONTENT_KEYS);
+  const edits = Array.isArray(obj.edits)
+    ? obj.edits
+        .map((e) => (e && typeof e === "object" ? (e as Record<string, unknown>).new_string : undefined))
+        .filter((s): s is string => typeof s === "string")
+    : [];
+  if (path && (content || edits.length > 0)) {
+    return { preview: cap([path.value, "", ...(content ? [content.value] : edits)].join("\n")) };
+  }
+
+  const url = stringField(obj, URL_KEYS);
+  if (url) return { preview: cap([url.value, ...fieldLines(obj, url.key)].join("\n")) };
+
+  const lines = fieldLines(obj);
+  return { preview: cap(lines.length > 0 ? lines.join("\n") : redactedInput) };
+}
+
 export function parseRequest(json: string): ApprovalRequest | undefined {
   try {
     const raw = JSON.parse(json) as Partial<ApprovalRequest>;
@@ -335,6 +430,7 @@ export function parseRequest(json: string): ApprovalRequest | undefined {
       max_severity: raw.max_severity,
       reason: typeof raw.reason === "string" ? raw.reason : "",
       preview: typeof raw.preview === "string" ? raw.preview : "",
+      ...(typeof raw.description === "string" && raw.description !== "" ? { description: raw.description } : {}),
       hold_seconds: typeof raw.hold_seconds === "number" ? raw.hold_seconds : 60,
       on_timeout: raw.on_timeout === "ask" ? "ask" : "deny",
       pid: typeof raw.pid === "number" ? raw.pid : 0,
@@ -413,6 +509,20 @@ export type HoldOutcome =
   | { outcome: "answered"; reply: ApprovalReply }
   | { outcome: "timeout" }
   | { outcome: "app_gone" };
+
+/**
+ * When a hold was decided, in epoch ms. A person's answer is the reply's own
+ * `at`, stamped the moment they clicked or pressed a key: the waiting process
+ * only notices it on its next poll, up to POLL_MS later and longer when it was
+ * starved, so timing by "now" there measures the poll, not the person. A
+ * stamp that cannot be the answer's (before the hold, after now, unparsable)
+ * reads as now, and so does every other ending (a timeout, an absent app).
+ */
+export function decidedAtMs(outcome: HoldOutcome, heldMs: number, nowMs: number): number {
+  if (outcome.outcome !== "answered") return nowMs;
+  const answeredMs = Date.parse(outcome.reply.at);
+  return answeredMs >= heldMs && answeredMs <= nowMs ? answeredMs : nowMs;
+}
 
 /**
  * NOT unref'd, deliberately — and this is the whole hold.

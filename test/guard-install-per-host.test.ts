@@ -16,7 +16,7 @@ const enforcement = require(join(build, "enforcement.js")) as typeof import("../
 const { defaultPolicy } = require(join(build, "guard", "policy.js")) as typeof import("../main/guard/policy.js");
 const { hermesHost } = require(join(build, "guard", "hosts", "hermes.js")) as typeof import("../main/guard/hosts/hermes.js");
 
-const ENV_KEYS = ["HOME", "DOORMAN_APPDATA_DIR", "HERMES_HOME"] as const;
+const ENV_KEYS = ["HOME", "USERPROFILE", "DOORMAN_APPDATA_DIR", "HERMES_HOME"] as const;
 let root: string;
 let home: string;
 let dataDir: string;
@@ -33,7 +33,9 @@ beforeEach(() => {
   home = join(root, "home");
   dataDir = join(root, "data");
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+  // os.homedir() reads HOME on POSIX and USERPROFILE on Windows.
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   delete process.env.DOORMAN_APPDATA_DIR;
   delete process.env.HERMES_HOME;
   mkdirSync(join(home, ".claude"), { recursive: true });

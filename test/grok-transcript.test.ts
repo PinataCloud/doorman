@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseGrokSession, grokSource } from "../main/lib/grok-transcript.js";
 import type { SourceIo } from "../main/lib/transcript-sources.js";
@@ -57,9 +58,9 @@ describe("Grok completed-turn capture", () => {
 
 describe("Grok discovery", () => {
   it("discovers only session update files and honors a relocated home", () => {
-    const root = "/custom/grok/sessions";
-    const path = root + "/project/session/updates.jsonl";
-    const dirs: Record<string, string[]> = { [root]: ["project"], [root + "/project"]: ["session"] };
+    const root = join("/custom/grok", "sessions");
+    const path = join(root, "project", "session", "updates.jsonl");
+    const dirs: Record<string, string[]> = { [root]: ["project"], [join(root, "project")]: ["session"] };
     const io: SourceIo = {
       readText: p => p === path ? fixture : p.endsWith("summary.json") ? summary : undefined,
       listDir: p => dirs[p] ?? [],

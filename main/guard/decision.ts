@@ -415,17 +415,17 @@ function canonicalText(text: string, home: string): string {
 /**
  * A guard path anywhere in free text — an interpreter's program, a string fed
  * to a shell — or undefined. Absolute and home paths by substring; a relative
- * token by resolving it against `cwd`.
+ * token by resolving it against `cwd`. A substring hit is named the way the
+ * text spells it (the word that names the directory), else as the guard
+ * directory itself: never in the drive-less, lowercased form it is compared in.
  */
 function guardPathInText(text: string, cwd: string | undefined, dirs: readonly string[], rules: PathRules): string | undefined {
-  const flat = rules.win ? canonicalTextWindows(text, rules) : canonicalText(text, rules.home);
-  for (const dir of dirs) {
-    let at = flat.indexOf(dir);
-    while (at !== -1) {
-      const next = flat[at + dir.length];
-      if (next === undefined || !/[\w.-]/.test(next)) return dir;
-      at = flat.indexOf(dir, at + 1);
-    }
+  const flatten = (part: string): string => (rules.win ? canonicalTextWindows(part, rules) : canonicalText(part, rules.home));
+  const flat = flatten(text);
+  const dir = dirs.find((candidate) => namesDir(flat, candidate));
+  if (dir !== undefined) {
+    const word = text.split(/[\s'"`(),;=|&<>{}\[\]]+/).find((token) => token !== "" && namesDir(flatten(token), dir));
+    return word ?? rules.shown.get(dir) ?? dir;
   }
   // `cd $G_PARENT && python3 -c "open('guard/policy.json','w')"`, or a cwd
   // inside the directory: relative tokens, resolved.
@@ -438,6 +438,16 @@ function guardPathInText(text: string, cwd: string | undefined, dirs: readonly s
     if (within(rules.win ? canonicalWindows(cwd) : canonical(cwd), dirs, rules.win)) return cwd;
   }
   return undefined;
+}
+
+/** Does this canonical text name the directory: the directory's path followed
+ * by the end of a word or a separator, not a longer name (`guard-backup`)? */
+function namesDir(flat: string, dir: string): boolean {
+  for (let at = flat.indexOf(dir); at !== -1; at = flat.indexOf(dir, at + 1)) {
+    const next = flat[at + dir.length];
+    if (next === undefined || !/[\w.-]/.test(next)) return true;
+  }
+  return false;
 }
 
 /** canonicalText with Windows rules: variables expanded, either separator
@@ -532,6 +542,173 @@ function lastOperand(words: readonly string[]): number {
     if (!w.startsWith("-")) return i;
   }
   return -1;
+}
+
+/** What one reading of a copy does with its words: the ones it only reads
+ * (indices into the words), and whether it copies into the working directory
+ * because it names no destination. */
+interface CopyReading {
+  sources: ReadonlySet<number>;
+  intoCwd: boolean;
+}
+
+/**
+ * A Windows copy's words as every program the name can be: `cp` is Git Bash's
+ * cp or PowerShell's Copy-Item, `copy` is cmd's or Copy-Item. A word is a
+ * source only when every reading reads it, so a copy OUT of the guard
+ * directory passes while a destination there, by position or by
+ * `-Destination`, is still checked. Undefined (check every word) for any other
+ * program, or a copy no reading can be sure of.
+ */
+function windowsCopy(program: string, words: readonly string[], copyTarget: string | undefined): CopyReading | undefined {
+  let readings: Array<CopyReading | undefined>;
+  switch (program) {
+    case "cp":
+      readings = [cpReading(words, copyTarget), copyItemReading(words)];
+      break;
+    case "copy":
+      readings = [cmdCopyReading(words), copyItemReading(words)];
+      break;
+    case "copy-item":
+    case "cpi":
+      readings = [copyItemReading(words)];
+      break;
+    case "xcopy":
+      readings = [xcopyReading(words)];
+      break;
+    case "robocopy":
+      readings = [robocopyReading(words)];
+      break;
+    default:
+      return undefined;
+  }
+  if (readings.some((reading) => reading === undefined)) return undefined;
+  const [first, ...rest] = readings as CopyReading[];
+  return {
+    sources: new Set([...first!.sources].filter((i) => rest.every((reading) => reading.sources.has(i)))),
+    intoCwd: readings.some((reading) => reading!.intoCwd),
+  };
+}
+
+/** Every word after the program except a redirect and its target. */
+function argumentIndices(words: readonly string[]): number[] {
+  const out: number[] = [];
+  for (let i = 1; i < words.length; i += 1) {
+    if (words[i] === ">" || words[i] === ">>") i += 1;
+    else out.push(i);
+  }
+  return out;
+}
+
+/** A reading in which the program refuses the call and copies nothing. */
+function copiesNothing(words: readonly string[]): CopyReading {
+  return { sources: new Set(argumentIndices(words)), intoCwd: false };
+}
+
+/** GNU cp (Git Bash): every operand but the last, or all of them with `-t`. */
+function cpReading(words: readonly string[], copyTarget: string | undefined): CopyReading {
+  const operands = argumentIndices(words).filter((i) => !words[i]!.startsWith("-"));
+  const sources = copyTarget === undefined ? operands.slice(0, -1) : operands.filter((i) => words[i] !== copyTarget);
+  return { sources: new Set(sources), intoCwd: false };
+}
+
+/** Copy-Item's parameters (PowerShell 5.1 and 7, common ones included) by
+ * lowercased name: whether each takes a value. */
+const COPY_ITEM_PARAMETERS: Readonly<Record<string, boolean>> = {
+  path: true, literalpath: true, destination: true, filter: true, include: true, exclude: true, credential: true,
+  fromsession: true, tosession: true, erroraction: true, warningaction: true, informationaction: true,
+  progressaction: true, errorvariable: true, warningvariable: true, informationvariable: true, outvariable: true,
+  outbuffer: true, pipelinevariable: true, container: false, force: false, recurse: false, passthru: false,
+  whatif: false, confirm: false, usetransaction: false, debug: false, verbose: false,
+};
+
+/** Copy-Item's parameter aliases. */
+const COPY_ITEM_ALIASES: Readonly<Record<string, string>> = {
+  lp: "literalpath", pspath: "literalpath", ea: "erroraction", wa: "warningaction", infa: "informationaction",
+  proga: "progressaction", ev: "errorvariable", wv: "warningvariable", iv: "informationvariable",
+  ov: "outvariable", ob: "outbuffer", pv: "pipelinevariable", wi: "whatif", cf: "confirm", usetx: "usetransaction",
+  db: "debug", vb: "verbose",
+};
+
+/**
+ * Copy-Item as PowerShell binds it: `-Name` / `-Name:value` by full name,
+ * alias or unambiguous prefix; then `-Path` from the first positional word and
+ * `-Destination` from the next. An ambiguous parameter, a missing value or a
+ * word too many is an error that copies nothing. A parameter it does not have,
+ * a splat, a subexpression or `--%` cannot be read here: undefined.
+ */
+function copyItemReading(words: readonly string[]): CopyReading | undefined {
+  const args = argumentIndices(words);
+  if (args.some((i) => /^@|[(){}]|^--%$/.test(words[i]!))) return undefined;
+  const sources = new Set<number>();
+  const positional: number[] = [];
+  let pathBound = false;
+  let destinationBound = false;
+  for (let k = 0; k < args.length; k += 1) {
+    const i = args[k]!;
+    const flag = /^-([A-Za-z][\w-]*)(:.*)?$/.exec(words[i]!);
+    if (!flag) {
+      positional.push(i);
+      continue;
+    }
+    const lower = flag[1]!.toLowerCase();
+    const prefixed = Object.keys(COPY_ITEM_PARAMETERS).filter((name) => name.startsWith(lower));
+    const name = Object.hasOwn(COPY_ITEM_ALIASES, lower)
+      ? COPY_ITEM_ALIASES[lower]!
+      : Object.hasOwn(COPY_ITEM_PARAMETERS, lower)
+        ? lower
+        : prefixed.length === 1
+          ? prefixed[0]!
+          : undefined;
+    // Ambiguous (`-f`: -Force, -Filter, -FromSession) is PowerShell's error;
+    // a name it does not have may be one this table lacks.
+    if (name === undefined) return prefixed.length > 1 ? copiesNothing(words) : undefined;
+    if (!COPY_ITEM_PARAMETERS[name]) continue;
+    const value = flag[2] !== undefined ? i : args[++k];
+    if (value === undefined) return copiesNothing(words);
+    if (name === "destination") destinationBound = true;
+    else {
+      sources.add(value);
+      if (name === "path" || name === "literalpath") pathBound = true;
+    }
+  }
+  const slots = [...(pathBound ? [] : ["path"]), ...(destinationBound ? [] : ["destination"])];
+  if (positional.length > slots.length) return copiesNothing(words);
+  positional.forEach((i, n) => {
+    if (slots[n] === "path") sources.add(i);
+    else destinationBound = true;
+  });
+  return { sources, intoCwd: !destinationBound };
+}
+
+/** cmd's copy: switches are `/X` or `/-Y`; the last operand is the
+ * destination, else the working directory. A `+` (`a+b`, `file +,,`, which
+ * rewrites the file in place) is not read here: undefined. */
+function cmdCopyReading(words: readonly string[]): CopyReading | undefined {
+  const operands = argumentIndices(words).filter((i) => !/^\/-?[a-z]$/i.test(words[i]!));
+  if (operands.some((i) => words[i]!.includes("+"))) return undefined;
+  if (operands.length < 2) return { sources: new Set(operands), intoCwd: true };
+  return { sources: new Set(operands.slice(0, -1)), intoCwd: false };
+}
+
+/** An xcopy or robocopy switch: `/Y`, `/-Y`, `/LOG:C:\x`, `/LOG+:x`. */
+const SLASH_SWITCH_RE = /^\/-?[A-Za-z][A-Za-z0-9]*\+?(?::[\s\S]*)?$/;
+
+/** xcopy SOURCE [DESTINATION] [switches]: the working directory without a
+ * destination; a third operand is an error. */
+function xcopyReading(words: readonly string[]): CopyReading {
+  const operands = argumentIndices(words).filter((i) => !SLASH_SWITCH_RE.test(words[i]!));
+  if (operands.length > 2) return copiesNothing(words);
+  return { sources: new Set(operands.slice(0, 1)), intoCwd: operands.length < 2 };
+}
+
+/** robocopy SOURCE DESTINATION [FILE…] [switches]: everything but the second
+ * word is read. Only when the first two words are those two operands. */
+function robocopyReading(words: readonly string[]): CopyReading | undefined {
+  const args = argumentIndices(words);
+  if (args.length < 2 || args.slice(0, 2).some((i) => SLASH_SWITCH_RE.test(words[i]!))) return undefined;
+  const destination = args[1]!;
+  return { sources: new Set(args.filter((i) => i !== destination && !SLASH_SWITCH_RE.test(words[i]!))), intoCwd: false };
 }
 
 /** Split one invocation into words, honouring quotes; redirects come back as
@@ -732,6 +909,9 @@ interface PathRules {
   vars: ReadonlyMap<string, string>;
   /** Windows: each guard directory below a known root (namesRootedTail). */
   tails: readonly string[];
+  /** Each guard directory's canonical key → the directory as it was given,
+   * for naming it to a person. */
+  shown: ReadonlyMap<string, string>;
 }
 
 /** Where guardSelfWrite runs — injectable so Windows rules are testable on
@@ -937,8 +1117,13 @@ export function guardSelfWrite(
       ? process.platform === "win32" || guardDirs.some((dir) => /^[A-Za-z]:[\\/]|^\\\\/.test(dir))
       : host.platform === "win32";
   const vars = win ? windowsVars(host.env ?? process.env, home) : new Map<string, string>();
-  const base: PathRules = { win, home, vars, tails: [] };
-  const dirs = [...new Set(guardDirs.map((dir) => (win ? windowsDirKey(expandWindowsPath(dir, base)) : canonical(dir))))];
+  const shown = new Map<string, string>();
+  const base: PathRules = { win, home, vars, tails: [], shown };
+  for (const dir of guardDirs) {
+    const key = win ? windowsDirKey(expandWindowsPath(dir, base)) : canonical(dir);
+    if (!shown.has(key)) shown.set(key, dir);
+  }
+  const dirs = [...shown.keys()];
   if (dirs.length === 0) return undefined;
   const rules: PathRules = win ? { ...base, tails: rootedTails(dirs, vars) } : base;
   const command = commandOfInput(toolName, toolInput);
@@ -949,9 +1134,17 @@ export function guardSelfWrite(
   if (!win) return selfWriteIn(command, cwd, dirs, rules);
   for (const reading of windowsReadings(command)) {
     const hit = selfWriteIn(reading, cwd, dirs, rules);
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) return shownWindowsPath(hit, rules);
   }
   return undefined;
+}
+
+/** What a Windows command touches, as the person would write it: variables
+ * expanded (`%APPDATA%` → `C:\Users\…\AppData\Roaming`), and a drive or UNC
+ * path with `\` separators, whichever reading of the command found it. */
+function shownWindowsPath(hit: string, rules: PathRules): string {
+  const expanded = expandWindowsPath(hit, rules);
+  return /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(expanded) ? win32.normalize(expanded) : expanded;
 }
 
 /** guardSelfWrite for one reading of a shell command. */
@@ -985,6 +1178,8 @@ function selfWriteIn(command: string, cwd: string | undefined, dirs: readonly st
     }
     const copyTarget = program === "cp" ? copyTargetDirectory(words) : undefined;
     if (copyTarget !== undefined && insideDir(copyTarget, here, dirs, rules)) return copyTarget;
+    const copy = win && !fed ? windowsCopy(program, words, copyTarget) : undefined;
+    if (copy?.intoCwd && insideDir(".", here, dirs, rules)) return here;
     const readOnly =
       !fed &&
       (READ_ONLY_PROGRAMS.has(program) || (win && Object.hasOwn(WINDOWS_READ_ONLY_PROGRAMS, program))) &&
@@ -1000,9 +1195,10 @@ function selfWriteIn(command: string, cwd: string | undefined, dirs: readonly st
       if (readOnly) continue;
       // A copy reads its sources: only the destination (the last operand) is
       // changed. `mv` is not in this list — moving a file OUT removes it.
-      // With `-t DIR` every operand is a source. Not on Windows, where
-      // `cp`/`copy` is Copy-Item and its `-Destination` can come first.
+      // With `-t DIR` every operand is a source. On Windows, a word only every
+      // reading of the copy takes as a source (windowsCopy).
       if (!win && COPY_PROGRAMS.has(program) && (copyTarget !== undefined || i !== lastOperand(words))) continue;
+      if (copy?.sources.has(i)) continue;
       if (insideDir(word, here, dirs, rules)) return word;
       // Fed to a shell, one quoted word can be a whole command line: any
       // absolute or home path starting inside it counts.
@@ -1015,8 +1211,9 @@ function selfWriteIn(command: string, cwd: string | undefined, dirs: readonly st
       }
     }
     // A path assembled at runtime from a variable and the rest of the guard
-    // directory: the head itself is what touches it.
-    if (win && !readOnly && namesRootedTail(head, rules)) return head;
+    // directory: the head itself is what touches it — for a copy, a word it
+    // does not only read.
+    if (win && !readOnly && namesRootedTail(copy === undefined ? head : words.filter((_, i) => i > 0 && !copy.sources.has(i)).join(" "), rules)) return head;
   }
   return undefined;
 }

@@ -21,6 +21,7 @@
  * Pure over its inputs (no fs, no Electron) so it is testable in isolation.
  */
 
+import { join } from "node:path";
 import { redact } from "../guard/redact.js";
 import { mcpServerRoots } from "../guard/mcp-poison.js";
 import type { McpPermissionSet, McpToolClass } from "../guard/policy.js";
@@ -179,26 +180,33 @@ export function discoveredMcpConfig(
  * id VS Code mints — so it has to be enumerated against the real filesystem.
  * The caller hands in the two reads; a machine with no profiles gets exactly
  * the fixed list back.
+ *
+ * Paths are `path.join`ed, so they are spelled the way this platform spells
+ * them: on Windows `C:\Users\me\.cursor\mcp.json`, the same string the CLI's
+ * `resolve()` makes of a path a person types, and the same key as the
+ * watcher's own `join(home, ".claude.json")`.
  */
 export function mcpConfigPaths(
   home: string,
   io: { exists(path: string): boolean; listDir(path: string): string[] },
 ): string[] {
-  const base = USER_MCP_CONFIGS.map((entry) => `${home.replace(/\/+$/, "")}/${entry.rel}`);
+  const base = USER_MCP_CONFIGS.map((entry) => join(home, entry.rel));
   const profilePaths = VSCODE_VARIANTS.flatMap((variant) =>
     profiles(variant, home, io)
       .filter((profile) => !profile.default)
-      .map((profile) => `${profile.dir}/mcp.json`),
+      .map((profile) => join(profile.dir, "mcp.json")),
   );
   return [...new Set([...base, ...profilePaths])];
 }
 
 /** The host id whose config a path belongs to, for naming a finding. Falls
  * back to undefined for a project `.mcp.json`, which belongs to the repo
- * rather than to any one app. */
+ * rather than to any one app. `rel` is spelled with `/`; a Windows path may
+ * use `\`, so the path is compared with its separators unified. */
 export function mcpConfigHost(path: string): { host: string; label: string } | undefined {
+  const unified = path.replace(/\\/g, "/");
   for (const entry of USER_MCP_CONFIGS) {
-    if (path.endsWith(entry.rel)) return { host: entry.host, label: entry.label };
+    if (unified.endsWith(entry.rel)) return { host: entry.host, label: entry.label };
   }
   return undefined;
 }

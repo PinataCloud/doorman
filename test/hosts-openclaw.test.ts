@@ -60,11 +60,11 @@ describe("the fixtures themselves", () => {
 
 describe("paths", () => {
   it("resolves the state dir from OPENCLAW_STATE_DIR, the legacy variable, then ~/.openclaw", () => {
-    expect(openclawStateDir(HOME, {})).toBe("/Users/dev/.openclaw");
+    expect(openclawStateDir(HOME, {})).toBe(join(HOME, ".openclaw"));
     expect(openclawStateDir(HOME, { OPENCLAW_STATE_DIR: "/srv/claw " })).toBe("/srv/claw");
     expect(openclawStateDir(HOME, { CLAWDBOT_STATE_DIR: "/srv/old" })).toBe("/srv/old");
-    expect(openclawHost.documents(HOME, {})).toEqual([{ path: "/Users/dev/.openclaw/openclaw.json", level: "user" }]);
-    expect(openclawPluginDir(HOME, {})).toBe("/Users/dev/.openclaw/extensions/doorman-guard");
+    expect(openclawHost.documents(HOME, {})).toEqual([{ path: join(HOME, ".openclaw", "openclaw.json"), level: "user" }]);
+    expect(openclawPluginDir(HOME, {})).toBe(join(HOME, ".openclaw", "extensions", "doorman-guard"));
   });
 });
 
@@ -353,9 +353,9 @@ describe("the plugin artefacts", () => {
   it("are three machine-independent files under the state dir's extensions root", () => {
     const files = openclawHost.artifacts!(HOME, {});
     expect(files.map((f) => f.path)).toEqual([
-      "/Users/dev/.openclaw/extensions/doorman-guard/openclaw.plugin.json",
-      "/Users/dev/.openclaw/extensions/doorman-guard/package.json",
-      "/Users/dev/.openclaw/extensions/doorman-guard/index.js",
+      join(HOME, ".openclaw", "extensions", "doorman-guard", "openclaw.plugin.json"),
+      join(HOME, ".openclaw", "extensions", "doorman-guard", "package.json"),
+      join(HOME, ".openclaw", "extensions", "doorman-guard", "index.js"),
     ]);
     for (const file of files) {
       expect(file.content).not.toContain("/Users/dev");
@@ -363,7 +363,7 @@ describe("the plugin artefacts", () => {
     }
     // Another machine gets the same bytes at its own paths.
     const elsewhere = openclawHost.artifacts!("/Users/other", { OPENCLAW_STATE_DIR: "/srv/claw" });
-    expect(elsewhere[0]!.path).toBe("/srv/claw/extensions/doorman-guard/openclaw.plugin.json");
+    expect(elsewhere[0]!.path).toBe(join("/srv/claw", "extensions", "doorman-guard", "openclaw.plugin.json"));
     expect(elsewhere.map((f) => f.content)).toEqual(files.map((f) => f.content));
   });
 
@@ -548,10 +548,18 @@ describe("the plugin's native ask (requireApproval), feature-detected", () => {
     expect(mod.versionAtLeast("garbage", "2026.3.28")).toBe(false);
     expect(mod.runtimeVersion({ runtime: { version: "2026.5.1" } })).toBe("2026.5.1");
     const read = (path: string) => {
-      expect(path).toBe("/opt/openclaw/package.json");
+      expect(path).toBe(join("/opt/openclaw", "package.json"));
       return JSON.stringify({ version: "2026.3.30" });
     };
     expect(mod.runtimeVersion({}, ["node", "/opt/openclaw/openclaw.mjs"], read)).toBe("2026.3.30");
+    // The entry as this platform spells it: on Windows `C:\...\openclaw.mjs`,
+    // whose folder is found with `\` separators too.
+    const entryDir = join(tmpdir(), "openclaw");
+    const readNative = (path: string) => {
+      expect(path).toBe(join(entryDir, "package.json"));
+      return JSON.stringify({ version: "2026.3.31" });
+    };
+    expect(mod.runtimeVersion({}, ["node", join(entryDir, "openclaw.mjs")], readNative)).toBe("2026.3.31");
     expect(mod.runtimeVersion({}, ["node"], () => { throw new Error("nope"); })).toBeUndefined();
   });
 

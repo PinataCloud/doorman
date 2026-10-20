@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEDUP_PRUNE_MS,
@@ -73,7 +73,7 @@ describe("the dedup files", () => {
     const old = new Date(Date.now() - DEDUP_PRUNE_MS - 60_000);
     utimesSync(dedupPath(dir, "cursor", stale), old, old);
     writeDedup(dir, "cursor", shell, { event: shell.event, decision: "allow", at: new Date().toISOString() });
-    expect(readdirSync(dedupDir(dir))).toEqual([dedupPath(dir, "cursor", shell).split("/").pop()]);
+    expect(readdirSync(dedupDir(dir))).toEqual([basename(dedupPath(dir, "cursor", shell))]);
   });
 
   it("priorDecision: nothing recorded → decide yourself; same event → decide yourself", async () => {

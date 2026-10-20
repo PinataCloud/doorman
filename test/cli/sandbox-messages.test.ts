@@ -45,7 +45,7 @@ let root: string;
 let home: string;
 let appData: string;
 let dataDir: string;
-let saved: { HOME?: string; DOORMAN_APPDATA_DIR?: string };
+let saved: { HOME?: string; USERPROFILE?: string; DOORMAN_APPDATA_DIR?: string };
 let extraEnv: Record<string, string>;
 let ioExtra: Record<string, unknown>;
 
@@ -78,9 +78,11 @@ beforeEach(() => {
   dataDir = join(appData, "Doorman");
   mkdirSync(join(home, ".claude"), { recursive: true });
   mkdirSync(appData, { recursive: true });
-  saved = { HOME: process.env.HOME, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
-  // enforcement.ts resolves every hook document from homedir().
+  saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
+  // enforcement.ts resolves every hook document from homedir(), which reads
+  // HOME on POSIX and USERPROFILE on Windows.
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   process.env.DOORMAN_APPDATA_DIR = appData;
   extraEnv = {};
   ioExtra = {};

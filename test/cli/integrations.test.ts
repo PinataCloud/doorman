@@ -24,7 +24,7 @@ let root: string;
 let home: string;
 let appData: string;
 let dataDir: string;
-let saved: { HOME?: string; DOORMAN_APPDATA_DIR?: string };
+let saved: { HOME?: string; USERPROFILE?: string; DOORMAN_APPDATA_DIR?: string };
 let extraEnv: Record<string, string>;
 /** More of the CLI's environment: the background spawn, fetch and the clock. */
 let ioExtra: Record<string, unknown>;
@@ -85,9 +85,11 @@ beforeEach(() => {
   dataDir = join(appData, "Doorman");
   extraEnv = {};
   ioExtra = {};
-  saved = { HOME: process.env.HOME, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
-  // The guard, MCP and doctor code resolves hook documents from homedir().
+  saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
+  // The guard, MCP and doctor code resolves hook documents from homedir(),
+  // which reads HOME on POSIX and USERPROFILE on Windows.
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   process.env.DOORMAN_APPDATA_DIR = appData;
   mkdirSync(join(home, ".cursor"), { recursive: true });
   mkdirSync(join(home, ".claude"), { recursive: true });
@@ -229,7 +231,7 @@ describe("doorman doctor", () => {
     const repair = await dm(["doctor", "--repair", "auto"]);
     expect(repair.code).toBe(0);
     expect(repair.out).toContain("repaired");
-    expect(readFileSync(settings, "utf8")).toContain("doorman/guard/guard.js");
+    expect(readFileSync(settings, "utf8").replace(/\\+/g, "/")).toContain("doorman/guard/guard.js");
     expect((await dm(["doctor"])).code).toBe(0);
   });
 
@@ -375,7 +377,8 @@ describe("the classifier model downloads on its own", () => {
     const { guardDir } = require(join(build, "enforcement.js")) as { guardDir(dataDir: string): string };
     mkdirSync(guardDir(dataDir), { recursive: true });
     const heartbeat = heartbeatPath(guardDir(dataDir));
-    writeFileSync(heartbeat, `${JSON.stringify({ at: new Date().toISOString(), pid: 1, version: "0.2.0" })}\n`);
+    // A live pid that is not this process: the runner that started this worker.
+    writeFileSync(heartbeat, `${JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, version: "0.2.0" })}\n`);
     await dm(["status"]);
     rmSync(heartbeat);
 

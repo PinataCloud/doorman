@@ -10,6 +10,7 @@ import {
   desktopPaths,
   integrateAppImage,
   quoteExecArg,
+  refreshDesktopCaches,
   type DesktopPaths,
 } from "../main/lib/linux-desktop-entry.js";
 
@@ -40,17 +41,19 @@ describe("desktop paths", () => {
 
   it("uses an absolute XDG_DATA_HOME, else ~/.local/share", () => {
     expect(dataHome({ XDG_DATA_HOME: "/x/share" }, "/home/u")).toBe("/x/share");
-    expect(dataHome({}, "/home/u")).toBe("/home/u/.local/share");
+    const share = join("/home/u", ".local", "share");
+    expect(dataHome({}, "/home/u")).toBe(share);
     // The spec: a relative value is invalid and is ignored.
-    expect(dataHome({ XDG_DATA_HOME: "rel/share" }, "/home/u")).toBe("/home/u/.local/share");
-    expect(dataHome({ XDG_DATA_HOME: "" }, "/home/u")).toBe("/home/u/.local/share");
+    expect(dataHome({ XDG_DATA_HOME: "rel/share" }, "/home/u")).toBe(share);
+    expect(dataHome({ XDG_DATA_HOME: "" }, "/home/u")).toBe(share);
   });
 
   it("puts the entry in applications/ and the icons in hicolor/<n>x<n>/apps", () => {
     const p = desktopPaths({}, "/home/u");
-    expect(p.desktopFile).toBe("/home/u/.local/share/applications/cloud.pinata.doorman.desktop");
-    expect(p.iconFile(512)).toBe("/home/u/.local/share/icons/hicolor/512x512/apps/cloud.pinata.doorman.png");
-    expect(p.hicolorDir).toBe("/home/u/.local/share/icons/hicolor");
+    const share = join("/home/u", ".local", "share");
+    expect(p.desktopFile).toBe(join(share, "applications", "cloud.pinata.doorman.desktop"));
+    expect(p.iconFile(512)).toBe(join(share, "icons", "hicolor", "512x512", "apps", "cloud.pinata.doorman.png"));
+    expect(p.hicolorDir).toBe(join(share, "icons", "hicolor"));
   });
 });
 
@@ -159,5 +162,37 @@ describe("integrateAppImage", () => {
     const out = integrateAppImage({ appImage: APPIMAGE, version: "0.5.3", paths, renderIcon: () => null });
     expect(out).toEqual({ status: "installed", written: [paths.desktopFile] });
     expect(existsSync(paths.iconFile(512))).toBe(false);
+  });
+});
+
+describe("refreshDesktopCaches", () => {
+  const enoent = (): NodeJS.ErrnoException => Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+  const refresh = (missing: string[]): string[] => {
+    const ran: string[] = [];
+    refreshDesktopCaches(paths, (cmd, _args, done) => {
+      ran.push(cmd);
+      done(missing.includes(cmd) ? enoent() : null);
+    });
+    return ran;
+  };
+
+  it("rebuilds KDE's app cache with kbuildsycoca6", () => {
+    expect(refresh([])).toEqual(["update-desktop-database", "kbuildsycoca6"]);
+  });
+
+  it("falls back to kbuildsycoca5 only when kbuildsycoca6 is missing", () => {
+    expect(refresh(["kbuildsycoca6"])).toContain("kbuildsycoca5");
+    expect(refresh(["kbuildsycoca6", "kbuildsycoca5", "update-desktop-database"])).toEqual([
+      "update-desktop-database",
+      "kbuildsycoca6",
+      "kbuildsycoca5",
+    ]);
+  });
+
+  it("refreshes an existing icon cache, never creates one", () => {
+    expect(refresh([])).not.toContain("gtk-update-icon-cache");
+    mkdirSync(paths.hicolorDir, { recursive: true });
+    writeFileSync(join(paths.hicolorDir, "icon-theme.cache"), "");
+    expect(refresh([])).toContain("gtk-update-icon-cache");
   });
 });

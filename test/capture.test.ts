@@ -985,6 +985,33 @@ describe("CaptureEngine", () => {
         expect(engine.shownFinding(guardRow(engine, "env_dump").finding_id)).toBeDefined();
         expect(engine.shownFinding(guardRow(engine, "secret_egress").finding_id)).toBeUndefined();
       });
+
+      it("leaves a reader that has not scanned (the CLI, on a copy of the store) showing what the app shows", async () => {
+        const OTHER = "11111111-aaaa-bbbb-cccc-dddddddddddd";
+        const other = join(deps.claudeProjectsDir, "-Users-dev-repo", `${OTHER}.jsonl`);
+        writeFileSync(file(), transcriptLines());
+        writeFileSync(other, transcriptLines().replaceAll(SESSION, OTHER).replaceAll("msg_1", "msg_o1").replaceAll("prompt-1", "prompt-o1"));
+        const app = makeEngine();
+        await app.start();
+        app.stop();
+        // A guard row its transcript does not hold (hidden on a verdict), and
+        // a transcript deleted since the last scan (hidden off the listing).
+        app.ingestSpoolLines([spoolLine("2026-08-20T10:03:00.000Z", "warn", [EGRESS])]);
+        rmSync(other);
+        await app.scan();
+        const egress = guardRow(app, "secret_egress");
+        const gone = [...app.ledger.values()].find((r) => r.session_id === OTHER)!;
+        expect(app.shownFinding(egress.finding_id)).toBeUndefined();
+        expect(app.shownFinding(gone.finding_id)).toBeUndefined();
+
+        const ids = (engine: CaptureEngine) => engine.shownFindings().map((r) => r.finding_id).sort();
+        const reader = makeEngine();
+        reader.open();
+        expect(reader.ledger.has(egress.finding_id)).toBe(true);
+        expect(reader.ledger.has(gone.finding_id)).toBe(true);
+        expect(ids(reader)).toEqual(ids(app));
+        expect(reader.sessions().map((s) => s.id)).toEqual([SESSION]);
+      });
     });
 
     it("hides transcript findings older than the retention window, so Settings governs findings as well as turns", async () => {

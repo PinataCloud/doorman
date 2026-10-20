@@ -144,7 +144,7 @@ import { EvidenceVault, sandboxVaultCrypto } from "./lib/evidence-vault.js";
 import { surfaceShown } from "./lib/surface-scope.js";
 import { maskTurnText } from "./lib/masking.js";
 import { homeIsRedirected } from "./lib/sandbox.js";
-import { desktopPaths, integrateAppImage } from "./lib/linux-desktop-entry.js";
+import { desktopPaths, integrateAppImage, refreshDesktopCaches } from "./lib/linux-desktop-entry.js";
 import {
   approvalContext,
   exposureContext,
@@ -1280,13 +1280,7 @@ function integrateLinuxAppImage(): void {
     });
     if (outcome.written.length === 0) return;
     console.log(`[doorman] desktop entry ${outcome.status}: ${paths.desktopFile}`);
-    // Best-effort cache refreshes; a desktop without these tools notices the
-    // new files by itself. The icon cache is refreshed, never created: a
-    // hicolor directory without one is simply scanned.
-    execFile("update-desktop-database", ["-q", paths.applicationsDir], () => {});
-    if (existsSync(join(paths.hicolorDir, "icon-theme.cache"))) {
-      execFile("gtk-update-icon-cache", ["-q", "-t", "-f", paths.hicolorDir], () => {});
-    }
+    refreshDesktopCaches(paths, (cmd, args, done) => execFile(cmd, args, (err) => done(err)));
   } catch (err) {
     console.warn("[doorman] couldn't write the desktop entry:", err);
   }
@@ -1450,6 +1444,7 @@ function liveStateFor(sessions: readonly SessionSummary[], now: Date): LiveState
     now,
     agents: liveInventory.agents,
     rows: liveInventory.rows,
+    ...(liveInventory.at === "" ? {} : { rowsAt: new Date(liveInventory.at) }),
     presence: livePresence,
     sessions,
     approvals: store.snapshot().approvals,
@@ -1466,7 +1461,7 @@ async function refreshLive(): Promise<void> {
     const now = new Date();
     liveInventory = await readProcessInventory(now);
     const presence = readPresenceRecords();
-    const stale = stalePresence(presence, liveInventory.rows, liveInventory.agents, now);
+    const stale = stalePresence(presence, liveInventory.rows, liveInventory.agents, store.snapshot().sessions, now);
     for (const rec of stale) {
       const path = presencePath(guardDir(app.getPath("userData")), rec.source, rec.session_id);
       if (path) {

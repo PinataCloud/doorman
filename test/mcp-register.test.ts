@@ -76,6 +76,14 @@ describe("MCP registration surgery", () => {
     expect(removeRegistration(squatted, copilot)).toBeUndefined();
   });
 
+  it("recognizes and removes our entry when the script path is a Windows one", () => {
+    const windows = "C:\\Users\\dev\\AppData\\Roaming\\Doorman\\doorman\\mcp\\doorman-mcp.js";
+    expect(isOurEntry({ command: "node", args: [windows] })).toBe(true);
+    expect(isOurEntry({ command: "node", args: ["C:\\x\\not-doorman-mcp.js"] })).toBe(false);
+    const ours = mergeRegistration(undefined, copilot, windows);
+    expect(JSON.parse(removeRegistration(ours, copilot)!)).toEqual({});
+  });
+
   it("refuses a document it cannot parse rather than overwriting it", () => {
     expect(() => mergeRegistration("{ not json", vscode, SCRIPT)).toThrow(/not valid JSON/);
     expect(() => mergeRegistration("[]", vscode, SCRIPT)).toThrow(/not a JSON object/);

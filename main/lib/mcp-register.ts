@@ -166,11 +166,12 @@ function parseDocument(docText: string | undefined, label: string): Record<strin
   return parsed as Record<string, unknown>;
 }
 
-/** Is this entry ours — the Doorman MCP script, whatever path it was installed at? */
+/** Is this entry ours — the Doorman MCP script, whatever path it was installed
+ * at? On Windows that path is written with `\`. */
 export function isOurEntry(entry: unknown): boolean {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
   const args = (entry as Record<string, unknown>).args;
-  return Array.isArray(args) && args.some((a) => typeof a === "string" && a.endsWith(`/${MCP_SCRIPT_BASENAME}`));
+  return Array.isArray(args) && args.some((a) => typeof a === "string" && a.replace(/\\/g, "/").endsWith(`/${MCP_SCRIPT_BASENAME}`));
 }
 
 function serialize(doc: Record<string, unknown>, original: string | undefined): string {
