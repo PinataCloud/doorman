@@ -3,7 +3,7 @@ import { parseCustomRules, validateCustomRule, validateCustomRuleList, type Cust
 import type { GuardPolicy } from "../../guard/policy.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
-import { CliError, table } from "../output.js";
+import { CliError } from "../output.js";
 import { savePrefs, syncNote } from "./policy.js";
 
 function readJson(path: string): unknown {
@@ -41,18 +41,22 @@ function saveRules(ctx: CliContext, action: string, next: (own: CustomRule[]) =>
 const customList: CliCommand = {
   name: "custom-rules",
   summary: "Your own rules (and the ones enabled packs add)",
+  examples: [
+    ["doorman custom-rules dry-run rule.json", "what a rule would have caught, before saving it"],
+    ["doorman custom-rules add rule.json", "save it"],
+  ],
   async run(ctx) {
     const own = ctx.prefs().policy.custom_rules ?? [];
     const fromPacks = (ctx.policy().custom_rules ?? []).filter((r) => r.pack !== undefined && !own.some((o) => o.id === r.id));
     const s = ctx.style;
-    const row = (r: CustomRule) => [r.id, r.enabled === false ? s.dim("off") : r.mode, r.severity, r.label];
+    const ui = ctx.ui;
+    const row = (r: CustomRule) => [r.id, r.enabled === false ? ui.mark("off", s.dim("off")) : r.mode, r.severity, r.label];
+    const rulesTable = (rules: readonly CustomRule[]) => ui.table(["Id", "Mode", "Severity", "Label"], rules.map(row), { indent: 2, keep: [0, 1, 2] });
     const text =
       own.length === 0
-        ? ["No custom rules. Add one with `doorman custom-rules add <file.json>`."]
-        : [s.bold("Custom rules"), ...table(["Id", "Mode", "Severity", "Label"], own.map(row)).map((l) => `  ${l}`)];
-    if (fromPacks.length > 0) {
-      text.push("", s.bold("From packs"), ...table(["Id", "Mode", "Severity", "Label"], fromPacks.map(row)).map((l) => `  ${l}`));
-    }
+        ? ["No custom rules.", ui.next("`doorman custom-rules add <file.json>` adds one.")]
+        : [ui.section("Custom rules"), ...rulesTable(own)];
+    if (fromPacks.length > 0) text.push("", ui.section("From packs"), ...rulesTable(fromPacks));
     return { data: { custom_rules: own, pack_rules: fromPacks }, text };
   },
 };
@@ -61,10 +65,17 @@ const customAdd: CliCommand = {
   name: "custom-rules add",
   summary: "Add custom rules from a JSON file (one rule or a list)",
   usage: "<file.json> [--replace]",
-  details: [
-    'A rule: {"id","label","severity","mode","when":{"tool"|"command"|"server"|"target"|"arg"},"after"?,"scope"?}',
+  notes: [
+    "A rule is a JSON object with these fields (? = optional):",
+    '  {"id", "label", "severity", "mode",',
+    '   "when": {"tool" | "command" | "server" | "target" | "arg"},',
+    '   "after"?, "scope"?}',
     "Try it first with `doorman custom-rules dry-run <file.json>`.",
-    "--replace  replace a rule with the same id instead of refusing",
+  ],
+  flags: [["--replace", "replace a rule with the same id instead of refusing"]],
+  examples: [
+    ["doorman custom-rules add rule.json", "add the rule (or list of rules) in the file"],
+    ["doorman custom-rules add rule.json --replace", "update rules you already have"],
   ],
   options: { replace: { type: "boolean", default: false } },
   positionals: { min: 1, max: 1 },
@@ -77,12 +88,12 @@ const customAdd: CliCommand = {
     const replace = args.values.replace === true;
     const { prefs, syncError } = saveRules(ctx, "Add a custom rule", (own) => {
       const clash = own.filter((r) => ids.includes(r.id)).map((r) => r.id);
-      if (clash.length > 0 && !replace) throw new CliError(`Already have ${clash.join(", ")}. Pass --replace to overwrite.`, 2);
+      if (clash.length > 0 && !replace) throw new CliError(`Already have ${clash.join(", ")}.`, 2, "Pass --replace to overwrite.");
       return [...own.filter((r) => !ids.includes(r.id)), ...checked.rules];
     });
     return {
       data: { added: ids, custom_rules: prefs.policy.custom_rules ?? [], ...(syncError ? { sync_error: syncError } : {}) },
-      text: [`Saved ${ids.join(", ")}.`, ...syncNote(ctx, syncError)],
+      text: [ctx.ui.mark("ok", `Saved ${ids.join(", ")}.`), ...syncNote(ctx, syncError)],
     };
   },
 };
@@ -91,14 +102,16 @@ const customRemove: CliCommand = {
   name: "custom-rules remove",
   summary: "Remove one of your custom rules",
   usage: "<id>",
+  notes: ["Pack rules go with their pack: `doorman packs disable <pack>`."],
+  examples: [["doorman custom-rules remove no-prod", "remove the rule with id no-prod"]],
   positionals: { min: 1, max: 1 },
   async run(ctx, args) {
     const id = args.positionals[0]!;
     if (!(ctx.prefs().policy.custom_rules ?? []).some((r) => r.id === id)) {
-      throw new CliError(`No custom rule "${id}". \`doorman custom-rules\` lists them (pack rules go with \`doorman packs disable\`).`, 2);
+      throw new CliError(`No custom rule "${id}".`, 2, "`doorman custom-rules` lists them (pack rules go with `doorman packs disable`).");
     }
     const { syncError } = saveRules(ctx, "Remove a custom rule", (own) => own.filter((r) => r.id !== id));
-    return { data: { removed: id, ...(syncError ? { sync_error: syncError } : {}) }, text: [`Removed ${id}.`, ...syncNote(ctx, syncError)] };
+    return { data: { removed: id, ...(syncError ? { sync_error: syncError } : {}) }, text: [ctx.ui.mark("off", `Removed ${id}.`), ...syncNote(ctx, syncError)] };
   },
 };
 
@@ -106,7 +119,12 @@ const customDryRun: CliCommand = {
   name: "custom-rules dry-run",
   summary: "What a rule would have caught in your recent transcripts",
   usage: "<file.json|id> [--days 14]",
-  details: ["--days <n>  how far back to look (1-90, default 14)"],
+  flags: [["--days <n>", "how far back to look (1-90, default 14)"]],
+  notes: ["Takes a rule file, or the id of a rule in `doorman custom-rules` (pack rules too). It only reads transcripts; nothing is saved."],
+  examples: [
+    ["doorman custom-rules dry-run rule.json", "try a rule file before adding it"],
+    ["doorman custom-rules dry-run no-prod --days 30", "a saved rule over the last 30 days"],
+  ],
   options: { days: { type: "string", default: "14" } },
   positionals: { min: 1, max: 1 },
   async run(ctx, args) {

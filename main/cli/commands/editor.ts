@@ -10,7 +10,7 @@ import {
 } from "../../vscode-ext-install.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
-import { CliError, table } from "../output.js";
+import { CliError } from "../output.js";
 
 /**
  * The `vscode_extension` switch's side effect, as the app applies it
@@ -30,9 +30,17 @@ export function applyEditorExtension(ctx: CliContext, enabled: boolean): EditorI
 function hostRows(ctx: CliContext, hosts: EditorExtensionStatus[]): string[] {
   const s = ctx.style;
   if (hosts.length === 0) return [s.dim("No VS Code family editor (VS Code, Insiders, VSCodium, Cursor, Windsurf) found on this machine.")];
-  return table(
+  return ctx.ui.table(
     ["EDITOR", "EXTENSION"],
-    hosts.map((h) => [h.label, h.cliMissing ? s.yellow("no command line, can't install") : h.installed ? s.green(`installed ${h.installed}`) : s.dim("not installed")]),
+    hosts.map((h) => [
+      h.label,
+      h.cliMissing
+        ? ctx.ui.mark("warn", s.warn("no command line, can't install"))
+        : h.installed
+          ? ctx.ui.mark("ok", s.ok(`installed ${h.installed}`))
+          : ctx.ui.mark("off", s.dim("not installed")),
+    ]),
+    { indent: 2, keep: [0] },
   );
 }
 
@@ -44,13 +52,13 @@ const statusCommand: CliCommand = {
     const vsix = vsixPath();
     const hosts = extensionStatus(ctx.io.home);
     const s = ctx.style;
-    return {
-      data: { wanted, vsix: existsSync(vsix) ? vsix : null, hosts },
-      text: [
-        `${s.bold("VS Code companion")}  ${wanted ? s.green("on") : s.dim("off")}${existsSync(vsix) ? "" : s.yellow("  (no packaged extension in this build)")}`,
-        ...hostRows(ctx, hosts),
-      ],
-    };
+    const packaged = existsSync(vsix);
+    const text = [
+      `${ctx.ui.section("VS Code companion")}  ${wanted ? ctx.ui.mark("ok", s.ok("on")) : ctx.ui.mark("off", s.dim("off"))}${packaged ? "" : s.warn("  (no packaged extension in this build)")}`,
+      ...hostRows(ctx, hosts),
+    ];
+    if (!wanted && packaged) text.push("", ctx.ui.next("`doorman editor install` installs it."));
+    return { data: { wanted, vsix: packaged ? vsix : null, hosts }, text };
   },
 };
 
@@ -59,21 +67,27 @@ function switchRun(enabled: boolean): CliCommand["run"] {
     ctx.requireWritable(`${enabled ? "Install" : "Remove"} the VS Code companion`);
     ctx.setPrefs({ vscode_extension: enabled });
     const outcome = applyEditorExtension(ctx, enabled);
-    if (!outcome.ok) throw new CliError(`Couldn't ${enabled ? "install" : "remove"} the VS Code companion: ${outcome.error ?? "failed"}`);
+    if (!outcome.ok) {
+      throw new CliError(`Couldn't ${enabled ? "install" : "remove"} the VS Code companion: ${outcome.error ?? "failed"}`, 1, "`doorman editor status` shows each editor.");
+    }
     const labels = outcome.hosts.filter((h) => outcome.installed.includes(h.variant)).map((h) => h.label);
     const head = enabled
       ? labels.length > 0
         ? `The VS Code companion is installed in ${labels.join(", ")}.`
-        : "The VS Code companion is on; no editor to install it in yet."
+        : "The VS Code companion is on. No editor to install it in yet."
       : "The VS Code companion is removed.";
-    return { data: { wanted: enabled, installed: outcome.installed, hosts: outcome.hosts }, text: [head, ...hostRows(ctx, outcome.hosts)] };
+    return {
+      data: { wanted: enabled, installed: outcome.installed, hosts: outcome.hosts },
+      text: [ctx.ui.mark("ok", head), ...hostRows(ctx, outcome.hosts)],
+    };
   };
 }
 
 const installCommand: CliCommand = {
   name: "editor install",
   summary: "Install the VS Code companion in every VS Code family editor here",
-  details: ["Turns on the app's VS Code extension setting (prefs vscode_extension). Uses each editor's own CLI."],
+  notes: ["Turns on the app's VS Code extension setting (prefs vscode_extension). Uses each editor's own command line."],
+  examples: [["doorman editor install", "install in VS Code, Cursor and the rest"]],
   run: switchRun(true),
 };
 

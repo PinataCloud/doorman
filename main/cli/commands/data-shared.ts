@@ -11,8 +11,8 @@ export const SEVERITIES: readonly Severity[] = ["critical", "high", "medium", "l
 
 /** critical/high red, medium yellow, low dim: the contract's severity colours. */
 export function paintSeverity(style: Styles, severity: Severity): string {
-  if (severity === "critical" || severity === "high") return style.red(severity);
-  if (severity === "medium") return style.yellow(severity);
+  if (severity === "critical" || severity === "high") return style.error(severity);
+  if (severity === "medium") return style.warn(severity);
   return style.dim(severity);
 }
 
@@ -50,13 +50,14 @@ export function oneLine(text: string, max: number): string {
 }
 
 /** The item whose id is `id`, or the only one it starts. Ids are long; the
- * lists print them whole, but a unique prefix is enough to type. */
-export function byIdOrPrefix<T>(items: readonly T[], id: string, idOf: (item: T) => string | undefined, what: string): T {
+ * lists print them whole, but a unique prefix is enough to type. `list` is
+ * the command that lists them, offered when nothing matches. */
+export function byIdOrPrefix<T>(items: readonly T[], id: string, idOf: (item: T) => string | undefined, what: string, list?: string): T {
   const exact = items.find((item) => idOf(item) === id);
   if (exact) return exact;
   const matches = items.filter((item) => idOf(item)?.startsWith(id));
   if (matches.length === 1) return matches[0]!;
-  if (matches.length === 0) throw new CliError(`No ${what} "${id}".`);
+  if (matches.length === 0) throw new CliError(`No ${what} "${id}".`, 1, list ? `\`${list}\` lists them with their ids.` : undefined);
   throw new CliError(`"${id}" matches ${matches.length} ${what}s; give more of the id.`);
 }
 

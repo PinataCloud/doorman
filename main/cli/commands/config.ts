@@ -33,7 +33,7 @@ const SETTINGS: Record<ConfigKey, { help: string; parse(raw: string): Prefs[Conf
   },
   show_false_positives: { help: "true or false (list findings marked false positive)", parse: parseBoolean },
   vscode_extension: { help: "true or false (VS Code companion; installs or removes it)", parse: parseBoolean },
-  mcp_answers: { help: "true or false (Doorman's MCP server; registers or unregisters it)", parse: parseBoolean },
+  mcp_answers: { help: "true or false (Doorman's MCP server for your agents)", parse: parseBoolean },
   // Any word; the sanitizer below refuses what isn't a theme.
   appearance: { help: "auto, light or dark (the app's theme)", parse: (raw) => raw.trim().toLowerCase() as Prefs["appearance"] },
 };
@@ -42,26 +42,33 @@ const KEYS = Object.keys(SETTINGS) as ConfigKey[];
 
 function configKey(raw: string): ConfigKey {
   if ((KEYS as string[]).includes(raw)) return raw as ConfigKey;
-  throw new CliError(`Unknown setting "${raw}". Settings: ${KEYS.join(", ")}.`, 2);
+  throw new CliError(`Unknown setting "${raw}". Settings: ${KEYS.join(", ")}.`, 2, "`doorman config --help` says what each one takes.");
 }
 
 function show(value: unknown): string {
   return Array.isArray(value) ? value.join(",") : String(value);
 }
 
+/** The settings list for `--help`, one row per key. */
+const SETTINGS_NOTES = ["Settings:", ...KEYS.map((k) => `  ${k.padEnd(21)}${SETTINGS[k].help}`)];
+
 const getCommand: CliCommand = {
   name: "config get",
   summary: "Show settings shared with the app",
   usage: "[key]",
   positionals: { min: 0, max: 1 },
-  details: ["Settings:", ...KEYS.map((k) => `  ${k.padEnd(21)}${SETTINGS[k].help}`)],
+  notes: SETTINGS_NOTES,
+  examples: [
+    ["doorman config get", "every setting"],
+    ["doorman config get retention_days", "just the value, for scripts"],
+  ],
   async run(ctx, args) {
     const prefs = ctx.prefs();
     const keys = args.positionals[0] === undefined ? KEYS : [configKey(args.positionals[0])];
     const data = Object.fromEntries(keys.map((k) => [k, prefs[k]]));
+    // One key: the bare value, so scripts can read it.
     if (keys.length === 1) return { data: data[keys[0]!], text: [show(prefs[keys[0]!])] };
-    const width = Math.max(...keys.map((k) => k.length));
-    return { data, text: keys.map((k) => `${k.padEnd(width)}  ${show(prefs[k])}`) };
+    return { data, text: [ctx.ui.section("Settings"), ...ctx.ui.kv(keys.map((k) => [k, show(prefs[k])] as const))] };
   },
 };
 
@@ -79,15 +86,21 @@ async function applySideEffects(ctx: CliContext, key: ConfigKey, value: Prefs[Co
   }
   if (key === "mcp_answers") {
     const outcome = applyMcpAnswers(ctx, value === true);
-    if (!outcome.ok) throw new CliError(`Saved, but the MCP server ${value ? "registration" : "removal"} failed: ${outcome.error ?? "failed"}`);
+    if (!outcome.ok) {
+      throw new CliError(`Saved, but the MCP server ${value ? "registration" : "removal"} failed: ${outcome.error ?? "failed"}`, 1, "`doorman mcp server status` shows each host's config.");
+    }
     const hosts = outcome.hosts.filter((h) => h.registered).map((h) => h.label);
-    return value ? [hosts.length > 0 ? `Registered with ${hosts.join(", ")}.` : "No MCP host to register with yet."] : ["Unregistered."];
+    if (!value) return [ctx.ui.mark("ok", "Unregistered.")];
+    return [hosts.length > 0 ? ctx.ui.mark("ok", `Registered with ${hosts.join(", ")}.`) : ctx.ui.mark("off", "No MCP host to register with yet.")];
   }
   if (key === "vscode_extension") {
     const outcome = applyEditorExtension(ctx, value === true);
-    if (!outcome.ok) throw new CliError(`Saved, but the VS Code companion ${value ? "install" : "removal"} failed: ${outcome.error ?? "failed"}`);
+    if (!outcome.ok) {
+      throw new CliError(`Saved, but the VS Code companion ${value ? "install" : "removal"} failed: ${outcome.error ?? "failed"}`, 1, "`doorman editor status` shows each editor.");
+    }
     const labels = outcome.hosts.filter((h) => outcome.installed.includes(h.variant)).map((h) => h.label);
-    return value ? [labels.length > 0 ? `Installed in ${labels.join(", ")}.` : "No editor to install it in yet."] : ["Removed."];
+    if (!value) return [ctx.ui.mark("ok", "Removed.")];
+    return [labels.length > 0 ? ctx.ui.mark("ok", `Installed in ${labels.join(", ")}.`) : ctx.ui.mark("off", "No editor to install it in yet.")];
   }
   return [];
 }
@@ -97,7 +110,12 @@ const setCommand: CliCommand = {
   summary: "Change a setting shared with the app",
   usage: "<key> <value>",
   positionals: { min: 2, max: 2 },
-  details: ["Settings:", ...KEYS.map((k) => `  ${k.padEnd(21)}${SETTINGS[k].help}`)],
+  notes: SETTINGS_NOTES,
+  examples: [
+    ["doorman config set retention_days 30", "keep 30 days of history"],
+    ["doorman config set confidence_bands high,medium", "hide low-confidence findings"],
+    ["doorman config set mcp_answers true", "register Doorman's MCP server"],
+  ],
   async run(ctx, args) {
     const key = configKey(args.positionals[0]!);
     const raw = args.positionals[1]!;
@@ -114,7 +132,7 @@ const setCommand: CliCommand = {
     const notes = changed ? await applySideEffects(ctx, key, next[key]) : [];
     return {
       data: { key, value: next[key], changed },
-      text: [`${key} = ${show(next[key])}${changed ? "" : ctx.style.dim(" (unchanged)")}`, ...notes],
+      text: [changed ? ctx.ui.mark("ok", `${key} = ${show(next[key])}`) : ctx.ui.mark("off", `${key} = ${show(next[key])}${ctx.style.dim(" (unchanged)")}`), ...notes],
     };
   },
 };
@@ -122,7 +140,8 @@ const setCommand: CliCommand = {
 const configCommand: CliCommand = {
   name: "config",
   summary: "Same as `doorman config get`",
-  details: getCommand.details!,
+  notes: getCommand.notes!,
+  examples: getCommand.examples!,
   run: getCommand.run,
 };
 

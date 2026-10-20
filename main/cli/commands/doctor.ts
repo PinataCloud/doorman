@@ -3,21 +3,28 @@ import type { DoctorCheck } from "../../lib/doctor.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError } from "../output.js";
+import { plural } from "../ui.js";
 
+/** The check's status word, marked: ok / warn / fail / skip, padded to one width. */
 function statusText(ctx: CliContext, check: DoctorCheck): string {
   const s = ctx.style;
-  if (check.status === "fail") return s.red("fail");
-  if (check.status === "warn") return s.yellow("warn");
-  if (check.status === "skip") return s.dim("skip");
-  return s.green("ok  ");
+  if (check.status === "fail") return ctx.ui.mark("error", s.error("fail"));
+  if (check.status === "warn") return ctx.ui.mark("warn", s.warn("warn"));
+  if (check.status === "skip") return ctx.ui.mark("off", s.dim("skip"));
+  return ctx.ui.mark("ok", s.ok("ok  "));
 }
 
-/** What to do about a check that isn't ok: the person's step, or the repair
- * that clears it (automatic ones with `--repair auto`, the rest by name). */
-function remedy(check: DoctorCheck): string | undefined {
-  if (check.manual) return check.manual;
+/** The repair that clears a check: automatic ones with `--repair auto`, the rest by name. */
+function repairCommand(check: DoctorCheck): string | undefined {
   if (!check.fix) return undefined;
-  return check.auto ? "fix: doorman doctor --repair auto" : `fix: doorman doctor --repair all --only ${check.id}`;
+  return check.auto ? "doorman doctor --repair auto" : `doorman doctor --repair all --only ${check.id}`;
+}
+
+/** What to do about a check that isn't ok: the person's step, or the repair. */
+function remedy(ctx: CliContext, check: DoctorCheck): string | undefined {
+  if (check.manual) return ctx.style.dim(check.manual);
+  const command = repairCommand(check);
+  return command === undefined ? undefined : `${ctx.style.dim("fix:")} ${ctx.ui.code(command)}`;
 }
 
 export const doctorCommand: CliCommand = {
@@ -25,18 +32,25 @@ export const doctorCommand: CliCommand = {
   summary: "Check that the guard, MCP server and editor wiring work, and repair what doesn't",
   usage: "[--repair auto|all] [--only <check>]",
   options: { repair: { type: "string" }, only: { type: "string" } },
-  details: [
+  flags: [
+    ["--repair auto", "apply the lossless repairs (what the app does on its own)"],
+    ["--repair all", "also the ones automatic repair skips; with --only, all that check offers, even restoring a backup"],
+    ["--only <check>", "report (and repair) one check by id"],
+  ],
+  notes: [
     "The setup doctor from the app's Integrations screen, run once.",
-    "--repair auto  apply the lossless repairs (what the app does on its own)",
-    "--repair all   also the ones automatic repair skips; with --only, everything that check offers,",
-    "               including replacing an unreadable document with its backup",
-    "--only <check> report (and repair) one check by id",
-    "",
     "Exit code 1 when any check still warns or fails after the run (something needs attention).",
+  ],
+  examples: [
+    ["doorman doctor", "check the setup, change nothing"],
+    ["doorman doctor --repair auto", "apply the lossless repairs"],
+    ["doorman doctor --repair all --only guard.hooks", "every repair one check offers"],
   ],
   async run(ctx, args) {
     const repairArg = args.values.repair;
-    if (repairArg !== undefined && repairArg !== "auto" && repairArg !== "all") throw new CliError("--repair takes auto or all.", 2);
+    if (repairArg !== undefined && repairArg !== "auto" && repairArg !== "all") {
+      throw new CliError(`--repair takes auto or all, not "${String(repairArg)}".`, 2, "`doorman doctor --repair auto` applies the lossless repairs.");
+    }
     const repair = repairArg ?? "none";
     const only = typeof args.values.only === "string" ? args.values.only : undefined;
     if (repair !== "none") ctx.requireWritable("Repair the setup");
@@ -69,27 +83,48 @@ export const doctorCommand: CliCommand = {
       repaired = state.last_repair === repaired ? undefined : state.last_repair;
     }
     const report = state.report;
-    if (!report) throw new CliError("The doctor couldn't finish; run with --verbose to see why.");
+    if (!report) throw new CliError("The doctor couldn't finish.", 1, "`doorman doctor --verbose` shows why.");
     const checks = report.checks.filter((c) => only === undefined || c.id === only);
     if (only !== undefined && !report.checks.some((c) => c.id === only)) {
-      throw new CliError(`No check "${only}". Checks: ${report.checks.map((c) => c.id).join(", ")}`);
+      throw new CliError(`No check "${only}".`, 1, `Checks: ${report.checks.map((c) => c.id).join(", ")}`);
     }
     const s = ctx.style;
-    const text = [s.bold(report.headline), ""];
+    const ui = ctx.ui;
+    // Detail lines sit under the title: past the status word, and its glyph when there is one.
+    const under = " ".repeat(ui.decorate ? 10 : 8);
+    const text = [ui.section(report.headline), ""];
     for (const check of checks) {
       text.push(`  ${statusText(ctx, check)}  ${check.title}  ${s.dim(`[${check.id}]`)}`);
       if (check.status === "warn" || check.status === "fail" || (check.status === "skip" && check.detail !== "")) {
-        text.push(`        ${check.detail}`);
-        const step = remedy(check);
-        if (step) text.push(`        ${s.dim(step)}`);
+        const width = ui.width === undefined ? undefined : ui.width - under.length;
+        for (const line of width === undefined || width < 20 ? [check.detail] : ui.wrap(check.detail, width)) text.push(`${under}${line}`);
+        const step = remedy(ctx, check);
+        if (step) text.push(`${under}${step}`);
       }
     }
     if (applied.length + failed.length > 0) {
       text.push("");
-      for (const line of applied) text.push(`  ${s.green("repaired")}  ${line}`);
-      for (const line of failed) text.push(`  ${s.red("failed")}    ${line}`);
+      for (const line of applied) text.push(`  ${ui.mark("ok", s.ok("repaired"))}  ${line}`);
+      for (const line of failed) text.push(`  ${ui.mark("error", s.error("failed"))}    ${line}`);
     }
-    const needsAttention = checks.some((c) => c.status === "warn" || c.status === "fail");
+    const open = checks.filter((c) => c.status === "warn" || c.status === "fail");
+    const needsAttention = open.length > 0;
+    const count = (status: DoctorCheck["status"]) => checks.filter((c) => c.status === status).length;
+    const tally = [
+      count("ok") > 0 ? s.ok(`${count("ok")} ok`) : "",
+      count("warn") > 0 ? s.warn(`${count("warn")} warn`) : "",
+      count("fail") > 0 ? s.error(`${count("fail")} fail`) : "",
+      count("skip") > 0 ? s.dim(`${count("skip")} skipped`) : "",
+    ].filter((p) => p !== "");
+    const tone = count("fail") > 0 ? "error" : count("warn") > 0 ? "warn" : "ok";
+    text.push("", ui.mark(tone, `${plural(checks.length, "check")}: ${tally.join(", ")}.${needsAttention ? ` ${plural(open.length, "needs", "need")} attention.` : ""}`));
+    if (needsAttention) {
+      // One next step: the automatic repair if it would help, else one check's own repair, else the person's steps.
+      const auto = repair === "none" ? open.find((c) => c.fix && c.auto) : undefined;
+      const named = open.find((c) => c.fix && !(c.auto && repair !== "none"));
+      const command = auto ? repairCommand(auto) : named ? repairCommand(named) : undefined;
+      text.push(ui.next(command ? `\`${command}\` repairs what it can.` : "Follow the steps above, then run `doorman doctor` again."));
+    }
     return {
       data: {
         report: { ...report, checks },

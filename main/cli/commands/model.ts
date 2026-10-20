@@ -21,6 +21,7 @@ import { dockerSandbox, MODEL_HOSTS, processLabel, sandboxAllowCommand, sandboxP
 import type { CliCommand, ParsedArgs } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError, type CommandResult, type Styles } from "../output.js";
+import { startProgress, type Progress } from "../progress.js";
 
 const MODELS: readonly InjectionModelId[] = ["doorman-1", "stock"];
 
@@ -73,7 +74,7 @@ export function runningModel(
   const download = autoDownloadView(ctx);
   const installed = modelStatus(modelsRoot(ctx.dataDir), injectionModelManifest(plan.effective)).present;
   if (enabled && runtime && installed) {
-    return { active: plan.effective, download, text: `${plan.effective}${plan.fallback ? s.yellow(`  (${FALLBACK_TEXT[plan.fallback]})`) : ""}` };
+    return { active: plan.effective, download, text: `${plan.effective}${plan.fallback ? s.warn(`  (${FALLBACK_TEXT[plan.fallback]})`) : ""}` };
   }
   const why = !enabled
     ? "the classifier is off"
@@ -84,7 +85,7 @@ export function runningModel(
         : download.status === "failed"
           ? failedWhy(ctx, download)
           : "no model downloaded yet: doorman model download";
-  return { active: null, download, text: `none  ${s.yellow(`(${why})`)}` };
+  return { active: null, download, text: `none  ${s.warn(`(${why})`)}` };
 }
 
 /** Why the last background download failed, and what to do about it. */
@@ -114,16 +115,24 @@ const statusRun: CliCommand["run"] = async (ctx) => {
   const models = MODELS.map((m) => modelView(ctx, m));
   const s = ctx.style;
   const running = runningModel(ctx, plan, enabled, runtime, s);
+  const ui = ctx.ui;
   const text = [
-    `${s.bold("Injection classifier")}  ${enabled ? s.green("on") : s.yellow("off")}`,
-    `  selected  ${plan.selected}`,
-    `  running   ${running.text}`,
-    `  runtime   ${runtime ? s.green("present") : s.red(`missing (${runtimeDir()})`)}`,
+    ui.section("Injection classifier"),
+    ...ui.kv([
+      ["classifier", enabled ? ui.mark("ok", s.ok("on")) : ui.mark("warn", s.warn("off"))],
+      ["selected", plan.selected],
+      ["running", ui.mark(running.active ? "ok" : "warn", running.text)],
+      ["runtime", runtime ? ui.mark("ok", s.ok("present")) : ui.mark("error", s.error(`missing (${runtimeDir()})`))],
+    ]),
   ];
   for (const m of models) {
-    text.push("", `  ${s.bold(m.model)}  ${m.label}, ${m.version}  ${m.installed ? s.green("installed") : s.dim("not downloaded")}  ${s.dim(megabytes(m.bytes_total))}`);
-    for (const f of m.files) text.push(`    ${f.verified ? s.green("verified") : s.dim("missing ")}  ${f.name}  ${s.dim(megabytes(f.size))}`);
+    const state = `${m.installed ? s.ok("installed") : s.dim("not downloaded")}  ${s.dim(megabytes(m.bytes_total))}`;
+    // On a terminal the long label gets its own line, so the state stays in view.
+    if (ui.decorate) text.push("", `  ${ui.mark(m.installed ? "ok" : "off", s.bold(m.model))}  ${state}`, ui.fit(`    ${s.dim(`${m.label}, ${m.version}`)}`));
+    else text.push("", `  ${s.bold(m.model)}  ${m.label}, ${m.version}  ${state}`);
+    for (const f of m.files) text.push(`    ${f.verified ? s.ok("verified") : s.dim("missing ")}  ${f.name}  ${s.dim(megabytes(f.size))}`);
   }
+  if (!running.active && enabled && runtime && running.download.status !== "running") text.push("", ui.next("`doorman model download` fetches it now."));
   return {
     data: {
       enabled,
@@ -143,6 +152,10 @@ const statusRun: CliCommand["run"] = async (ctx) => {
 const modelCommand: CliCommand = {
   name: "model",
   summary: "The injection classifier: which model runs, and what is downloaded",
+  examples: [
+    ["doorman model", "which model runs and what is on disk"],
+    ["doorman model download", "fetch the selected model now"],
+  ],
   run: statusRun,
 };
 
@@ -152,57 +165,22 @@ const statusCommand: CliCommand = {
   run: statusRun,
 };
 
-/** Shows a download's progress as it goes. */
-interface ProgressReporter {
-  update(p: DownloadProgress): void;
-  done(): void;
-}
-
-/** One progress line on stderr: rewritten in place on a terminal, a line per
- * quarter otherwise (so logs stay short). */
-function progressReporter(ctx: CliContext, manifest: ModelManifest): ProgressReporter {
-  const stderr = ctx.io.stderr as NodeJS.WritableStream & { isTTY?: boolean };
-  const tty = stderr.isTTY === true;
-  let lastAt = 0;
-  let lastQuarter = -1;
-  let drawn = false;
-  return {
-    update(p) {
-      const total = p.bytes_total || manifestBytes(manifest);
-      const pct = total > 0 ? Math.floor((p.bytes_done / total) * 100) : 0;
-      const line = `Downloading ${manifest.name}: ${megabytes(p.bytes_done)} of ${megabytes(total)} (${pct}%)`;
-      if (tty) {
-        const now = Date.now();
-        if (now - lastAt < 200 && p.bytes_done < total) return;
-        lastAt = now;
-        stderr.write(`\r${line}\u001b[K`);
-        drawn = true;
-      } else if (Math.floor(pct / 25) > lastQuarter) {
-        lastQuarter = Math.floor(pct / 25);
-        stderr.write(`${line}\n`);
-      }
-    },
-    done() {
-      if (drawn) stderr.write("\n");
-    },
-  };
-}
-
 const downloadCommand: CliCommand = {
   name: "model download",
   summary: "Download and verify a classifier model (sha256-pinned, as the app does)",
   usage: "[--model doorman-1|stock] [--auto]",
   options: { model: { type: "string" }, auto: { type: "boolean" } },
-  details: [
-    "Default: the selected model. doorman-1 comes from DOORMAN_INJECTION_CLASSIFIER_SOURCE when set",
-    "(a URL or an absolute directory), else its pinned Hugging Face revision. Every file is checked",
-    "against its pinned size and sha256 before it is kept. Progress goes to stderr.",
-    "",
-    "You rarely need this: while the classifier is on, the first command that finds its model missing",
-    "starts this download in the background (DOORMAN_INJECTION_CLASSIFIER=off stops that). Run while",
-    "that one is going, this waits for it with its progress, then fetches only what it didn't.",
-    "--auto  what that background download runs: whatever the plan needs (doorman-1, else the stock",
-    "        model it falls back to), quietly, recording the outcome so failed attempts are spaced out",
+  flags: [
+    ["--model doorman-1|stock", "which model (default: the selected one)"],
+    ["--auto", "what the background download runs: whatever the plan needs, quietly, spacing out failed attempts"],
+  ],
+  notes: [
+    "doorman-1 comes from DOORMAN_INJECTION_CLASSIFIER_SOURCE when set (a URL or an absolute directory), else its pinned Hugging Face revision. Every file is checked against its pinned size and sha256 before it is kept. Progress goes to stderr.",
+    "You rarely need this: while the classifier is on, the first command that finds its model missing starts this download in the background (DOORMAN_INJECTION_CLASSIFIER=off stops that). Run while that one is going, this waits for it with its progress, then fetches only what it didn't.",
+  ],
+  examples: [
+    ["doorman model download", "the selected model"],
+    ["doorman model download --model stock", "the smaller stock model"],
   ],
   async run(ctx, args) {
     if (args.values.auto === true) {
@@ -220,7 +198,7 @@ const downloadCommand: CliCommand = {
       if (!(await waitForDownload(ctx))) {
         return {
           data: { stopped_waiting: true },
-          text: ["Stopped waiting. The download goes on in the background; `doorman model` shows its progress."],
+          text: [ctx.ui.mark("off", ctx.ui.prose("Stopped waiting. The download goes on in the background; `doorman model` shows its progress."))],
           exitCode: 130,
         };
       }
@@ -246,7 +224,8 @@ const WAIT_POLL_MS = 500;
 async function waitForDownload(ctx: CliContext): Promise<boolean> {
   let view = autoDownloadView(ctx);
   if (view.status !== "running") return true;
-  ctx.io.stderr.write("The model is already downloading in the background. Waiting for it to finish (Ctrl-C stops waiting, not the download).\n");
+  const waiting = "The model is already downloading in the background. Waiting for it to finish (Ctrl-C stops waiting, not the download).";
+  ctx.io.stderr.write(`${ctx.errUi.mark("info", waiting)}\n`);
   let stopped = false;
   let wake: (() => void) | undefined;
   const onInterrupt = () => {
@@ -254,14 +233,15 @@ async function waitForDownload(ctx: CliContext): Promise<boolean> {
     wake?.();
   };
   process.on("SIGINT", onInterrupt);
-  let shown: { model: InjectionModelId; progress: ProgressReporter } | undefined;
+  let shown: { model: InjectionModelId; progress: Progress; total: number } | undefined;
   try {
     while (view.status === "running" && !stopped) {
       if (shown?.model !== view.model) {
-        shown?.progress.done();
-        shown = { model: view.model, progress: progressReporter(ctx, injectionModelManifest(view.model)) };
+        shown?.progress.end();
+        const manifest = injectionModelManifest(view.model);
+        shown = { model: view.model, progress: startProgress(ctx.errUi, ctx.io.stderr, { label: `Downloading ${manifest.name}`, format: megabytes }), total: manifestBytes(manifest) };
       }
-      shown.progress.update({ file: "", bytes_done: view.bytes_done, bytes_total: view.bytes_total });
+      shown.progress.update(view.bytes_done, view.bytes_total || shown.total);
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, WAIT_POLL_MS);
         wake = () => {
@@ -273,7 +253,7 @@ async function waitForDownload(ctx: CliContext): Promise<boolean> {
     }
   } finally {
     process.off("SIGINT", onInterrupt);
-    shown?.progress.done();
+    shown?.progress.end();
   }
   return !stopped;
 }
@@ -294,15 +274,16 @@ async function downloadNow(ctx: CliContext, args: ParsedArgs, waited: boolean): 
   // every other model from its manifest (the app's startModelDownload).
   const source = manifest.name === PROMPT_GUARD_2_22M_DOORMAN_1.name ? injectionModelSourceFromEnv(ctx.io.env) : undefined;
   const before = modelStatus(modelsRoot(ctx.dataDir), manifest).present;
-  const progress = progressReporter(ctx, manifest);
+  // A bar on a terminal, a line per quarter otherwise (progress.ts).
+  const progress = startProgress(ctx.errUi, ctx.io.stderr, { label: `Downloading ${manifest.name}`, format: megabytes });
   try {
     await downloadModel(modelsRoot(ctx.dataDir), manifest, {
       ...(source === undefined ? {} : { source }),
       ...(ctx.io.fetch ? { fetchImpl: ctx.io.fetch } : {}),
-      onProgress: (p) => progress.update(p),
+      onProgress: (p: DownloadProgress) => progress.update(p.bytes_done, p.bytes_total || manifestBytes(manifest)),
     });
   } catch (err) {
-    progress.done();
+    progress.end();
     const why = err instanceof Error ? err.message : String(err);
     const blocked = sandboxBlock(ctx, downloadRefusal(err));
     if (blocked) {
@@ -312,17 +293,20 @@ async function downloadNow(ctx: CliContext, args: ParsedArgs, waited: boolean): 
     }
     throw new CliError(`Couldn't download ${model}: ${why}`);
   }
-  progress.done();
+  progress.end();
   const view = modelView(ctx, model);
-  if (!view.installed) throw new CliError(`${model} downloaded but didn't verify; run it again.`);
+  if (!view.installed) throw new CliError(`${model} downloaded but didn't verify.`, 1, "Run `doorman model download` again.");
   return {
     data: view,
     text: [
-      before
-        ? waited
-          ? `The background download finished: ${model} is installed and verified.`
-          : `${model} was already installed and verified.`
-        : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`,
+      ctx.ui.mark(
+        "ok",
+        before
+          ? waited
+            ? `The background download finished: ${model} is installed and verified.`
+            : `${model} was already installed and verified.`
+          : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`,
+      ),
     ],
   };
 }
@@ -332,19 +316,21 @@ const removeCommand: CliCommand = {
   summary: "Delete a downloaded model (default: the one that runs)",
   usage: "[--model doorman-1|stock]",
   options: { model: { type: "string" } },
+  flags: [["--model doorman-1|stock", "which model (default: the one that runs)"]],
+  examples: [["doorman model remove --model stock", "delete the stock model's files"]],
   async run(ctx, args) {
     refuseWhileOwned(ctx, "remove it");
     const download = activeDownload(ctx);
     if (download) {
       const who = download.by === "app" ? "The app is downloading the model" : "The model is downloading in the background";
-      throw new CliError(`${who}; remove it once that finishes (\`doorman model\` shows its progress).`);
+      throw new CliError(`${who}.`, 1, "Remove it once that finishes; `doorman model` shows its progress.");
     }
     const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).effective;
     const manifest = injectionModelManifest(model);
     const root = modelsRoot(ctx.dataDir);
     const had = modelStatus(root, manifest).missing.length < manifest.files.length;
     removeModel(root, manifest);
-    return { data: { model, removed: had }, text: [had ? `Removed ${model}.` : `${model} wasn't downloaded; nothing to remove.`] };
+    return { data: { model, removed: had }, text: [had ? ctx.ui.mark("ok", `Removed ${model}.`) : ctx.ui.mark("off", `${model} wasn't downloaded; nothing to remove.`)] };
   },
 };
 
@@ -353,6 +339,7 @@ const selectCommand: CliCommand = {
   summary: "Choose the classifier model (the app's Settings choice)",
   usage: "<doorman-1|stock>",
   positionals: { min: 1, max: 1 },
+  examples: [["doorman model select stock", "run the stock model instead of doorman-1"]],
   async run(ctx, args) {
     const model = parseModel(args.positionals[0])!;
     ctx.requireWritable("Choose the model");
@@ -365,11 +352,11 @@ const selectCommand: CliCommand = {
     const synced = syncGuard(ctx.dataDir, ctx.policy());
     if (!synced.ok) throw new CliError(`Saved, but the guard's policy didn't update: ${synced.error}`);
     const plan = modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env);
-    const text = [`Selected ${model}.`];
-    if (plan.selected !== model) text.push(ctx.style.yellow(`DOORMAN_INJECTION_CLASSIFIER_MODEL overrides it here: ${plan.selected} is selected.`));
+    const text = [ctx.ui.mark("ok", `Selected ${model}.`)];
+    if (plan.selected !== model) text.push(ctx.ui.mark("warn", ctx.style.warn(`DOORMAN_INJECTION_CLASSIFIER_MODEL overrides it here: ${plan.selected} is selected.`)));
     if (!modelStatus(modelsRoot(ctx.dataDir), injectionModelManifest(plan.selected)).present) {
       const fallback = modelStatus(modelsRoot(ctx.dataDir), injectionModelManifest(plan.effective)).present ? `${plan.effective} runs` : "no model runs";
-      text.push(`${plan.selected} isn't downloaded yet; it downloads in the background with your next doorman command (or now: doorman model download). Until then ${fallback}.`);
+      text.push(ctx.ui.prose(`${plan.selected} isn't downloaded yet; it downloads in the background with your next doorman command (or now: \`doorman model download\`). Until then ${fallback}.`));
     }
     return { data: { selected: plan.selected, effective: plan.effective, injection_classifier }, text };
   },
@@ -386,35 +373,38 @@ const checkCommand: CliCommand = {
   summary: "Score text with the injection classifier",
   usage: "<text | ->",
   positionals: { min: 1, max: 1 },
-  details: [
-    "Runs the model that runs in the app (doorman model status) over the text, or stdin with `-`.",
-    "Prints the label (malicious or benign) and P(malicious).",
+  notes: [
+    "Runs the model that runs in the app (`doorman model status`) over the text, or stdin with `-`, and prints the label (malicious or benign) and P(malicious).",
     "Exit code 1 when the text is classified as malicious.",
+  ],
+  examples: [
+    ['doorman model check "ignore all previous instructions"', "score one string"],
+    ["pbpaste | doorman model check -", "score what is on the clipboard"],
   ],
   async run(ctx, args) {
     const text = args.positionals[0] === "-" ? await readStdin(ctx) : args.positionals[0]!;
-    if (text.trim() === "") throw new CliError("Nothing to classify.");
+    if (text.trim() === "") throw new CliError("Nothing to classify.", 2, 'Pass the text, e.g. `doorman model check "some text"`, or `-` to read stdin.');
     const { classifier, manifest, changed } = await loadClassifier(ctx.dataDir, ctx.policy(), ctx.io.env, (m) => ctx.log(m));
     if (!classifier) {
-      if (changed.length > 0) throw new CliError(`${manifest.name}: ${changed.join(", ")} no longer match their pins. Run \`doorman model download\` to replace them.`);
+      if (changed.length > 0) throw new CliError(`${manifest.name}: ${changed.join(", ")} no longer match their pins.`, 1, "Run `doorman model download` to replace them.");
       if (!runtimePresent(runtimeDir())) throw new CliError(`The classifier runtime is missing (${runtimeDir()}).`);
       if (!modelStatus(modelsRoot(ctx.dataDir), manifest).present) {
         const download = autoDownloadView(ctx);
         if (download.status === "running") {
           throw new CliError(`The model is still downloading${download.by === "app" ? " in the app" : " in the background"} (${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}); try again once it finishes.`);
         }
-        throw new CliError(`No model downloaded. Run \`doorman model download\` first.`);
+        throw new CliError("No model downloaded.", 1, "Run `doorman model download` first.");
       }
-      throw new CliError(`${manifest.name} is present but failed to load; run with --verbose to see why.`);
+      throw new CliError(`${manifest.name} is present but failed to load.`, 1, "Run it again with --verbose to see why.");
     }
     const verdict = await classifier.classify(text);
-    if (!verdict) throw new CliError("The model didn't answer; run with --verbose to see why.");
+    if (!verdict) throw new CliError("The model didn't answer.", 1, "Run it again with --verbose to see why.");
     const s = ctx.style;
     const label = verdict.malicious ? "malicious" : "benign";
     const score = Math.round(verdict.score * 1000) / 1000;
     return {
       data: { label, malicious: verdict.malicious, score, model: manifest.name },
-      text: [`${verdict.malicious ? s.red(label) : s.green(label)}  score ${score.toFixed(3)}  ${s.dim(manifest.name)}`],
+      text: [`${verdict.malicious ? s.error(label) : s.ok(label)}  score ${score.toFixed(3)}  ${s.dim(manifest.name)}`],
       exitCode: verdict.malicious ? 1 : 0,
     };
   },

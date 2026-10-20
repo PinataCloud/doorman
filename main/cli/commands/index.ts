@@ -5,5 +5,5 @@ import { integrationCommands } from "./integrations.js";
 import { statusCommand } from "./status.js";
 import { updateCommand } from "./update.js";
 
-/** Every command, in the order `doorman help` lists them. */
+/** Every command. `doorman help` lists them by family in groups (help.ts). */
 export const COMMANDS: readonly CliCommand[] = [statusCommand, ...dataCommands, ...guardCommands, ...integrationCommands, updateCommand];

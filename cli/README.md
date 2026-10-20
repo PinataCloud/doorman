@@ -15,7 +15,7 @@ doorman status
 
 | Command | What it does |
 | --- | --- |
-| `doorman status` | Where Doorman keeps its data, what it guards, what needs review |
+| `doorman status` | The dashboard: guard, agents, model, what needs review, and the next thing to do |
 | `doorman scan` | Read new agent transcripts (Claude Code, Codex, Cursor, Copilot, Gemini and more) and report new findings |
 | `doorman findings` | Open exposures, grouped like the app's Security Radar; `show`, `review`, `reopen`, `false-positive`, `accept-risk` |
 | `doorman sessions`, `session <id>`, `search <query>` | The Event Ledger: sessions, turns and search, always masked |
@@ -33,7 +33,28 @@ doorman status
 | `doorman update` | Install a newer Doorman CLI with npm; `--check` only says whether one is out |
 
 Every command takes `--json` for machine-readable output and `--help` for its
-options.
+usage, options and examples. `doorman help` lists every command by group.
+
+### In the terminal
+
+On a terminal, output has colour, status marks (✓ ! ✗) and, on `doorman` and
+`doorman watch`, the Doorman llama in ASCII. Tables and long lines fit the
+terminal's width, and long work (a scan, the model download) shows its
+progress on one line that redraws in place.
+
+Everything else gets plain text with the same words and columns, nothing that
+breaks `grep` or `awk`:
+
+- Piped or redirected output, `NO_COLOR=1` and `TERM=dumb` are plain: no colour,
+  no marks, no art. Progress prints a line now and then instead of redrawing.
+- `--json` is only the JSON, on a terminal or not.
+- Output is pure ASCII (marks `+ ! x`, `|` for `·`, `-` for dashes, `...`)
+  with `DOORMAN_ASCII=1`, and on a terminal that may not show Unicode: the
+  Linux console, a locale that isn't UTF-8, and Windows outside Windows
+  Terminal, VS Code, ConEmu or mintty (the old `cmd` and PowerShell 5.1
+  console). `DOORMAN_ASCII=0` turns Unicode back on. `--json` and the JSON
+  exports stay as they are. The art is ASCII always.
+- Long paths and URLs wrap only after a `/` or `\`.
 
 ## Shared with the desktop app
 

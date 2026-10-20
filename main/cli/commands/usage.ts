@@ -3,7 +3,8 @@ import { RULE_STATS_WINDOWS } from "../../lib/findings.js";
 import { aggregateGraphs } from "../../lib/spend.js";
 import { TASK_LABELS, type TaskClass } from "../../lib/task-class.js";
 import type { CliCommand } from "../command.js";
-import { ago, compactNumber, table } from "../output.js";
+import { ago, compactNumber } from "../output.js";
+import { plural, type KvRow } from "../ui.js";
 import { daysOption, delta, duration, paintSeverity, ruleLabels, withEngine } from "./data-shared.js";
 
 export const usageCommand: CliCommand = {
@@ -11,12 +12,16 @@ export const usageCommand: CliCommand = {
   summary: "Tokens and time spent with AI, like the Usage screen",
   usage: "[--days 7|30] [--scan]",
   options: { days: { type: "string" }, scan: { type: "boolean", default: false } },
-  details: [
-    "Tokens (input + output; cache traffic left out, as on the screen), engaged time, sessions,",
-    "use cases and models over the window, against the window before it. Tokens only: the app",
-    "prices nothing it can't stand behind, so no dollar figures.",
-    "--days 7|30  the window (default 7)",
-    "--scan       read new transcripts first",
+  flags: [
+    ["--days 7|30", "the window (default 7)"],
+    ["--scan", "read new transcripts first"],
+  ],
+  notes: [
+    "Tokens (input + output; cache traffic left out, as on the screen), engaged time, sessions, use cases and models over the window, against the window before it. Tokens only: the app prices nothing it can't stand behind, so no dollar figures.",
+  ],
+  examples: [
+    ["doorman usage --scan", "read new transcripts, then the last 7 days"],
+    ["doorman usage --days 30", "the last 30 days"],
   ],
   async run(ctx, args) {
     const days = daysOption(args.values.days, [7, 30] as const, 7);
@@ -59,23 +64,35 @@ export const usageCommand: CliCommand = {
         plan_windows: plans,
       };
       const s = ctx.style;
+      const ui = ctx.ui;
       if (g.window_tokens === 0 && g.window_seconds === 0) {
-        return { data, text: [s.dim(`No activity in the last ${days} days.`)] };
+        return {
+          data,
+          text: [
+            ui.mark("off", `No activity in the last ${days} days.`),
+            ui.next(args.values.scan === true ? "`doorman sessions` lists the sessions read so far." : "`doorman usage --scan` reads new transcripts first."),
+          ],
+        };
       }
-      const line = (k: string, v: string, note = "") => `  ${s.dim(k.padEnd(13))}${v}${note ? `  ${s.dim(note)}` : ""}`;
+      const noted = (v: string, note: string) => (note ? `${v}  ${s.dim(note)}` : v);
       const text = [
-        s.bold(`Usage, last ${days} days`),
-        line("tokens", compactNumber(g.window_tokens), delta(g.window_tokens, g.prev_window_tokens, `vs prior ${days}d`)),
-        line("today", compactNumber(g.today_tokens), g.today_seconds > 0 ? `${duration(g.today_seconds)} engaged today` : "nothing yet today"),
-        line("time spent", duration(g.window_seconds), delta(g.window_seconds, g.prev_window_seconds, `vs prior ${days}d`)),
-        line("sessions", String(g.window_sessions), `${activeDays} of ${days} days had activity · ${g.by_task.length} use case${g.by_task.length === 1 ? "" : "s"}`),
-        ...(tokensPerHour > 0 ? [line("tokens/hour", compactNumber(tokensPerHour))] : []),
+        ui.section(`Usage, last ${days} days`),
+        ...ui.kv([
+          ["tokens", noted(compactNumber(g.window_tokens), delta(g.window_tokens, g.prev_window_tokens, `vs prior ${days}d`))],
+          ["today", noted(compactNumber(g.today_tokens), g.today_seconds > 0 ? `${duration(g.today_seconds)} engaged today` : "nothing yet today")],
+          ["time spent", noted(duration(g.window_seconds), delta(g.window_seconds, g.prev_window_seconds, `vs prior ${days}d`))],
+          [
+            "sessions",
+            noted(String(g.window_sessions), ui.list([`${activeDays} of ${days} days had activity`, plural(g.by_task.length, "use case")])),
+          ],
+          tokensPerHour > 0 && ["tokens/hour", compactNumber(tokensPerHour)],
+        ]),
       ];
       if (g.by_task.length > 0) {
         text.push(
           "",
-          s.bold("By use case"),
-          ...table(
+          ui.section("By use case"),
+          ...ui.table(
             ["USE CASE", "TIME", "SHARE", "TOKENS", "SESSIONS", "ALERTS"],
             g.by_task.map((t) => [
               TASK_LABELS[t.task as TaskClass] ?? t.task,
@@ -85,14 +102,15 @@ export const usageCommand: CliCommand = {
               String(t.sessions),
               String(alertsOf.get(t.task) ?? 0),
             ]),
-          ).map((l) => `  ${l}`),
+            { indent: 2, keep: [1, 2, 3, 4, 5] },
+          ),
         );
       }
       if (g.model_rows.length > 0) {
         text.push(
           "",
-          s.bold("By model"),
-          ...table(
+          ui.section("By model"),
+          ...ui.table(
             ["MODEL", "TOKENS", "SHARE", "AGENT"],
             g.model_rows.map((m) => [
               m.model,
@@ -100,16 +118,19 @@ export const usageCommand: CliCommand = {
               g.window_tokens > 0 ? `${Math.round((m.tokens / g.window_tokens) * 100)}%` : "",
               m.source,
             ]),
-          ).map((l) => `  ${l}`),
+            { indent: 2, keep: [1, 2] },
+          ),
         );
       }
       if (plans.length > 0) {
         text.push(
           "",
-          s.bold("Plan allowance"),
-          ...plans.map(
-            (p) =>
-              `  ${p.source}${p.window_id ? ` (${p.window_id})` : ""}  ${Math.round(p.used_percentage)}% used${p.resets_at ? `, resets ${p.resets_at}` : ""}  ${s.dim(p.label ?? ago(p.at, ctx.io.now()))}`,
+          ui.section("Plan allowance"),
+          ...ui.kv(
+            plans.map((p): KvRow => [
+              `${p.source}${p.window_id ? ` (${p.window_id})` : ""}`,
+              `${Math.round(p.used_percentage)}% used${p.resets_at ? `, resets ${p.resets_at}` : ""}  ${s.dim(p.label ?? ago(p.at, ctx.io.now()))}`,
+            ]),
           ),
         );
       }
@@ -123,11 +144,16 @@ export const analyticsCommand: CliCommand = {
   summary: "Security analytics: what each rule found, like the Analytics screen",
   usage: "[--days 7|14|30|90] [--scan]",
   options: { days: { type: "string" }, scan: { type: "boolean", default: false } },
-  details: [
-    "Exposures (rule x place), things under them and sightings in the window, how many of the",
-    "sessions that ran had a finding, how held calls were answered, and every rule that fired.",
-    "--days 7|14|30|90  the window (default 14)",
-    "--scan             read new transcripts first",
+  flags: [
+    ["--days 7|14|30|90", "the window (default 14)"],
+    ["--scan", "read new transcripts first"],
+  ],
+  notes: [
+    "Exposures (rule x place), things under them and sightings in the window, how many of the sessions that ran had a finding, how held calls were answered, and every rule that fired.",
+  ],
+  examples: [
+    ["doorman analytics", "the last 14 days"],
+    ["doorman analytics --days 90 --scan", "read new transcripts, then the last 90 days"],
   ],
   async run(ctx, args) {
     const days = daysOption(args.values.days, RULE_STATS_WINDOWS, 14);
@@ -138,37 +164,44 @@ export const analyticsCommand: CliCommand = {
       const { burned_usd: _usd, rules, ...rest } = stats;
       const data = { ...rest, rules: rules.map(({ burned_usd: _ruleUsd, ...r }) => r) };
       const s = ctx.style;
+      const ui = ctx.ui;
       const rate = stats.window_sessions ? Math.round((stats.sessions / stats.window_sessions) * 100) : undefined;
-      const line = (k: string, v: string, note = "") => `  ${s.dim(k.padEnd(15))}${v}${note ? `  ${s.dim(note)}` : ""}`;
+      const noted = (v: string, note: string) => (note ? `${v}  ${s.dim(note)}` : v);
       const prevNew = stats.prev?.new_exposures;
       const humans = Object.entries(stats.decided_via)
         .filter(([, n]) => n > 0)
-        .map(([via, n]) => `${via} ${n}`)
-        .join(" · ");
+        .map(([via, n]) => `${via} ${n}`);
       const text = [
-        s.bold(`Security analytics, last ${days} days`),
-        line("exposures", String(stats.exposures), `${stats.new_exposures} new${prevNew !== undefined ? ` (${prevNew} the ${days} days before)` : ""}`),
-        line("things", String(stats.things), `${stats.new_things} new`),
-        line("sightings", String(stats.total)),
-        line(
-          "sessions",
-          rate !== undefined ? `${rate}%` : String(stats.sessions),
-          `${stats.sessions} of the ${stats.window_sessions ?? 0} sessions that ran had a finding`,
-        ),
-        line(
-          "held calls",
-          String(stats.decisions),
-          [stats.median_hold_ms !== undefined ? `median ${Math.round(stats.median_hold_ms / 1000)}s to decide` : "", humans, stats.scoped_allows > 0 ? `${stats.scoped_allows} allowed for a project` : ""]
-            .filter(Boolean)
-            .join(" · "),
-        ),
-        ...(typeof stats.burned_tokens === "number" ? [line("stuck loops", `${compactNumber(stats.burned_tokens)} tokens burned`)] : []),
+        ui.section(`Security analytics, last ${days} days`),
+        ...ui.kv([
+          ["exposures", noted(String(stats.exposures), `${stats.new_exposures} new${prevNew !== undefined ? ` (${prevNew} the ${days} days before)` : ""}`)],
+          ["things", noted(String(stats.things), `${stats.new_things} new`)],
+          ["sightings", String(stats.total)],
+          [
+            "sessions",
+            noted(rate !== undefined ? `${rate}%` : String(stats.sessions), `${stats.sessions} of the ${stats.window_sessions ?? 0} sessions that ran had a finding`),
+          ],
+          [
+            "held calls",
+            noted(
+              String(stats.decisions),
+              ui.list(
+                [
+                  stats.median_hold_ms !== undefined ? `median ${Math.round(stats.median_hold_ms / 1000)}s to decide` : "",
+                  ...humans,
+                  stats.scoped_allows > 0 ? `${stats.scoped_allows} allowed for a project` : "",
+                ].filter(Boolean),
+              ),
+            ),
+          ],
+          typeof stats.burned_tokens === "number" && ["stuck loops", `${compactNumber(stats.burned_tokens)} tokens burned`],
+        ]),
       ];
       if (stats.rules.length > 0) {
         text.push(
           "",
-          s.bold(`Rules that fired (${stats.rules.length})`),
-          ...table(
+          ui.section(`Rules that fired (${stats.rules.length})`),
+          ...ui.table(
             ["RULE", "WORST", "FIRED", "EXPOSURES", "SESSIONS", "BLOCKED", "HELD", "WARNED", "LAST"],
             stats.rules.map((r) => [
               r.label,
@@ -181,10 +214,11 @@ export const analyticsCommand: CliCommand = {
               String(r.warned),
               r.last_fired_at ? ago(r.last_fired_at, ctx.io.now()) : "",
             ]),
-          ).map((l) => `  ${l}`),
+            { indent: 2, keep: [1, 2, 3, 4, 5, 6, 7, 8] },
+          ),
         );
       } else {
-        text.push("", s.green(`No rule fired in the last ${days} days.`));
+        text.push("", ui.mark("ok", s.ok(`No rule fired in the last ${days} days.`)));
       }
       const notes = [
         stats.stood_down ? `${stats.stood_down} sighting${stats.stood_down === 1 ? " was" : "s were"} stood down by a model after the rule fired.` : "",

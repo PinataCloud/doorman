@@ -20,8 +20,14 @@ export interface CliCommand {
   summary: string;
   /** What follows the name, e.g. `<finding-id> [--status reviewed]`. */
   usage?: string;
-  /** Longer help, printed by `doorman <name> --help`. */
-  details?: string[];
+  /** `doorman <name> --help`'s Options: the flag as typed (`--days <n>`) and
+   * what it does, one short line each. */
+  flags?: readonly (readonly [flag: string, what: string])[];
+  /** Examples: the command line, and what it does. */
+  examples?: readonly (readonly [command: string, what: string])[];
+  /** Paragraphs after the options. Wrapped to the terminal; a line starting
+   * with spaces is kept as written (lists, tables). */
+  notes?: readonly string[];
   options?: OptionSpec;
   /** How many positionals it takes; default none. */
   positionals?: { min: number; max: number };

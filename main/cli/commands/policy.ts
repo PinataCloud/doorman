@@ -34,7 +34,7 @@ export function savePrefs(ctx: CliContext, action: string, patch: (prefs: Prefs)
 
 /** The line that says a saved change did not reach the guard, if it didn't. */
 export function syncNote(ctx: CliContext, syncError: string | undefined): string[] {
-  return syncError ? [ctx.style.yellow(`Saved, but the guard was not updated: ${syncError}`)] : [];
+  return syncError ? [ctx.ui.mark("warn", ctx.style.warn(`Saved, but the guard was not updated: ${syncError}`))] : [];
 }
 
 /** `/Users/me/x` → `~/x`. */
@@ -67,6 +67,10 @@ function modeCounts(policy: GuardPolicy): Record<string, number> {
 const policyShow: CliCommand = {
   name: "policy",
   summary: "The policy the guard enforces: level, rule modes, holds, packs, custom rules, exceptions",
+  examples: [
+    ["doorman policy --json", "the whole policy, every rule's mode included"],
+    ["doorman policy level watchful", "move the security level"],
+  ],
   async run(ctx) {
     const prefs = ctx.prefs();
     const policy = ctx.policy();
@@ -95,13 +99,15 @@ const policyShow: CliCommand = {
       .map((m) => `${counts[m]} ${m}`)
       .join(" · ");
     const text = [
-      s.bold("Policy"),
-      `  level         ${level}${edited.length > 0 ? s.yellow(`  ${edited.length} rule${edited.length === 1 ? "" : "s"} changed by hand`) : ""}`,
-      `  rules         ${modeLine}  ${s.dim("doorman rules")}`,
-      `  holds         ${confirmSentence(policy.confirm)}`,
-      `  packs         ${packs.length === 0 ? "none" : packs.join(", ")}  ${s.dim(`${packs.length} of ${RULE_PACKS.length} · doorman packs`)}`,
-      `  custom rules  ${own.length}  ${s.dim("doorman custom-rules")}`,
-      `  exceptions    ${ignore.length}${expired > 0 ? s.dim(` (${expired} expired)`) : ""}  ${s.dim("doorman exceptions")}`,
+      ctx.ui.section("Policy"),
+      ...ctx.ui.kv([
+        ["level", `${level}${edited.length > 0 ? s.warn(`  ${edited.length} rule${edited.length === 1 ? "" : "s"} changed by hand`) : ""}`],
+        ["rules", `${modeLine}  ${s.dim("doorman rules")}`],
+        ["holds", confirmSentence(policy.confirm)],
+        ["packs", `${packs.length === 0 ? "none" : packs.join(", ")}  ${s.dim(`${packs.length} of ${RULE_PACKS.length} · doorman packs`)}`],
+        ["custom rules", `${own.length}  ${s.dim("doorman custom-rules")}`],
+        ["exceptions", `${ignore.length}${expired > 0 ? s.dim(` (${expired} expired)`) : ""}  ${s.dim("doorman exceptions")}`],
+      ]),
     ];
     return { data, text };
   },
@@ -111,14 +117,17 @@ const policyLevel: CliCommand = {
   name: "policy level",
   summary: "Move the security level (resets every rule's mode to the level's)",
   usage: `<${SECURITY_LEVELS.join("|")}>`,
-  details: [
-    "A level rewrites the mode of every rule, like the level control in the app.",
-    "Custom rules, packs, exceptions and hold settings are kept.",
+  notes: [
+    "A level rewrites the mode of every rule, like the level control in the app. Custom rules, packs, exceptions and hold settings are kept.",
+  ],
+  examples: [
+    ["doorman policy level protective", "the default level"],
+    ["doorman policy level locked_down", "the strictest level"],
   ],
   positionals: { min: 1, max: 1 },
   async run(ctx, args) {
     const level = args.positionals[0] as SecurityLevel;
-    if (!SECURITY_LEVELS.includes(level)) throw new CliError(`Unknown level "${level}". Pick one of: ${SECURITY_LEVELS.join(", ")}.`, 2);
+    if (!SECURITY_LEVELS.includes(level)) throw new CliError(`Unknown level "${level}".`, 2, `Pick one of: ${SECURITY_LEVELS.join(", ")}.`);
     let overwritten = 0;
     const { syncError } = savePrefs(ctx, "Change the security level", (prefs) => {
       // Counted before the write, against the level being left (radar:security-level).
@@ -128,7 +137,7 @@ const policyLevel: CliCommand = {
     return {
       data: { level, overwritten, ...(syncError ? { sync_error: syncError } : {}) },
       text: [
-        `Level: ${level}.${overwritten > 0 ? ` ${overwritten} rule${overwritten === 1 ? "" : "s"} changed by hand went back to the level's mode.` : ""}`,
+        `${ctx.ui.mark("ok", `Level: ${level}.`)}${overwritten > 0 ? ` ${overwritten} rule${overwritten === 1 ? "" : "s"} changed by hand went back to the level's mode.` : ""}`,
         ...syncNote(ctx, syncError),
       ],
     };
@@ -139,13 +148,18 @@ const policyConfirm: CliCommand = {
   name: "policy confirm",
   summary: "How held calls wait for an answer (hold window, timeout, nobody to ask)",
   usage: "[--hold <s>] [--on-timeout deny|ask] [--unattended deny|continue] [--interactive on|off] [--armed-escalation on|off]",
-  details: [
-    `--hold <s>               how long a call waits for you (${HOLD_SECONDS_MIN}-${HOLD_SECONDS_MAX} seconds)`,
-    "--on-timeout deny|ask    what an unanswered hold becomes: denied, or the agent's own prompt",
-    "--unattended deny|continue  with nobody to ask (no app, no `doorman watch`), for agents without their own prompt: deny, or continue with a warning",
-    "--interactive on|off     hold ask-mode calls at all",
-    "--armed-escalation on|off  hold the next risky call after an injected instruction arrived in the session",
-    "Without options it prints the current settings.",
+  flags: [
+    ["--hold <s>", `how long a call waits for you (${HOLD_SECONDS_MIN}-${HOLD_SECONDS_MAX} seconds)`],
+    ["--on-timeout deny|ask", "what an unanswered hold becomes: denied, or the agent's own prompt"],
+    ["--unattended deny|continue", "with nobody to ask (no app, no `doorman watch`), agents without their own prompt: deny, or continue with a warning"],
+    ["--interactive on|off", "hold ask-mode calls at all"],
+    ["--armed-escalation on|off", "hold the next risky call after an injected instruction arrived in the session"],
+  ],
+  notes: ["Without options it prints the current settings."],
+  examples: [
+    ["doorman policy confirm", "the current hold settings"],
+    ["doorman policy confirm --hold 60 --on-timeout deny", "wait a minute, then deny"],
+    ["doorman policy confirm --unattended deny", "deny held calls when nobody can answer"],
   ],
   options: {
     hold: { type: "string" },
@@ -189,16 +203,17 @@ const policyConfirm: CliCommand = {
     }
     const policy = ctx.policy();
     const confirm = policy.confirm;
-    const s = ctx.style;
     return {
       data: { confirm, armed_escalation: policy.armed_escalation !== false, ...(syncError ? { sync_error: syncError } : {}) },
       text: [
-        s.bold("Holds"),
-        `  interactive        ${confirm.interactive ? "on" : "off"}`,
-        `  hold window        ${confirm.hold_seconds}s`,
-        `  on timeout         ${confirm.on_timeout === "deny" ? "deny" : "ask (the agent's own prompt)"}`,
-        `  nobody to ask      ${confirm.unattended === "deny" ? "deny" : "continue with a warning"}`,
-        `  armed escalation   ${policy.armed_escalation !== false ? "on" : "off"}`,
+        ctx.ui.section("Holds"),
+        ...ctx.ui.kv([
+          ["interactive", confirm.interactive ? "on" : "off"],
+          ["hold window", `${confirm.hold_seconds}s`],
+          ["on timeout", confirm.on_timeout === "deny" ? "deny" : "ask (the agent's own prompt)"],
+          ["nobody to ask", confirm.unattended === "deny" ? "deny" : "continue with a warning"],
+          ["armed escalation", policy.armed_escalation !== false ? "on" : "off"],
+        ]),
         ...syncNote(ctx, syncError),
       ],
     };

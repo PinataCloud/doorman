@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { doormanDataDir } from "../lib/data-dir.js";
 import { maybeStartModelDownload } from "./auto-download.js";
 import type { CliCommand } from "./command.js";
 import { COMMANDS } from "./commands/index.js";
 import { CliContext, defaultEnvironment, type CliEnvironment } from "./context.js";
-import { CliError, table } from "./output.js";
+import { commandHelp, homeHelp, suggest, usageLine } from "./help.js";
+import { CliError } from "./output.js";
+import { termInfo, toAscii, Ui } from "./ui.js";
 import { startUpdateCheck } from "./update-check.js";
 
 const DEFAULT_PACKAGE = "@pinata/doorman";
@@ -40,25 +43,39 @@ export function matchCommand(argv: readonly string[], commands: readonly CliComm
   return best;
 }
 
-function helpText(commands: readonly CliCommand[], version: string): string[] {
-  return [
-    `doorman ${version}: watch what your AI coding agents read and run, from the terminal.`,
-    "",
-    "Usage: doorman <command> [options]",
-    "",
-    ...table(
-      ["Command", "What it does"],
-      commands.map((c) => [c.name, c.summary]),
-    ).map((l) => `  ${l}`),
-    "",
-    "Run `doorman <command> --help` for its arguments and options.",
-    "Global options: --json (machine-readable output), --verbose (log to stderr), --help, --version",
-    "Data: the desktop app's own directory (DOORMAN_APPDATA_DIR overrides), so the CLI and the app share one store.",
-  ];
+/**
+ * A failure on stderr. Plain: `doorman: <message> <hint>` on one line
+ * (scripts match on it). On a terminal: a red mark, the message with its
+ * commands coloured, and the hint under it, dim.
+ */
+function errorText(ui: Ui, message: string, hint: string | undefined, who: string): string {
+  if (!ui.decorate) return `${who}: ${message}${hint ? ` ${hint}` : ""}\n`;
+  const [first = "", ...rest] = message.split("\n");
+  const lines = [ui.mark("error", ui.style.bold(ui.prose(first))), ...rest.map((l) => `  ${ui.prose(l)}`)];
+  if (hint) lines.push(`  ${ui.style.dim(ui.prose(hint))}`);
+  return `${lines.join("\n")}\n`;
 }
 
-function commandHelp(command: CliCommand): string[] {
-  return [`Usage: doorman ${command.name}${command.usage ? ` ${command.usage}` : ""}`, "", command.summary, ...(command.details ? ["", ...command.details] : [])];
+/** `doorman help <words>` for a family or command, or why there is none. */
+function helpFor(words: readonly string[]): string | undefined {
+  const match = matchCommand(words, COMMANDS);
+  if (match && match.rest.length === 0) return match.command.name;
+  const family = words[0];
+  if (words.length === 1 && family && COMMANDS.some((c) => c.name.startsWith(`${family} `))) return family;
+  return match?.command.name;
+}
+
+/** The stream, with each string written to it in its ASCII form (`toAscii`). */
+function asciiStream<T extends NodeJS.WritableStream>(stream: T): T {
+  // write's overloads (chunk, encoding?, callback?) pass through as given.
+  const write = stream.write.bind(stream) as (...args: unknown[]) => boolean;
+  return new Proxy(stream, {
+    get(target, property) {
+      if (property === "write") return (chunk: unknown, ...rest: unknown[]) => write(typeof chunk === "string" ? toAscii(chunk) : chunk, ...rest);
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 /** Runs one invocation and returns the exit code; never throws. */
@@ -69,25 +86,56 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   const verbose = argv.includes("--verbose");
   const help = argv.includes("--help") || argv.includes("-h");
   const args = argv.filter((a) => a !== "--json" && a !== "--verbose" && a !== "--help" && a !== "-h");
-  const env = io ?? { ...defaultEnvironment(version, verbose), packageName: pkg.name };
+  const given = io ?? { ...defaultEnvironment(version, verbose), packageName: pkg.name };
+  // In ASCII mode every character Doorman writes is ASCII (ui.ts), except
+  // --json on stdout, which is machine output and stays as it is.
+  const asciiOut = !json && termInfo(given.stdout, given.env, given.platform).ascii;
+  const asciiErr = termInfo(given.stderr, given.env, given.platform).ascii;
+  const env: CliEnvironment = {
+    ...given,
+    stdout: asciiOut ? asciiStream(given.stdout) : given.stdout,
+    stderr: asciiErr ? asciiStream(given.stderr) : given.stderr,
+  };
   const write = (lines: readonly string[]) => env.stdout.write(lines.length > 0 ? `${lines.join("\n")}\n` : "");
+  const outUi = Ui.for(env.stdout, env.env, env.platform);
+  const errUi = Ui.for(env.stderr, env.env, env.platform);
+  const fail = (message: string, hint: string | undefined, code: number, who = "doorman") => {
+    env.stderr.write(errorText(errUi, message, hint, who));
+    return code;
+  };
 
   if (args[0] === "--version" || args[0] === "-v") {
     write([version]);
     return 0;
   }
-  if (args.length === 0 || args[0] === "help") {
-    const target = args[0] === "help" ? matchCommand(args.slice(1), COMMANDS) : undefined;
-    write(target ? commandHelp(target.command) : helpText(COMMANDS, version));
+  if (args.length === 0 || (args[0] === "help" && args.length === 1)) {
+    // A first run: nothing written yet, not even by the app.
+    const firstRun = !existsSync(join(doormanDataDir(env.env, env.platform, env.home), "store"));
+    write(homeHelp(outUi, COMMANDS, version, firstRun));
+    return 0;
+  }
+  if (args[0] === "help") {
+    const name = helpFor(args.slice(1));
+    if (!name) {
+      const guess = suggest(args.slice(1).join(" "), COMMANDS);
+      return fail(`No command "${args.slice(1).join(" ")}".`, guess ? `Did you mean \`doorman help ${guess}\`? \`doorman help\` lists every command.` : "`doorman help` lists every command.", 2);
+    }
+    write(commandHelp(outUi, name, COMMANDS));
     return 0;
   }
   const match = matchCommand(args, COMMANDS);
+  const family = !match && COMMANDS.some((c) => c.name.startsWith(`${args[0]} `)) ? args[0] : undefined;
+  if (!match && family && (help || args.length === 1)) {
+    // `doorman export`: a family with no bare command lists its commands.
+    write(commandHelp(outUi, family, COMMANDS));
+    return help ? 0 : 2;
+  }
   if (!match) {
-    env.stderr.write(`doorman: unknown command "${args.join(" ")}". Run \`doorman help\`.\n`);
-    return 2;
+    const guess = suggest(args[0] ?? "", COMMANDS) ?? suggest(args.join(" "), COMMANDS);
+    return fail(`Unknown command "${args.join(" ")}".`, guess ? `Did you mean \`doorman ${guess}\`? \`doorman help\` lists every command.` : "`doorman help` lists every command.", 2);
   }
   if (help) {
-    write(commandHelp(match.command));
+    write(commandHelp(outUi, match.command.name, COMMANDS));
     return 0;
   }
   const { command, rest } = match;
@@ -95,16 +143,18 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   try {
     parsed = parseArgs({ args: [...rest], options: command.options ?? {}, allowPositionals: true, strict: true });
   } catch (err) {
-    env.stderr.write(`doorman ${command.name}: ${err instanceof Error ? err.message : String(err)}\n`);
-    return 2;
+    // node's own message, without its advice on positionals that start with "-".
+    const why = err instanceof Error ? err.message.replace(/\. To specify a positional argument[\s\S]*$/, ".") : String(err);
+    return fail(why, `Usage: ${usageLine(command)}. \`doorman ${command.name} --help\` lists its options.`, 2, `doorman ${command.name}`);
   }
   const range = command.positionals ?? { min: 0, max: 0 };
   if (parsed.positionals.length < range.min || parsed.positionals.length > range.max) {
-    env.stderr.write(`doorman ${command.name}: expected ${commandHelp(command)[0]!.replace("Usage: ", "")}\n`);
-    return 2;
+    const what = parsed.positionals.length < range.min ? "Missing an argument." : "Too many arguments.";
+    return fail(what, `Usage: ${usageLine(command)}. \`doorman ${command.name} --help\` has examples.`, 2, `doorman ${command.name}`);
   }
   const ctx = new CliContext(env);
   ctx.commandName = command.name;
+  ctx.json = json;
   // Whether a newer CLI is out: asked at most once a day, while the command
   // runs, and said on stderr after its output (update-check.ts).
   const updateNotice = command.name === "update" ? undefined : startUpdateCheck(ctx, env.packageName ?? DEFAULT_PACKAGE, env.version);
@@ -114,23 +164,22 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     // detached child while this command runs (auto-download.ts).
     maybeStartModelDownload(ctx, command.name);
     const result = await command.run(ctx, { values: parsed.values, positionals: parsed.positionals });
-    if (json) env.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+    if (json) given.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
+    else if (result.raw) given.stdout.write(result.text.length > 0 ? `${result.text.join("\n")}\n` : "");
     else write(result.text);
     code = result.exitCode ?? 0;
   } catch (err) {
     if (err instanceof CliError) {
-      env.stderr.write(`doorman: ${err.message}\n`);
-      code = err.exitCode;
+      code = fail(err.message, err.hint, err.exitCode);
     } else {
-      env.stderr.write(`doorman: ${err instanceof Error ? (verbose ? (err.stack ?? err.message) : err.message) : String(err)}\n`);
-      code = 1;
+      code = fail(err instanceof Error ? (verbose ? (err.stack ?? err.message) : err.message) : String(err), undefined, 1);
     }
   } finally {
     // An app waiting to start goes ahead the moment this command is done.
     ctx.releaseWrite();
   }
   const notice = await updateNotice?.();
-  if (notice) env.stderr.write(`\n${ctx.style.yellow(notice)}\n`);
+  if (notice) env.stderr.write(`\n${errUi.decorate ? errUi.mark("info", errUi.prose(notice)) : notice}\n`);
   return code;
 }
 

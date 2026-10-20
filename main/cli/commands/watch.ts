@@ -7,10 +7,12 @@ import { appOwner } from "../../lib/data-owner.js";
 import { HOSTS } from "../../guard/hosts/index.js";
 import { approvalContextNote, approvalPolicyChange, approvalSummary } from "../../lib/approvals.js";
 import { localDetectorLabel } from "../../lib/findings.js";
+import { compactBanner } from "../art.js";
 import { dockerSandbox, processLabel } from "../docker-sandbox.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
-import { CliError } from "../output.js";
+import { CliError, visibleLength } from "../output.js";
+import { plural, type KvRow, type Tone, type Ui } from "../ui.js";
 import { tilde } from "./policy.js";
 
 /** One held call as `watch` saw it end. */
@@ -62,6 +64,118 @@ function timeoutOutcome(request: ApprovalRequest): string {
   return agent.nativeAsk ? `then ${agent.name} asks` : `then ${agent.name} warns and continues`;
 }
 
+const canScope = (request: ApprovalRequest) => !!request.cwd && request.source !== "mcp-gateway";
+const canSilence = (request: ApprovalRequest) => request.source !== "mcp-gateway";
+
+/** The keys a held call takes, and what each does. */
+function answerKeys(request: ApprovalRequest): [key: string, what: string][] {
+  return [
+    ["d", "deny"],
+    ["a", "allow once"],
+    ...(canScope(request) ? [["p", "allow for this project (30 days)"] as [string, string]] : []),
+    ...(canSilence(request) ? [["s", "allow and stop asking"] as [string, string]] : []),
+  ];
+}
+
+const secondsLeft = (request: ApprovalRequest, nowMs: number) => Math.max(0, Math.round((Date.parse(request.at) + request.hold_seconds * 1000 - nowMs) / 1000));
+
+/** Items laid out left to right, `gap` apart, onto as many lines as `width` needs. */
+function pack(items: readonly string[], width: number, gap = 3): string[] {
+  const lines: string[] = [];
+  let line = "";
+  for (const item of items) {
+    if (line && visibleLength(line) + gap + visibleLength(item) > width) {
+      lines.push(line);
+      line = item;
+    } else line = line ? `${line}${" ".repeat(gap)}${item}` : item;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/**
+ * One held call as a card on stderr: what it wants to do, who asked, why it
+ * was held, then the keys. On a decorating terminal the card hangs off a
+ * frame in the left margin (no right edge, so wide characters in a command
+ * can't break it) and long lines wrap inside it. Plain: the same facts as
+ * flat lines.
+ */
+export function heldCard(ui: Ui, request: ApprovalRequest, options: { waiting: number; home: string; auto: boolean }): string[] {
+  const s = ui.style;
+  const agent = agentOf(request);
+  const note = approvalContextNote(request);
+  const meta = [agent.name, request.session_id ? `session ${request.session_id.slice(0, 8)}` : "", options.waiting > 1 ? `${options.waiting} waiting` : ""].filter(Boolean);
+  const facts: KvRow[] = [
+    !!request.reason && ["why", request.reason],
+    !!request.cwd && ["directory", tilde(request.cwd, options.home)],
+    !!request.server && ["server", `${request.server}${request.tool_class ? ` · ${request.tool_class}` : ""}`],
+    !!note && ["note", note],
+  ];
+  const preview = request.preview === "" ? [] : request.preview.split("\n").slice(0, 12).map((l) => (l.length > 200 ? `${l.slice(0, 200)}...` : l));
+  const allowNote =
+    request.source === "mcp-gateway"
+      ? `Allowing forwards the call to ${request.server ?? "the server"} as the agent sent it.`
+      : `Allowing does not auto-approve: ${agent.name} still applies its own approval flow.`;
+  const keys = answerKeys(request);
+
+  if (!ui.decorate) {
+    return [
+      "",
+      `Held  ${approvalSummary(request)}  ${meta.join(" · ")}`,
+      ...ui.kv(facts, { keyWidth: "directory".length }),
+      ...(preview.length > 0 ? ["  about to run:", ...preview.map((l) => `    | ${l}`)] : []),
+      ...(options.auto ? [] : [`  ${keys.map(([k, w]) => `[${k}] ${w}`).join("  ")}`, `  ${allowNote}`]),
+    ];
+  }
+
+  const f = ui.glyphs.frame;
+  const width = ui.width ?? 80;
+  const side = s.warn(f.side);
+  const inner = Math.max(20, width - 3);
+  const card = [
+    "",
+    ui.truncate(`${s.warn(`${f.top}${f.line}`)} ${s.warn(s.bold(`${ui.glyphs.tone.held} Held`))}  ${s.bold(approvalSummary(request))}`, width),
+    `${side}  ${ui.list(meta.map(s.dim))}`,
+  ];
+  const factLines = ui.kv(facts, { indent: 0, width: inner });
+  if (factLines.length > 0) card.push(side, ...factLines.map((l) => `${side}  ${l}`));
+  if (preview.length > 0) {
+    card.push(side, `${side}  ${s.dim("about to run")}`);
+    // At spaces and path separators; a piece with neither runs past the edge whole.
+    for (const line of preview) for (const part of ui.wrap(line, inner - 2)) card.push(`${side}    ${part}`);
+  }
+  if (options.auto) return [...card, `${s.warn(`${f.bottom}${f.line}`)} ${s.dim("denying every held call (--auto deny)")}`];
+  const keyLines = pack(
+    keys.map(([k, w]) => `${s.pink(s.bold(`[${k}]`))} ${w}`),
+    width - 3,
+  );
+  return [
+    ...card,
+    side,
+    `${s.warn(`${f.bottom}${f.line}`)} ${keyLines[0]}`,
+    ...keyLines.slice(1).map((l) => `   ${l}`),
+    ...ui.wrap(allowNote, width - 3).map((l) => `   ${s.dim(l)}`),
+  ];
+}
+
+/**
+ * The line under the card, redrawn every second on a terminal: the time left
+ * (as a bar on a decorating terminal), what happens then, and the keys.
+ * Never wider than the terminal, so the redraw can't wrap.
+ */
+export function promptLine(ui: Ui, request: ApprovalRequest, nowMs: number): string {
+  const s = ui.style;
+  const left = secondsLeft(request, nowMs);
+  const answer = `Answer ${answerKeys(request).map(([k]) => k).join(", ")}: `;
+  if (!ui.decorate) return ui.fit(`  ${left}s left, ${timeoutOutcome(request)}. ${answer}`);
+  const fraction = request.hold_seconds > 0 ? left / request.hold_seconds : 0;
+  const tone: Tone = fraction > 0.3 ? "info" : fraction > 0.15 ? "warn" : "error";
+  const text = `${s.bold(`${left}s`)} left, ${timeoutOutcome(request)}.  ${s.bold(answer)}`;
+  const width = ui.width ?? 80;
+  const cells = Math.min(20, width - 3 - visibleLength(text) - 2);
+  return ui.truncate(cells >= 6 ? `   ${ui.bar(fraction, cells, tone)}  ${text}` : `   ${text}`, width - 1);
+}
+
 /**
  * Be the approver while the app is closed: hold the guard heartbeat (so the
  * guard holds `ask` calls at all), watch the pending directory, ingest the
@@ -79,7 +193,8 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
   // Watch writes the store (the guard's spool) and the policy for as long as
   // it runs: it needs the data to itself, not a copy.
   ctx.requireWritable("Answer held calls");
-  const s = ctx.style;
+  const ui = ctx.errUi;
+  const s = ui.style;
   const out = ctx.io.stderr;
   const tty = "isTTY" in out && out.isTTY === true;
   const auto = options.auto;
@@ -118,11 +233,9 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     clearPrompt();
     out.write(`${line}\n`);
   };
-  const secondsLeft = (request: ApprovalRequest) =>
-    Math.max(0, Math.round((Date.parse(request.at) + request.hold_seconds * 1000 - Date.now()) / 1000));
   const renderPrompt = () => {
     if (!current || auto || stopped) return;
-    const line = `  ${s.bold(`${secondsLeft(current)}s`)} left, ${timeoutOutcome(current)}. Answer d, a${canScope(current) ? ", p" : ""}${canSilence(current) ? ", s" : ""}: `;
+    const line = promptLine(ui, current, Date.now());
     if (tty) {
       out.write(`${CLEAR_LINE}${line}`);
       promptShown = true;
@@ -130,40 +243,13 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
       out.write(`${line}\n`);
     }
   };
-  const canScope = (request: ApprovalRequest) => !!request.cwd && request.source !== "mcp-gateway";
-  const canSilence = (request: ApprovalRequest) => request.source !== "mcp-gateway";
 
   const handle = await ctx.openEngine({ scan: false });
   const log = (message: string) => ctx.log(message);
   const heartbeat = new GuardHeartbeat({ userDataDir: ctx.dataDir, version: `cli-${ctx.io.version}`, log });
 
   const present = (request: ApprovalRequest, waiting: number) => {
-    const agent = agentOf(request);
-    const note = approvalContextNote(request);
-    const preview = request.preview.split("\n").slice(0, 12).map((l) => `    | ${l.length > 200 ? `${l.slice(0, 200)}...` : l}`);
-    say("");
-    say(
-      `${s.yellow(s.bold("Held"))}  ${s.bold(approvalSummary(request))}  ${s.dim(
-        [agent.name, request.session_id ? `session ${request.session_id.slice(0, 8)}` : "", waiting > 1 ? `${waiting} waiting` : ""].filter(Boolean).join(" · "),
-      )}`,
-    );
-    if (request.reason) say(`  why        ${request.reason}`);
-    if (request.cwd) say(`  directory  ${tilde(request.cwd, ctx.io.home)}`);
-    if (request.server) say(`  server     ${request.server}${request.tool_class ? ` · ${request.tool_class}` : ""}`);
-    if (note) say(`  note       ${note}`);
-    if (preview.length > 0 && request.preview !== "") say("  about to run:");
-    for (const line of request.preview === "" ? [] : preview) say(s.dim(line));
-    if (auto) return;
-    say(
-      `  [d] deny  [a] allow once${canScope(request) ? "  [p] allow for this project (30 days)" : ""}${canSilence(request) ? "  [s] allow and stop asking" : ""}`,
-    );
-    say(
-      s.dim(
-        request.source === "mcp-gateway"
-          ? `  Allowing forwards the call to ${request.server ?? "the server"} as the agent sent it.`
-          : `  Allowing does not auto-approve: ${agent.name} still applies its own approval flow.`,
-      ),
-    );
+    for (const line of heldCard(ui, request, { waiting, home: ctx.io.home, auto: auto !== undefined })) say(line);
   };
 
   const decide = (request: ApprovalRequest, verdict: ApprovalVerdict, choice: { silence: boolean; scope: "project" | undefined }, via: "terminal" | "editor") => {
@@ -185,15 +271,16 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     });
     const prefix = via === "editor" ? "Answered in the editor: " : "";
     let words: string;
-    if (!ok) words = s.yellow("Too late: the call had stopped waiting.");
-    else if (verdict === "deny") words = s.red(auto ? "Denied (--auto deny)." : "Denied.");
+    let tone: Tone;
+    if (!ok) [tone, words] = ["warn", s.warn("Too late: the call had stopped waiting.")];
+    else if (verdict === "deny") [tone, words] = ["error", s.error(auto ? "Denied (--auto deny)." : "Denied.")];
     else {
-      words = s.green("Allowed.");
-      if (change.scoped > 0) words += ` Not held again under ${tilde(request.cwd ?? "", ctx.io.home)} for 30 days (${change.scoped} exception${change.scoped === 1 ? "" : "s"}).`;
+      [tone, words] = ["ok", s.ok("Allowed.")];
+      if (change.scoped > 0) words += ` Not held again under ${tilde(request.cwd ?? "", ctx.io.home)} for 30 days (${plural(change.scoped, "exception")}).`;
       if (change.silenced.length > 0) words += ` ${change.silenced.map((d) => localDetectorLabel(d)).join(", ")} now only observed.`;
     }
-    say(`  ${prefix}${words}`);
-    if (syncError) say(s.yellow(`  Saved, but the guard was not updated: ${syncError}`));
+    say(ui.decorate ? `   ${ui.mark(tone, `${prefix}${words}`)}` : `  ${prefix}${words}`);
+    if (syncError) say(ui.decorate ? `   ${ui.mark("warn", s.warn(`Saved, but the guard was not updated: ${syncError}`))}` : `  Saved, but the guard was not updated: ${syncError}`);
     decisions.push({
       id: request.id,
       at: new Date(ctx.io.now()).toISOString(),
@@ -215,8 +302,9 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     if (bell && fresh.length > 0) out.write(BELL);
     if (current && !list.some((r) => r.id === current!.id)) {
       if (!answered.has(current.id)) {
-        const expired = secondsLeft(current) === 0;
-        say(`  ${s.dim(expired ? `No answer in time: ${timeoutOutcome(current).replace(/^then /, "")}.` : "No longer waiting: the agent stopped the call.")}`);
+        const expired = secondsLeft(current, Date.now()) === 0;
+        const words = expired ? `No answer in time: ${timeoutOutcome(current).replace(/^then /, "")}.` : "No longer waiting: the agent stopped the call.";
+        say(ui.decorate ? `   ${ui.mark("off", s.dim(words))}` : `  ${words}`);
         decisions.push({ id: current.id, at: new Date(ctx.io.now()).toISOString(), summary: approvalSummary(current), outcome: "expired" });
         answered.add(current.id);
       }
@@ -340,14 +428,18 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     retitle(0);
   }
   const who = sandbox ? `in sandbox ${sandbox.name}` : `as Doorman ${s.dim(`(pid ${process.pid})`)}`;
-  say(`${s.bold("Answering held calls")} ${who}. ${auto ? "Denying every held call (--auto deny)." : "Ctrl-C to stop."}`);
-  if (!guardHostStates(ctx.io.env).some((h) => h.installed)) say(s.yellow("The guard is not installed, so nothing will be held. Run `doorman guard install`."));
-  if (!policy.confirm.interactive) say(s.yellow("Holds are off, so nothing will be held. Turn them on with `doorman policy confirm --interactive on`."));
+  const warn = (text: string) => (ui.decorate ? ui.mark("warn", ui.prose(text)) : text);
+  for (const line of compactBanner(ui, "doorman watch", `v${ctx.io.version}${sandbox ? `, sandbox ${sandbox.name}` : ""}`)) say(line);
+  if (ui.decorate) say("");
+  const intro = `${s.bold("Answering held calls")} ${who}. ${auto ? "Denying every held call (--auto deny)." : "Ctrl-C to stop."}`;
+  say(ui.decorate ? ui.mark("ok", intro) : intro);
+  if (!guardHostStates(ctx.io.env).some((h) => h.installed)) say(warn("The guard is not installed, so nothing will be held. Run `doorman guard install`."));
+  if (!policy.confirm.interactive) say(warn("Holds are off, so nothing will be held. Turn them on with `doorman policy confirm --interactive on`."));
 
   tick = setInterval(() => {
     const beat = readHeartbeat();
     if (beat?.fresh && beat.pid !== undefined && beat.pid !== process.pid) {
-      say(s.yellow(`Doorman${processLabel(ctx.io.env, beat.pid)} took over answering held calls. Stopping.`));
+      say(warn(`Doorman${processLabel(ctx.io.env, beat.pid)} took over answering held calls. Stopping.`));
       stop("taken over by Doorman", true);
       return;
     }
@@ -355,7 +447,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     // before it writes anything, then answers held calls itself.
     const starting = appOwner(ctx.dataDir);
     if (starting) {
-      say(s.yellow(`Doorman${processLabel(ctx.io.env, starting.pid)} is starting and takes over answering held calls. Stopping.`));
+      say(warn(`Doorman${processLabel(ctx.io.env, starting.pid)} is starting and takes over answering held calls. Stopping.`));
       stop("taken over by Doorman", true);
       return;
     }
@@ -370,25 +462,28 @@ export const watchCommand: CliCommand = {
   name: "watch",
   summary: "Answer held tool calls in this terminal while the app is closed",
   usage: "[--auto deny]",
-  details: [
+  flags: [["--auto deny", "answer every held call with deny, without asking (for scripts; needs no terminal)"]],
+  notes: [
     "Keeps the guard's heartbeat so ask-mode calls are held, then asks you about each one:",
     "  d  deny",
     "  a  allow once (the agent still applies its own approval flow)",
-    "  p  allow, and don't hold it again in this project for 30 days (adds an exception)",
+    "  p  allow, and don't hold it in this project for 30 days (adds an exception)",
     "  s  allow, and stop asking: the rule drops to observe",
-    "Unanswered calls end as the hold settings say (doorman policy confirm).",
-    "Needs a terminal. --auto deny answers every held call with deny instead (for scripts).",
-    "Refuses to start while the app (or another watch) answers; stops when the app starts.",
-    "Prompts go to stderr; stdout gets the summary when it stops.",
-    "On a terminal it rings once per held call and shows waiting calls in the window title (DOORMAN_NO_BELL=1 turns the bell off).",
+    "Unanswered calls end as the hold settings say (`doorman policy confirm`). Refuses to start while the app (or another watch) answers, and stops when the app starts.",
+    "Prompts go to stderr; stdout gets the summary when it stops. On a terminal it rings once per held call and shows waiting calls in the window title (DOORMAN_NO_BELL=1 turns the bell off).",
+  ],
+  examples: [
+    ["doorman watch", "answer held calls here"],
+    ["sbx exec -it <sandbox> doorman watch", "answer a Docker Sandbox's held calls from your computer"],
+    ["doorman watch --auto deny", "deny every held call (CI, scripts)"],
   ],
   options: { auto: { type: "string" } },
   async run(ctx, args) {
     const autoArg = args.values.auto;
-    if (autoArg !== undefined && autoArg !== "deny") throw new CliError("--auto only takes deny.", 2);
+    if (autoArg !== undefined && autoArg !== "deny") throw new CliError("--auto only takes deny.", 2, "`doorman watch --auto deny` denies every held call.");
     const auto = autoArg === "deny" ? ("deny" as const) : undefined;
     if (!auto && ctx.io.stdin.isTTY !== true) {
-      throw new CliError("watch asks you in the terminal, and stdin is not one. Run it in a terminal, or pass --auto deny to deny every held call.");
+      throw new CliError("watch asks you in the terminal, and stdin is not one.", 1, "Run it in a terminal, or pass --auto deny to deny every held call.");
     }
     const session = await startWatch(ctx, { auto });
     const onSignal = () => session.stop("interrupted");
@@ -404,13 +499,34 @@ export const watchCommand: CliCommand = {
       process.off("SIGTERM", onSignal);
       process.off("SIGHUP", onSignal);
     }
-    const counts = { allowed: 0, denied: 0, expired: 0, too_late: 0 };
-    for (const d of summary.decisions) counts[d.outcome] += 1;
-    return {
-      data: summary,
-      text: [
-        `Stopped${summary.takeover ? ": Doorman took over" : ""}. ${counts.allowed} allowed, ${counts.denied} denied, ${counts.expired + counts.too_late} unanswered.`,
-      ],
-    };
+    return { data: summary, text: watchSummaryText(ctx.ui, summary) };
   },
 };
+
+/** What `watch` prints on stdout when it stops: the counts, then each call it saw end. */
+export function watchSummaryText(ui: Ui, summary: WatchSummary): string[] {
+  const s = ui.style;
+  const counts = { allowed: 0, denied: 0, expired: 0, too_late: 0 };
+  for (const d of summary.decisions) counts[d.outcome] += 1;
+  const unanswered = counts.expired + counts.too_late;
+  const stopped = `Stopped${summary.takeover ? ": Doorman took over" : ""}.`;
+  const head = ui.decorate
+    ? `${s.bold(stopped)}  ${ui.list([ui.mark("ok", `${counts.allowed} allowed`), ui.mark("error", `${counts.denied} denied`), ui.mark("off", `${unanswered} unanswered`)])}`
+    : `${stopped} ${counts.allowed} allowed, ${counts.denied} denied, ${unanswered} unanswered.`;
+  // On a terminal the summary follows the cards: a blank line between.
+  const gap = ui.decorate ? [""] : [];
+  if (summary.decisions.length === 0) return [...gap, head];
+  const word = { allowed: "allowed", denied: "denied", expired: "unanswered", too_late: "too late" } as const;
+  const tone = { allowed: "ok", denied: "error", expired: "off", too_late: "warn" } as const;
+  const rows = summary.decisions.map((d) => {
+    const extra = [d.via === "editor" ? "in the editor" : "", d.scoped ? "project exception" : "", d.silenced ? "rule now observed" : ""].filter(Boolean).join(", ");
+    return [ui.mark(tone[d.outcome], ui.paint(tone[d.outcome], word[d.outcome])), clock(d.at), `${d.summary}${extra ? s.dim(`  (${extra})`) : ""}`];
+  });
+  return [...gap, head, "", ...ui.table(["Outcome", "At", "Call"], rows, { indent: 2, keep: [0, 1] })];
+}
+
+/** ISO time → local "14:02:11". */
+function clock(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toTimeString().slice(0, 8);
+}
