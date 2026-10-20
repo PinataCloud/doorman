@@ -16,7 +16,8 @@ describe("the whole-machine subject", () => {
     expect(main).toMatch(/r\.kind === "machine" \|\| r\.kind === undefined/);
     expect(main).toContain("return machineContext({");
     expect(main).toContain("coverage: {");
-    expect(read("../main/ai-assistant.ts")).toContain("AI TOOLS ON THIS MAC");
+    expect(main).toContain("platform: snapshot.platform,");
+    expect(read("../main/ai-assistant.ts")).toContain("AI TOOLS ON THIS COMPUTER");
   });
 
   it("the drawer has starter questions for it", () => {

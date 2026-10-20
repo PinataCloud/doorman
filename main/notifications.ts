@@ -94,11 +94,15 @@ export function onNotificationsRefused(cb: () => void): void {
   onRefused = cb;
 }
 
+/** The error a 4 s silence records. Shown in Settings beside the delivery
+ * problem, on every platform, so it names no one OS's notification list. */
+const NO_ANSWER = "no response from the system's notification service";
+
 function trackDelivery(notification: Notification): Notification {
   notification.on("failed", (_event, error) => {
     if (!deliveryRefused) {
       deliveryRefused = true;
-      console.warn(`[doorman] macOS refused a notification: ${String(error)}`);
+      console.warn(`[doorman] the OS refused a notification: ${String(error)}`);
       onRefused?.();
     }
   });
@@ -195,7 +199,7 @@ export function testNotification(
     // macOS answers within milliseconds; a silence this long is recorded as
     // undetermined — not a refusal — because the OS permission prompt or a busy
     // Notification Center can also hold the answer.
-    setTimeout(() => done({ ok: false, error: "no response from Notification Center", undetermined: true }), 4000);
+    setTimeout(() => done({ ok: false, error: NO_ANSWER, undetermined: true }), 4000);
   });
 }
 
@@ -235,7 +239,7 @@ export function notifyStartupDigest(
     notification.on("failed", (_event, error) => done({ ok: false, error: String(error) }));
     notification.on("click", handlers.onClick);
     notification.show();
-    setTimeout(() => done({ ok: false, error: "no response from Notification Center", undetermined: true }), 4000);
+    setTimeout(() => done({ ok: false, error: NO_ANSWER, undetermined: true }), 4000);
   });
 }
 
@@ -308,7 +312,7 @@ export function probeNotificationDelivery(
       done({ ok: false, error: String(error) });
     });
     notification.show();
-    setTimeout(() => done({ ok: false, error: "no response from Notification Center", undetermined: true }), 4000);
+    setTimeout(() => done({ ok: false, error: NO_ANSWER, undetermined: true }), 4000);
   });
 }
 

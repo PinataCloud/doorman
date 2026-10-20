@@ -102,7 +102,7 @@ function guardHostsSentence(hosts, installed, platform) {
   let s = guarded.length > 0
     ? "Guarding " + listOf(guarded) + " — flagged tool calls are checked before they run."
     : "On, but not wired into any agent yet.";
-  if (missing.length > 0) s += " " + listOf(missing) + (missing.length === 1 ? " is" : " are") + " on this computer but not wired in yet.";
+  if (missing.length > 0) s += " " + listOf(missing) + (missing.length === 1 ? " is" : " are") + " on " + thisMachine(platform) + " but not wired in yet.";
   if (guarded.includes("Codex")) s += " Restart Codex and trust the hook in /hooks after the first install.";
   return s;
 }
@@ -146,14 +146,6 @@ function unattendedSentence(hosts, confirm) {
   return "Off: with this app closed, " + who + " warns and continues — the call runs.";
 }
 
-/** "this Mac" / "this PC" / "this computer" — the machine, named the way its
- * owner would. */
-function thisMachine(platform) {
-  if (platform === "macos") return "this Mac";
-  if (platform === "windows") return "this PC";
-  return "this computer";
-}
-
 /**
  * The guard strip with no supported agent on this machine: an empty state, not
  * an error. Before, the switch stayed live, and flipping it printed every
@@ -178,7 +170,6 @@ function NoAgentsLine({ hosts, platform }) {
   );
 }
 
-const PLATFORM_LABELS = { macos: "macOS", windows: "Windows", linux: "Linux" };
 /** Where a person turns notifications back on, per OS. Named because "check
  * your system settings" is the sentence that makes someone go looking. */
 const NOTIFY_SETTINGS_LABELS = {
@@ -186,7 +177,6 @@ const NOTIFY_SETTINGS_LABELS = {
   windows: "Open Notification settings",
   linux: "Open Notification settings",
 };
-const REVEAL_LABELS = { macos: "Reveal in Finder", windows: "Show in Explorer", linux: "Open folder" };
 
 /* Doorman's own MCP server (main/mcp-install.ts): one switch that registers it
    with the MCP-capable agents on this Mac — Copilot in VS Code and the Copilot
@@ -218,12 +208,12 @@ function McpAnswersCard({ state }) {
           <div className="t">Answer agents over MCP</div>
           <div className="d">
             Registers Doorman as an MCP server for Copilot in VS Code and the Copilot CLI. An agent
-            can check a tool call before it runs, ask why one was held or blocked, and read what this
-            Mac has metered. Read-only and local; the host still asks you before its agent uses a
+            can check a tool call before it runs, ask why one was held or blocked, and read what{" "}
+            {thisMachine(state.platform)} has metered. Read-only and local; the host still asks you before its agent uses a
             new server.
           </div>
           {on && hosts.length ? <div className="d">{hosts.map(hostLine).join(" · ")}</div> : null}
-          {on && !hosts.length ? <div className="d">No MCP-capable agent found on this computer yet.</div> : null}
+          {on && !hosts.length ? <div className="d">No MCP-capable agent found on {thisMachine(state.platform)} yet.</div> : null}
         </div>
         <Switch ariaLabel="Answer agents over MCP" on={on} onChange={(v) => setPref({ mcp_answers: v })} />
       </div>
@@ -259,8 +249,8 @@ function SettingsScreen({ state, onGoRules, checkNonce }) {
           <div className="what">
             <div className="t">Held tool calls</div>
             <div className="d">
-              Banner for a held call. The floating prompt appears either way — this only silences
-              the duplicate in Notification Center.
+              Banner for a held call. The floating prompt appears either way. This only silences
+              the duplicate in {notificationListName(state.platform)}.
             </div>
           </div>
           <Switch
@@ -366,6 +356,10 @@ function SettingsScreen({ state, onGoRules, checkNonce }) {
         </div>
       </Card>
 
+      {/* The number beside the tray icon is Tray.setTitle, which only macOS
+          draws: on Windows and Linux the setting would change nothing, so the
+          card is not shown there. */}
+      {state.platform === "macos" ? (
       <Card title="Menu bar">
         <div className="setting">
           <div className="what">
@@ -383,6 +377,7 @@ function SettingsScreen({ state, onGoRules, checkNonce }) {
           </select>
         </div>
       </Card>
+      ) : null}
 
       <Card title="Privacy & data">
         <div className="setting">
@@ -752,8 +747,8 @@ function RulesCard({ state, onGoRules }) {
               <div className="t">AI-delivered protection</div>
               <div className="d">
                 Doorman's on-device threat model re-reads every tool result a rule flags for injected instructions, so
-                plain text is stood down and real injections are held with more confidence. It runs inside this app on this
-                Mac — nothing it reads leaves the machine. {status}
+                plain text is stood down and real injections are held with more confidence. It runs inside this app on{" "}
+                {thisMachine(state.platform)}, and nothing it reads leaves the machine. {status}
                 {envSet ? " Set by the environment (DOORMAN_INJECTION_CLASSIFIER) — the switch is read-only." : ""}
               </div>
               {modelNote ? (

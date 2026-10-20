@@ -7,6 +7,38 @@
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
+/* Platform wording. `state.platform` is main's HostPlatform ("macos",
+   "windows" or "linux"; main/state.ts). Every sentence that names the
+   machine, the OS, its notification list or its file browser goes through
+   these, so a Mac word can't reach a Linux or Windows window as a literal.
+   Unknown or missing platform reads as the neutral wording, never the Mac's. */
+const PLATFORM_LABELS = { macos: "macOS", windows: "Windows", linux: "Linux" };
+
+/** "this Mac" on macOS, "this computer" everywhere else. */
+function thisMachine(platform) {
+  return platform === "macos" ? "this Mac" : "this computer";
+}
+
+/** Where a banner that was not clicked ends up. */
+function notificationListName(platform) {
+  if (platform === "macos") return "Notification Center";
+  if (platform === "windows") return "the Windows notification center";
+  return "the desktop's notification list";
+}
+
+/** The button that opens a folder in the OS file browser. */
+const REVEAL_LABELS = { macos: "Reveal in Finder", windows: "Show in Explorer", linux: "Open folder" };
+/** The same as a trailing link ("show in Finder →"). */
+const REVEAL_LINKS = { macos: "show in Finder", windows: "show in Explorer", linux: "show in folder" };
+/** What encrypts the evidence vault: Electron's safeStorage, which is the
+ * Keychain on macOS, DPAPI (the signed-in account) on Windows and the
+ * desktop keyring on Linux. */
+function keyStoreName(platform) {
+  if (platform === "macos") return "your Keychain";
+  if (platform === "windows") return "your Windows account";
+  return "your system keyring";
+}
+
 /* The app's icon set — one stroke treatment, so the same concept always
    looks the same. */
 const ICONS = {
@@ -258,7 +290,7 @@ const SEC_DETECTORS = {
   },
   secret_manager_read: {
     label: "Secret manager read",
-    blurb: "A secret was fetched out of a vault — 1Password, AWS Secrets Manager, the Keychain.",
+    blurb: "A secret was fetched out of a vault: 1Password, AWS Secrets Manager, the macOS Keychain, the system keyring.",
   },
   agent_config_tamper: {
     label: "Agent configuration write",
@@ -288,7 +320,7 @@ const SEC_DETECTORS = {
   },
   security_control_disabled: {
     label: "Security control switched off",
-    blurb: "Something switched off one of this Mac's own defences — Gatekeeper, SIP, the firewall.",
+    blurb: "Something switched off one of the computer's own defences, like the firewall, Gatekeeper, SIP or SELinux.",
   },
   wallet_key_material: {
     label: "Wallet key material",

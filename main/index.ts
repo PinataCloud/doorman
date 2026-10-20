@@ -885,6 +885,7 @@ function resolveAiContext(ref: unknown): AiContext | undefined {
         })),
       },
       app_version: snapshot.appVersion,
+      platform: snapshot.platform,
     });
   }
   return undefined;

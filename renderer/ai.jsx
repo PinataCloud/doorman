@@ -55,11 +55,18 @@ const AI_KIND_LABELS = {
   spend: "Usage",
   posture: "Security posture",
   notifications: "Notifications",
-  machine: "This Mac",
+  machine: "This computer",
   integration: "Integrate a tool",
   trace: "Secret trace",
-  general: "This Mac",
+  general: "This computer",
 };
+
+/** The kind's label, with the machine subjects named the way the OS's owner
+ * would: "This Mac" on macOS, "This computer" elsewhere. */
+function aiKindLabel(kind, platform) {
+  if ((kind === "machine" || kind === "general") && platform === "macos") return "This Mac";
+  return AI_KIND_LABELS[kind] || "Subject";
+}
 
 /**
  * The masked context as the drawer shows it: each non-empty line of the
@@ -218,8 +225,8 @@ function aiActionsFor(kind, ref, state, nav) {
  * and not instructions (tool output can hold planted ones), and the finding
  * is a rule's verdict, not a certainty. Pure; tested in ai-drawer.test.ts.
  */
-function aiAgentPrompt({ kind, title, question, context }) {
-  const label = AI_KIND_LABELS[kind] || "Subject";
+function aiAgentPrompt({ kind, title, question, context, platform }) {
+  const label = aiKindLabel(kind, platform);
   const subject = title && title !== label ? label + " · " + title : label;
   const q = String(question || "").trim() || (AI_SUGGESTIONS[kind] || AI_SUGGESTIONS.general)[0];
   const evidence = String(context || "").trim() || "(no evidence was available for this subject)";
@@ -264,7 +271,8 @@ function AiDrawer({ state, onOpenSession }) {
       setActDone(null);
       setSubject((s) => {
         const same = s && JSON.stringify(s.contextRef) === key;
-        return { contextRef: ref, title: d.title || "This Mac", seed: d.seedQuestion || "", question: d.seedQuestion || "", context: same ? s.context : null, missing: false };
+        // No title of its own: the head shows the kind's label alone.
+        return { contextRef: ref, title: d.title || "", seed: d.seedQuestion || "", question: d.seedQuestion || "", context: same ? s.context : null, missing: false };
       });
       // The masked context, from main's own builder. Read-only: nothing is
       // sent. A stale answer (the subject changed meanwhile) is dropped.
@@ -286,11 +294,11 @@ function AiDrawer({ state, onOpenSession }) {
   if (!open || !subject) return null;
 
   const kind = subject.contextRef && subject.contextRef.kind ? subject.contextRef.kind : "general";
-  const kindLabel = AI_KIND_LABELS[kind] || "Subject";
+  const kindLabel = aiKindLabel(kind, state && state.platform);
   const suggestions = AI_SUGGESTIONS[kind] || AI_SUGGESTIONS.general;
   const question = subject.question || suggestions[0];
   const title = (subject.context && subject.context.title) || subject.title;
-  const prompt = subject.context ? aiAgentPrompt({ kind, title, question, context: subject.context.text }) : "";
+  const prompt = subject.context ? aiAgentPrompt({ kind, title, question, context: subject.context.text, platform: state && state.platform }) : "";
   const facts = subject.context ? aiContextFacts(subject.context.text).filter((f) => f.kind !== "section").length : 0;
 
   const copyPrompt = () => {

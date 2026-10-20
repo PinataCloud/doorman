@@ -401,6 +401,9 @@ export interface MachineFacts {
     }[];
   };
   app_version: string;
+  /** The snapshot's HostPlatform ("macos", "windows", "linux"): the subject is
+   * "This Mac" on macOS and "This computer" elsewhere. */
+  platform: string;
 }
 
 /**
@@ -430,7 +433,7 @@ function coverageLines(coverage: MachineFacts["coverage"]): string[] {
   const absent = coverage.tools.length - installed.length;
   return [
     "",
-    `AI TOOLS ON THIS MAC (${installed.length} found of ${coverage.tools.length} looked for)`,
+    `AI TOOLS ON THIS COMPUTER (${installed.length} found of ${coverage.tools.length} looked for)`,
     ...(installed.length > 0 ? installed.map(say) : ["  (none found)"]),
     `  ${absent} other catalogued tool(s) were looked for and not found on this computer.`,
   ];
@@ -461,7 +464,7 @@ export function machineContext(facts: MachineFacts): AiContext {
     ...(recent.length > 0 ? recent : ["  (no sessions yet)"]),
     ...coverageLines(facts.coverage),
   ];
-  return { kind: "machine", title: "This Mac", text: lines.join("\n") };
+  return { kind: "machine", title: facts.platform === "macos" ? "This Mac" : "This computer", text: lines.join("\n") };
 }
 
 /**

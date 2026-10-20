@@ -611,7 +611,7 @@ function NoticeStack({ notices, onNav, state, onGoSettings }) {
                   <AiAskButton
                     compact
                     contextRef={{ kind: "notifications" }}
-                    question="This Mac isn't delivering Doorman's notifications. Walk me through turning them back on, and tell me what else could be silencing them."
+                    question={(PLATFORM_LABELS[state && state.platform] || "This computer") + " isn't delivering Doorman's notifications. Walk me through turning them back on, and tell me what else could be silencing them."}
                     title="Notifications"
                   />
                 </React.Fragment>
