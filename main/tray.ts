@@ -142,11 +142,17 @@ export class TrayController {
         if (this.latest) this.render(this.latest);
       });
     }
-    // BOTH buttons open the menu, which is what every other menu-bar app on
-    // this Mac does. Left-click used to jump straight to the window, so the
-    // glanceable numbers and Rescan were reachable only by right-clicking —
+    // macOS: BOTH buttons open the menu, which is what every other menu-bar
+    // app on this Mac does. Left-click used to jump straight to the window, so
+    // the glanceable numbers and Rescan were reachable only by right-clicking —
     // a menu most people never discovered was there. "Open Doorman" is the
     // menu's first action, so the window is still one click further.
+    //
+    // Windows: left-click opens the window, right-click the menu. Electron
+    // fires "click" on the button PRESS; for an icon in the taskbar's
+    // overflow flyout (where Windows 11 puts every new tray icon) the flyout
+    // closes on the RELEASE and takes the just-popped menu with it, so a
+    // left-click menu showed nothing there. The window opens either way.
     //
     // Linux has no popUpContextMenu (a silent no-op there) and no right-click
     // event: the StatusNotifierItem host draws the menu itself from the one
@@ -154,11 +160,12 @@ export class TrayController {
     // exported an EMPTY dbusmenu and no click did anything. "click" there is
     // the SNI Activate call — a double click in GNOME's AppIndicator
     // extension, a left click on KDE — so it opens the window.
-    if (this.platform === "linux") {
-      this.tray.on("click", () => this.callbacks.onOpen());
-    } else {
+    if (this.platform === "darwin") {
       this.tray.on("click", () => this.showMenu());
       this.tray.on("right-click", () => this.showMenu());
+    } else {
+      this.tray.on("click", () => this.callbacks.onOpen());
+      if (this.platform === "win32") this.tray.on("right-click", () => this.showMenu());
     }
     this.render(state);
   }

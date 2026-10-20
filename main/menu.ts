@@ -56,6 +56,9 @@ export function revealDataFolderLabel(platform: NodeJS.Platform = process.platfo
 }
 
 export function installAppMenu(callbacks: MenuCallbacks, view: MenuView = { guardOn: false }): void {
+  // hide/hideOthers/unhide/zoom/front are macOS roles: on Windows and Linux
+  // (the Alt menu bar) they were rows that did nothing when clicked.
+  const mac = process.platform === "darwin";
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: app.getName(),
@@ -92,10 +95,14 @@ export function installAppMenu(callbacks: MenuCallbacks, view: MenuView = { guar
           click: () => callbacks.onSettings(),
         },
         { type: "separator" },
-        { role: "hide", label: "Hide Doorman" },
-        { role: "hideOthers" },
-        { role: "unhide" },
-        { type: "separator" },
+        ...(mac
+          ? ([
+              { role: "hide", label: "Hide Doorman" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+            ] as Electron.MenuItemConstructorOptions[])
+          : []),
         { role: "quit", label: "Quit Doorman" },
       ],
     },
@@ -148,7 +155,7 @@ export function installAppMenu(callbacks: MenuCallbacks, view: MenuView = { guar
     },
     {
       label: "Window",
-      submenu: [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }],
+      submenu: mac ? [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }] : [{ role: "minimize" }],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

@@ -249,9 +249,16 @@ function App() {
         {/* The content pane's own right/bottom padding is dead cream space —
             same background, nothing ever renders there — but it wasn't
             draggable. Pinned to the window edges (not the scroll position),
-            so it stays put across every screen. */}
-        <div className="drag-edge drag-edge-r" />
-        <div className="drag-edge drag-edge-b" />
+            so it stays put across every screen. macOS only: elsewhere the
+            window keeps its native frame, Electron ignores app-region there,
+            and the strips were plain layers over the edges — on Windows they
+            ate every click on the content pane's scrollbar. */}
+        {state.platform === "macos" ? (
+          <React.Fragment>
+            <div className="drag-edge drag-edge-r" />
+            <div className="drag-edge drag-edge-b" />
+          </React.Fragment>
+        ) : null}
         {SECURITY_SCREENS.includes(screen) ? (
           <SecurityHeader
             screen={screen}

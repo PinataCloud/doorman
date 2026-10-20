@@ -378,7 +378,7 @@ function LedgerScreen({
         <div className="list">
           <div className="items">
             {showLive ? (
-              <LiveGroup rows={liveRows} counts={state.live.counts} selected={selected} onSelect={setSelected} />
+              <LiveGroup rows={liveRows} counts={state.live.counts} selected={selected} onSelect={setSelected} canFocus={state.platform === "macos"} />
             ) : null}
             {visible.length === 0 ? (
               showLive ? null : (
@@ -716,6 +716,7 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
         <LiveHandoff
           row={((state.live && state.live.sessions) || []).find((r) => r.session_id === sessionId) || null}
           summary={summary}
+          canFocus={state.platform === "macos"}
         />
       </div>
 
@@ -1176,7 +1177,10 @@ function liveWhere(row) {
   return "";
 }
 
-function LiveGroup({ rows, counts, selected, onSelect }) {
+/* `canFocus`: bringing a live session's terminal forward goes through Apple
+   Events (main/lib/terminal-handoff.ts) — macOS only, so elsewhere there is
+   no Open button that could only ever fail. */
+function LiveGroup({ rows, counts, selected, onSelect, canFocus }) {
   const line = counts
     ? [
         counts.held > 0 ? counts.held + " held" : null,
@@ -1196,15 +1200,16 @@ function LiveGroup({ rows, counts, selected, onSelect }) {
           row={row}
           selected={!!row.session_id && row.session_id === selected}
           onSelect={onSelect}
+          canFocus={canFocus}
         />
       ))}
     </React.Fragment>
   );
 }
 
-function LiveRow({ row, selected, onSelect }) {
+function LiveRow({ row, selected, onSelect, canFocus }) {
   const [note, setNote] = useState(null);
-  const canOpen = !!row.pid && !row.headless;
+  const canOpen = canFocus && !!row.pid && !row.headless;
   const open = (e) => {
     e.stopPropagation();
     setNote("…");
@@ -1269,7 +1274,7 @@ function LiveRow({ row, selected, onSelect }) {
    `resume_command` at snapshot time — no guess for hosts without one). The
    outcome is said in a line, with the command to paste when the app could
    not open a window itself (Automation denied, an unknown terminal). */
-function LiveHandoff({ row, summary }) {
+function LiveHandoff({ row, summary, canFocus }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -1296,7 +1301,7 @@ function LiveHandoff({ row, summary }) {
           {liveWhere(row) ? " · " + liveWhere(row) : ""}
         </span>
       ) : null}
-      {live && !row.headless ? (
+      {live && canFocus && !row.headless ? (
         <button type="button" className="btn sm" onClick={go} disabled={busy} title="Bring this session's terminal forward">
           {busy ? "Opening…" : "Open terminal"}
         </button>

@@ -471,12 +471,30 @@ describe("terminal hand-off text", () => {
   });
 
   it("plans a resume in the person's terminal when it is scriptable, else Terminal; none for hosts without a command", () => {
-    const plan = planResume("claude-code", "abc", "/w", "iTerm2")!;
+    const plan = planResume("claude-code", "abc", "/w", "iTerm2", "darwin")!;
     expect(plan.kind).toBe("open");
     expect(plan.script).toContain('tell application "iTerm2"');
     expect(plan.line).toBe("cd '/w' && claude --resume abc");
-    expect(planResume("codex", "abc", undefined, "ghostty")!.script).toContain('tell application "Terminal"');
-    expect(planResume("gemini-cli", "abc", "/w", undefined)).toBeUndefined();
+    expect(planResume("codex", "abc", undefined, "ghostty", "darwin")!.script).toContain('tell application "Terminal"');
+    expect(planResume("gemini-cli", "abc", "/w", undefined, "darwin")).toBeUndefined();
+  });
+
+  it("resumes off macOS without Apple Events: a cmd console on Windows, the person's shell in a terminal on Linux", () => {
+    // Continue used to spawn /usr/bin/osascript everywhere: ENOENT on every
+    // Windows and Linux click.
+    const win = planResume("claude-code", "abc", "C:\\Users\\w\\my repo", undefined, "win32")!;
+    expect(win.script).toBeUndefined();
+    expect(win.launches).toEqual([
+      { file: "cmd.exe", args: ["/d", "/c", "start", '""', "cmd.exe", "/k", "claude --resume abc"], verbatim: true },
+    ]);
+    expect(win.line).toBe('cd /d "C:\\Users\\w\\my repo" && claude --resume abc');
+    const linux = planResume("codex", "abc", "/w", undefined, "linux", "/usr/bin/fish")!;
+    expect(linux.script).toBeUndefined();
+    expect(linux.launches![0]).toEqual({
+      file: "xdg-terminal-exec",
+      args: ["/usr/bin/fish", "-ic", "codex resume abc; exec '/usr/bin/fish' -i"],
+    });
+    expect(linux.line).toBe("cd '/w' && codex resume abc");
   });
 
   it("maps names to scriptable terminals and $TERM_PROGRAM to open -a targets", () => {

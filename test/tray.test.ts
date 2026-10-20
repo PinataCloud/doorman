@@ -255,6 +255,22 @@ describe("the tray on Linux", () => {
   });
 });
 
+describe("the tray on Windows", () => {
+  // "click" fires on the button press; from the overflow flyout (where
+  // Windows 11 puts new tray icons) the flyout closes on the release and
+  // takes a menu popped on the press with it.
+  it("opens the window on a left click and the menu on a right click", () => {
+    const { c, calls } = controller("win32");
+    c.create(snapshot());
+    const tray = FakeTray.instances[0]!;
+    tray.click("click");
+    expect(calls).toEqual(["open"]);
+    expect(popped).toHaveLength(0);
+    tray.click("right-click");
+    expect(popped).toHaveLength(1);
+    expect(tray.contextMenu).toBeNull();
+  });
+});
 
 describe("the guard on the menu-bar mark", () => {
   const guardState = (over: Record<string, unknown>) =>

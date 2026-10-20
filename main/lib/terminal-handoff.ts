@@ -9,11 +9,13 @@
  *     other terminal app is activated as a whole;
  *   · an ENDED session is resumed in a NEW window with the host's own resume
  *     command (`claude --resume <id>`, `codex resume <id>`, …), in the
- *     session's own working directory.
+ *     session's own working directory — Terminal/iTerm2 over Apple Events on
+ *     macOS, a `cmd` console on Windows, a terminal emulator on Linux.
  *
- * Pure builders here (AppleScript and shell text, fully quoted); the runner
- * in main spawns `osascript`/`open`. Only the hosts whose resume command is
- * documented get one — a guess would start the wrong thing in a shell.
+ * Pure builders here (AppleScript, shell text and argv, fully quoted); the
+ * runner in main spawns `osascript`/`open` or the window's program. Only the
+ * hosts whose resume command is documented get one — a guess would start the
+ * wrong thing in a shell. Focusing a live tab is macOS-only.
  */
 
 import type { TurnSource } from "./turns.js";
@@ -130,8 +132,55 @@ export interface HandoffPlan {
   script?: string;
   /** App to `open -a` (activate fallback). */
   app?: string;
+  /** Off macOS: programs to spawn in the session's cwd, tried in order until
+   * one starts (open). */
+  launches?: WindowLaunch[];
   /** The shell line a person could paste, shown beside the outcome. */
   line?: string;
+}
+
+/** A new terminal window off macOS: the program, its arguments, and whether
+ * they reach Windows' command line exactly as written (`start`'s quoted
+ * empty title would otherwise be re-quoted). */
+export interface WindowLaunch {
+  file: string;
+  args: string[];
+  verbatim?: boolean;
+}
+
+/** `cd /d "<cwd>" && <command>` — cmd's syntax, the shell the Windows window
+ * runs. A Windows path cannot contain a double quote. */
+export function cmdLine(cwd: string | undefined, command: string): string {
+  return cwd ? `cd /d "${cwd}" && ${command}` : command;
+}
+
+/** Windows: `start` gives the command its own console window (or the
+ * person's default terminal app); `cmd /k` keeps it open once the agent
+ * exits, as the macOS window does. The command is resumeCommand's: fixed
+ * words and a SAFE_ID, nothing for cmd to interpret. */
+export function windowsLaunch(command: string): WindowLaunch {
+  return { file: "cmd.exe", args: ["/d", "/c", "start", '""', "cmd.exe", "/k", command], verbatim: true };
+}
+
+/** Linux: there is no one terminal, so the standard launcher first, then the
+ * emulators desktops ship, each told to run a command its own way. The
+ * command runs in the person's interactive shell (their PATH — where npm or
+ * a version manager put the agent), which stays once the agent exits. */
+export function linuxLaunches(command: string, shell: string): WindowLaunch[] {
+  const run = [shell, "-ic", `${command}; exec ${shellQuote(shell)} -i`];
+  return [
+    { file: "xdg-terminal-exec", args: run },
+    { file: "ptyxis", args: ["--new-window", "--", ...run] },
+    { file: "gnome-terminal", args: ["--", ...run] },
+    { file: "konsole", args: ["-e", ...run] },
+    { file: "xfce4-terminal", args: ["-x", ...run] },
+    { file: "kitty", args: run },
+    { file: "alacritty", args: ["-e", ...run] },
+    { file: "wezterm", args: ["start", "--", ...run] },
+    { file: "foot", args: run },
+    { file: "x-terminal-emulator", args: ["-e", ...run] },
+    { file: "xterm", args: ["-e", ...run] },
+  ];
 }
 
 /** What to do for a live row: select its tab when the app is scriptable and
@@ -169,18 +218,23 @@ export function termProgramApp(program: string | undefined): string | undefined 
   return undefined;
 }
 
-/** What to do for an ended session: a new window in the preferred app (the
- * one the person's live agents run in, else Terminal) running the host's
- * resume command in the session's cwd. */
+/** What to do for an ended session: a new window running the host's resume
+ * command in the session's cwd. On macOS, in the preferred app (the one the
+ * person's live agents run in, else Terminal) over Apple Events; elsewhere a
+ * spawned console or terminal emulator. */
 export function planResume(
   source: TurnSource,
   sessionId: string,
   cwd: string | undefined,
   preferredApp: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+  shell = "/bin/sh",
 ): HandoffPlan | undefined {
   const command = resumeCommand(source, sessionId);
   if (!command) return undefined;
+  if (platform === "win32") return { kind: "open", launches: [windowsLaunch(command)], line: cmdLine(cwd, command) };
   const line = shellLine(cwd, command);
+  if (platform !== "darwin") return { kind: "open", launches: linuxLaunches(command, shell), line };
   const app = scriptableTerminal(preferredApp) ?? "Terminal";
   return { kind: "open", script: newWindowScript(app, line), line };
 }

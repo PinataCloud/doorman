@@ -17,7 +17,7 @@
  */
 
 import { BrowserWindow, app, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, safeStorage, shell } from "electron";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, sep } from "node:path";
@@ -1510,6 +1510,26 @@ function openApp(name: string): Promise<boolean> {
   });
 }
 
+/** Start a detached program; false when it is not there to start (ENOENT).
+ * Executor form, like runOsascript/openApp: tsconfig's lib is ES2022, which
+ * does not type Promise.withResolvers. */
+function launch(file: string, args: string[], options: { cwd?: string; verbatim?: boolean } = {}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(file, args, {
+      cwd: options.cwd && existsSync(options.cwd) ? options.cwd : homedir(),
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      windowsVerbatimArguments: !!options.verbatim,
+    });
+    child.once("error", () => resolve(false));
+    child.once("spawn", () => {
+      child.unref();
+      resolve(true);
+    });
+  });
+}
+
 /** macOS Automation consent is per (app, target): the first focus attempt
  * prompts, a refusal comes back as error -1743. Say so instead of failing
  * silently, and still bring the app forward. */
@@ -1557,8 +1577,17 @@ async function openLiveSession(ref: { session_id?: string; pid?: number }): Prom
   const summary = state.sessions.find((s) => s.id === sessionId) ?? engine.sessions().find((s) => s.id === sessionId);
   if (!summary) return { ok: false, error: "Session not found." };
   const preferred = preferredTerminalApp(state.live);
-  const plan = planResume(summary.source, summary.id, summary.cwd, preferred);
-  if (!plan || !plan.script) return { ok: false, error: `No resume command is known for ${summary.source}.` };
+  const plan = planResume(summary.source, summary.id, summary.cwd, preferred, process.platform, process.env.SHELL || "/bin/sh");
+  if (!plan) return { ok: false, error: `No resume command is known for ${summary.source}.` };
+  if (plan.launches) {
+    for (const l of plan.launches) {
+      if (await launch(l.file, l.args, { cwd: summary.cwd, verbatim: l.verbatim })) {
+        return { ok: true, how: "opened", ...(plan.line ? { line: plan.line } : {}) };
+      }
+    }
+    return { ok: false, error: "No terminal app found to open a window in.", ...(plan.line ? { line: plan.line } : {}) };
+  }
+  if (!plan.script) return { ok: false, error: `No resume command is known for ${summary.source}.` };
   const res = await runOsascript(plan.script);
   if (res.ok) return { ok: true, how: "opened", ...(plan.line ? { line: plan.line } : {}) };
   return {
@@ -2194,11 +2223,27 @@ function registerIpc(): void {
   ipcMain.handle("notifications:open-settings", async () => {
     // The deep link straight to this app's row in System Settings →
     // Notifications. macOS only ever ASKS once (and never at all for a build it
-    // won't authorize), so "go and switch it on" has to be one click.
-    await shell.openExternal(
-      "x-apple.systempreferences:com.apple.preference.notifications?id=cloud.pinata.doorman",
-    );
-    return { ok: true };
+    // won't authorize), so "go and switch it on" has to be one click. Windows
+    // has its own Settings page; Linux has whichever desktop's panel is here.
+    // The Apple link used to be opened everywhere: a dead button off macOS.
+    if (process.platform === "darwin") {
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.notifications?id=cloud.pinata.doorman",
+      );
+      return { ok: true };
+    }
+    if (process.platform === "win32") {
+      await shell.openExternal("ms-settings:notifications");
+      return { ok: true };
+    }
+    for (const [file, args] of [
+      ["gnome-control-center", ["notifications"]],
+      ["systemsettings", ["kcm_notifications"]],
+      ["xfce4-notifyd-config", []],
+    ] as const) {
+      if (await launch(file, [...args])) return { ok: true };
+    }
+    return { ok: false };
   });
   ipcMain.handle("approvals:resolve", (_e, id: unknown, verdict: unknown, rawOptions: unknown) => {
     if (typeof id !== "string" || (verdict !== "allow" && verdict !== "deny")) return { ok: false };
