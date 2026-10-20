@@ -193,6 +193,8 @@ turn a feature on, and every write keeps a `.bak` beside the file:
 - `assets/`: fonts, vendored React/Babel and the brand mark. These are
   served to the renderer under `_asset/` and shipped as `Resources/assets`.
 - `vscode-extension/`: the editor companion.
+- `integrations/sbx-kit/`: the Docker Sandboxes kit that adds the Doorman CLI
+  and its guard to a `claude` sandbox (`sbx run claude --kit …`).
 - `schemas/`: committed JSON Schemas for the detection and ledger exports,
   generated from `main/lib/schema-files.ts` by
   `npx vite-node scripts/make-detection-schema.ts`. A test fails when they
