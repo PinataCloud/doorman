@@ -73,6 +73,10 @@ interface AttemptRecord {
   error?: string;
   /** When `error` was a server's HTTP answer: which status, from which host. */
   refused?: DownloadRefusal;
+  /** This run of failures has been told to the person (the notice after a
+   * command, or `doorman model` / `doorman status` showing it): once per run,
+   * not once per retry. */
+  noticed?: boolean;
 }
 
 /** What `doorman model` and `doorman status` show about a model download. */
@@ -99,7 +103,32 @@ function readRecord(dataDir: string): AttemptRecord | undefined {
   const failures = "failures" in raw && typeof raw.failures === "number" ? raw.failures : 0;
   const error = "error" in raw && typeof raw.error === "string" ? raw.error : undefined;
   const refused = "refused" in raw ? readRefusal(raw.refused) : undefined;
-  return { last_attempt_at: raw.last_attempt_at, failures, ...(error !== undefined ? { error } : {}), ...(refused ? { refused } : {}) };
+  const noticed = "noticed" in raw && raw.noticed === true;
+  return {
+    last_attempt_at: raw.last_attempt_at,
+    failures,
+    ...(error !== undefined ? { error } : {}),
+    ...(refused ? { refused } : {}),
+    ...(noticed ? { noticed } : {}),
+  };
+}
+
+/** A failed run of background downloads nobody has been told about yet. */
+export function unnoticedDownloadFailure(ctx: CliContext): boolean {
+  const record = readRecord(ctx.dataDir);
+  return record !== undefined && record.failures > 0 && record.error !== undefined && record.noticed !== true;
+}
+
+/** Record that the current run of failures has been told. Best effort: a
+ * record that can't be rewritten only means the notice comes once more. */
+export function markDownloadFailureNoticed(ctx: CliContext): void {
+  const record = readRecord(ctx.dataDir);
+  if (!record || record.failures === 0 || record.noticed === true) return;
+  try {
+    writeFileSync(recordPath(ctx.dataDir), JSON.stringify({ ...record, noticed: true }));
+  } catch {
+    // the next command says it again
+  }
 }
 
 /** When the next attempt may start after `record`'s failures (0 = now). */
@@ -174,7 +203,9 @@ export function maybeStartModelDownload(ctx: CliContext, commandName: string): b
       const model = plan.selected === "doorman-1" && doormanSource(ctx.io.env) !== undefined ? "doorman-1" : "stock";
       const size = (manifestBytes(injectionModelManifest(model)) / 1e6).toFixed(0);
       const ui = ctx.errUi;
-      ctx.io.stderr.write(`${ui.mark("info", ui.style.dim(`Downloading the injection classifier (${model}, ${size} MB) in the background; \`doorman model\` shows its progress.`))}\n`);
+      ctx.io.stderr.write(
+        `${ui.mark("info", ui.style.dim(`Downloading the injection classifier (${model}, ${size} MB) in the background; until it's ready, injection findings come from the rules alone. \`doorman model\` shows its progress.`))}\n`,
+      );
     }
     ctx.log(`started the model download in the background (pid ${pid})`);
     return true;
@@ -213,7 +244,14 @@ export async function runAutoDownload(ctx: CliContext): Promise<{ ok: boolean; e
     const refused = [...failed.values()][0];
     const record: AttemptRecord = result.ok
       ? { last_attempt_at: started, failures: 0 }
-      : { last_attempt_at: started, failures: (previous?.failures ?? 0) + 1, error: result.error ?? "download failed", ...(refused ? { refused } : {}) };
+      : {
+          last_attempt_at: started,
+          failures: (previous?.failures ?? 0) + 1,
+          error: result.error ?? "download failed",
+          ...(refused ? { refused } : {}),
+          // A retry that fails again continues the run the person was already told about.
+          ...(previous && previous.failures > 0 && previous.noticed === true ? { noticed: true } : {}),
+        };
     writeFileSync(recordPath(ctx.dataDir), JSON.stringify(record));
     return result;
   } finally {

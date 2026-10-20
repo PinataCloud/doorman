@@ -15,7 +15,16 @@ import {
 } from "../../lib/model-assets.js";
 import { injectionModelSourceFromEnv } from "../../lib/policy-env.js";
 import { releaseLock, takeLock } from "../../lib/data-owner.js";
-import { activeDownload, autoDownloadView, downloadRefusal, runAutoDownload, type AutoDownloadView, type DownloadRefusal } from "../auto-download.js";
+import {
+  activeDownload,
+  autoDownloadView,
+  downloadRefusal,
+  markDownloadFailureNoticed,
+  runAutoDownload,
+  unnoticedDownloadFailure,
+  type AutoDownloadView,
+  type DownloadRefusal,
+} from "../auto-download.js";
 import { doormanSource, loadClassifier, modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
 import { dockerSandbox, MODEL_HOSTS, processLabel, sandboxAllowCommand, sandboxProxied } from "../docker-sandbox.js";
 import type { CliCommand, ParsedArgs } from "../command.js";
@@ -85,7 +94,39 @@ export function runningModel(
         : download.status === "failed"
           ? failedWhy(ctx, download)
           : "no model downloaded yet: doorman model download";
+  // Shown to a person (`doorman model`, `doorman status`): the notice after a
+  // command has nothing left to tell about this run of failures.
+  if (enabled && runtime && download.status === "failed" && !ctx.json) markDownloadFailureNoticed(ctx);
   return { active: null, download, text: `none  ${s.warn(`(${why})`)}` };
+}
+
+/**
+ * The line said once after a command when the background download failed and
+ * nobody has been told: the download is silent by design, so without this a
+ * proxy or an offline machine leaves the classifier missing for days unless
+ * someone runs `doorman model`. Once per run of failures (a failing retry
+ * doesn't say it again), and like the update notice only to a person: not
+ * under --json or CI, not when stderr isn't a terminal. Nothing while a model
+ * runs anyway (the stock fallback), while a retry is under way, or after
+ * `doorman model download`, which just reported its own outcome.
+ */
+export function modelDownloadFailureNotice(ctx: CliContext, commandName: string): string | undefined {
+  if (ctx.json || commandName.startsWith("model download") || !unnoticedDownloadFailure(ctx)) return undefined;
+  // The app (or `doorman watch`) downloads for itself; this CLI's record is not its story.
+  if (ctx.running()) return undefined;
+  const ci = ctx.io.env.CI;
+  if (ci !== undefined && ci !== "" && ci !== "0" && ci.toLowerCase() !== "false") return undefined;
+  if ((ctx.io.stderr as NodeJS.WritableStream & { isTTY?: boolean }).isTTY !== true) return undefined;
+  const policy = ctx.policy();
+  if (!(policy.injection_classifier ?? defaultInjectionClassifierConfig()).enabled || !runtimePresent(runtimeDir())) return undefined;
+  const plan = modelPlan(ctx.dataDir, policy, ctx.io.env);
+  if (modelStatus(modelsRoot(ctx.dataDir), injectionModelManifest(plan.effective)).present) return undefined;
+  const download = autoDownloadView(ctx);
+  if (download.status !== "failed") return undefined;
+  markDownloadFailureNoticed(ctx);
+  return sandboxBlock(ctx, download.refused)
+    ? `The injection classifier didn't download: ${failedWhy(ctx, download)}.`
+    : `The injection classifier didn't download (${download.error}). It retries on its own; \`doorman model download\` tries now.`;
 }
 
 /** Why the last background download failed, and what to do about it. */

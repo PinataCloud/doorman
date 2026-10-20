@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { doormanDataDir } from "../lib/data-dir.js";
 import { maybeStartModelDownload } from "./auto-download.js";
 import type { CliCommand } from "./command.js";
+import { modelDownloadFailureNotice } from "./commands/model.js";
 import { COMMANDS } from "./commands/index.js";
 import { CliContext, defaultEnvironment, type CliEnvironment } from "./context.js";
 import { commandHelp, homeHelp, suggest, usageLine } from "./help.js";
@@ -178,6 +179,14 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     // An app waiting to start goes ahead the moment this command is done.
     ctx.releaseWrite();
   }
+  // A background model download that failed and nobody was told (model.ts).
+  let failed: string | undefined;
+  try {
+    failed = modelDownloadFailureNotice(ctx, command.name);
+  } catch {
+    failed = undefined; // a notice never fails a command
+  }
+  if (failed) env.stderr.write(`\n${errUi.decorate ? errUi.mark("warn", errUi.prose(failed)) : failed}\n`);
   const notice = await updateNotice?.();
   if (notice) env.stderr.write(`\n${errUi.decorate ? errUi.mark("info", errUi.prose(notice)) : notice}\n`);
   return code;

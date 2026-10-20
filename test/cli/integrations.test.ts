@@ -409,6 +409,60 @@ describe("the classifier model downloads on its own", () => {
     expect(spawned).toHaveLength(1);
   });
 
+  describe("a background download that failed is said once, after the next command", () => {
+    /** stderr as a terminal, captured; the update check stays out of it. */
+    const terminal = () => {
+      const stderr = new PassThrough() as PassThrough & { isTTY?: boolean };
+      stderr.isTTY = true;
+      let text = "";
+      stderr.on("data", (c) => (text += String(c)));
+      ioExtra.stderr = stderr;
+      return () => text.replace(/\s+/g, " ");
+    };
+    const NOTICE = "The injection classifier didn't download (doorman-1: config.json: HTTP 503). It retries on its own; `doorman model download` tries now.";
+    const failOnce = async () => {
+      ioExtra.fetch = async () => ({ ok: false, status: 503, body: null });
+      expect((await dm(["model", "download", "--auto"])).code).toBe(1);
+    };
+    beforeEach(() => {
+      extraEnv = { DOORMAN_INJECTION_CLASSIFIER_SOURCE: "https://models.example/doorman-1/", DOORMAN_NO_UPDATE_CHECK: "1" };
+    });
+
+    it("in a terminal, once per run of failures: a failing retry doesn't repeat it", async () => {
+      await failOnce();
+      // Not a terminal: nothing said, nothing spent.
+      expect((await dm(["findings"])).err).not.toContain("didn't download");
+      const first = terminal();
+      await dm(["findings"]);
+      expect(first()).toContain(NOTICE);
+      const second = terminal();
+      await dm(["findings"]);
+      expect(second()).not.toContain("didn't download");
+      // The retry fails too: still the same run, still said once.
+      delete ioExtra.stderr;
+      await failOnce();
+      expect(record()).toMatchObject({ failures: 2 });
+      const third = terminal();
+      await dm(["findings"]);
+      expect(third()).not.toContain("didn't download");
+    });
+
+    it("not under --json or CI, and not again once `doorman model` showed it", async () => {
+      await failOnce();
+      const json = terminal();
+      await dm(["findings", "--json"]);
+      extraEnv = { ...extraEnv, CI: "true" };
+      await dm(["findings"]);
+      expect(json()).not.toContain("didn't download");
+      extraEnv = { ...extraEnv, CI: "" };
+      delete ioExtra.stderr;
+      expect((await dm(["model"])).out).toContain("the background download failed (doorman-1: config.json: HTTP 503)");
+      const after = terminal();
+      await dm(["findings"]);
+      expect(after()).not.toContain("didn't download");
+    });
+  });
+
   it.skipIf(!existsSync(SHOT_MODEL))(
     "the background child installs doorman-1, and the next command runs it",
     async () => {

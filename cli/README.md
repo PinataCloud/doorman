@@ -139,8 +139,11 @@ your machine: the daily update check above, and the injection-classifier
 model, from Hugging Face with every file pinned by sha256. Like the app, the
 CLI fetches the model on its own: the first command that finds it missing
 starts the download in the background (about 96 MB) and carries on, and
-`doorman model` shows its progress. Set `DOORMAN_INJECTION_CLASSIFIER=off` to
-turn the classifier, and with it the download, off.
+`doorman model` shows its progress. Until it lands, injection findings come
+from the rules alone. If the download fails, it retries on its own and the
+next command run in a terminal says so once, with the reason. Set
+`DOORMAN_INJECTION_CLASSIFIER=off` to turn the classifier, and with it the
+download, off.
 
 ## License
 
