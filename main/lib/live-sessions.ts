@@ -60,6 +60,8 @@ export interface LiveSession {
   tokens: number;
   turns: number;
   alerts: number;
+  /** Distinct open exposures touching this session. */
+  exposures: number;
   /** Set when the process is a headless run (no tty) — nothing to focus. */
   headless?: boolean;
   /** An approval is waiting for this session — its id, for the row to open. */
@@ -183,6 +185,7 @@ export function foldLiveSessions(input: LiveFoldInput): LiveState {
       tokens: summary ? summary.input_tokens + summary.output_tokens : 0,
       turns: summary?.turns ?? 0,
       alerts: summary?.alerts ?? 0,
+      exposures: summary?.exposures ?? 0,
       ...(proc && !proc.tty ? { headless: true } : {}),
       ...(approval ? { approval_id: approval.id } : {}),
     };

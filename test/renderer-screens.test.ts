@@ -264,7 +264,7 @@ function populatedState(): AppState {
     guard_installed: true,
     findings: rows.map((row) => annotateExposure(row, places)),
     summary: summarizeFindings(rows),
-    alerts_by_task: [{ task: "feature", alerts: 3, sessions: 2 }],
+    exposures_by_task: [{ task: "feature", exposures: 3, sessions: 2 }],
     rule_stats: ruleStats,
     integrity: {
       checked_at: ago(60_000),
@@ -448,8 +448,8 @@ function populatedState(): AppState {
   state.live = {
     at: ago(0),
     sessions: [
-      { session_id: "s1", source: "claude-code", title: "Fix the fold", state: "waiting", since: ago(200_000), join: "presence", pid: 4242, tty: "ttys003", terminal_app: "iTerm", term_program: "iTerm.app", cwd: "/Users/someone/repos/app", git_branch: "main", tokens: 1200, turns: 3, alerts: 0 },
-      { source: "codex", state: "working", since: ago(5_000), join: "none", pid: 4343, tty: "ttys004", terminal_app: "Terminal", cwd: "/Users/someone/repos/other", tokens: 0, turns: 0, alerts: 0 },
+      { session_id: "s1", source: "claude-code", title: "Fix the fold", state: "waiting", since: ago(200_000), join: "presence", pid: 4242, tty: "ttys003", terminal_app: "iTerm", term_program: "iTerm.app", cwd: "/Users/someone/repos/app", git_branch: "main", tokens: 1200, turns: 3, alerts: 0, exposures: 0 },
+      { source: "codex", state: "working", since: ago(5_000), join: "none", pid: 4343, tty: "ttys004", terminal_app: "Terminal", cwd: "/Users/someone/repos/other", tokens: 0, turns: 0, alerts: 0, exposures: 0 },
     ],
     counts: { held: 0, working: 1, waiting: 1, idle: 0 },
   };
@@ -474,17 +474,16 @@ describe("every screen renders (renderer)", () => {
     // machine where every count is 0 and `sessions` is empty.
     [
       "OverviewScreen",
-      `OverviewScreen({ state: __state, onGoRadar: ${noop}, onOpenSession: ${noop}, onTraceSecret: ${noop} })`,
+      `OverviewScreen({ state: __state, onGoRadar: ${noop}, onOpenSession: ${noop} })`,
     ],
     [
       "RadarScreen",
-      `RadarScreen({ state: __state, onOpenSession: ${noop}, onGoRules: ${noop},
-        onGoIntegrations: ${noop}, onGoSettings: ${noop}, ruleFilter: "all", ruleNonce: 0 })`,
+      `RadarScreen({ state: __state, onOpenSession: ${noop}, ruleFilter: "all", ruleNonce: 0 })`,
     ],
     ["AnalyticsScreen", `AnalyticsScreen({ state: __state, onOpenRule: ${noop}, onGoRules: ${noop} })`],
-    ["RulesScreen", `RulesScreen({ state: __state, onGoSettings: ${noop} })`],
-    ["SettingsScreen", `SettingsScreen({ state: __state, onGoRules: ${noop} })`],
-    ["IntegrationsScreen", "IntegrationsScreen({ state: __state })"],
+    ["RulesScreen", "RulesScreen({ state: __state })"],
+    ["SettingsScreen", "SettingsScreen({ state: __state, checkNonce: 0 })"],
+    ["IntegrationsScreen", `IntegrationsScreen({ state: __state, onGoRules: ${noop} })`],
     // First-run setup. Takes the same snapshot as every other
     // screen, so the blank machine here is exactly the machine it was built
     // for: no tools found yet, no doctor report.
@@ -591,7 +590,7 @@ describe("every screen renders (renderer)", () => {
     ctx.__state = state;
     return (
       runInContext(
-        `__nodes(RulesScreen({ state: __state, onGoSettings: function () {} }), "GuardOffNotice", [], 0)`,
+        `__nodes(RulesScreen({ state: __state }), "GuardOffNotice", [], 0)`,
         ctx as object,
         { filename: "GuardOffNotice scan" },
       ) as unknown[]
@@ -602,7 +601,7 @@ describe("every screen renders (renderer)", () => {
   const stops = (state: AppState) => {
     ctx.__state = state;
     return runInContext(
-      `__nodes(RulesScreen({ state: __state, onGoSettings: function () {} }), "button", [], 0)
+      `__nodes(RulesScreen({ state: __state }), "button", [], 0)
          .filter(function (n) { return n.props && String(n.props.className || "").indexOf("lvl-stop") === 0; })
          .map(function (n) { return { on: !!n.props["aria-checked"], disabled: !!n.props.disabled }; })`,
       ctx as object,
@@ -614,7 +613,7 @@ describe("every screen renders (renderer)", () => {
   const tally = (state: AppState) => {
     ctx.__state = state;
     return runInContext(
-      `__nodes(RulesScreen({ state: __state, onGoSettings: function () {} }), "span", [], 0)
+      `__nodes(RulesScreen({ state: __state }), "span", [], 0)
          .filter(function (n) { return n.props && String(n.props.className || "").indexOf("lvl-tally-i") === 0; })
          .map(function (n) {
            var cls = String(n.props.className);
@@ -669,7 +668,7 @@ describe("every screen renders (renderer)", () => {
       ctx.__state = state;
       return runInContext(
         `(function () {
-           var n = __nodes(RulesScreen({ state: __state, onGoSettings: function () {} }), "div", [], 0)
+           var n = __nodes(RulesScreen({ state: __state }), "div", [], 0)
              .filter(function (x) { return x.props && String(x.props.className || "").indexOf("lvl-track-wrap") === 0; })[0];
            return n ? String(n.props.className) : null;
          })()`,
@@ -699,7 +698,7 @@ describe("every screen renders (renderer)", () => {
       ctx.__state = state;
       return runInContext(
         `(function () {
-           var tree = RulesScreen({ state: __state, onGoSettings: function () {} });
+           var tree = RulesScreen({ state: __state });
            var input = __nodes(tree, "input", [], 0).filter(function (n) {
              return n.props && n.props.className === "lvl-lever";
            })[0];
@@ -742,7 +741,7 @@ describe("every screen renders (renderer)", () => {
       ctx.__state = state;
       return runInContext(
         `(function () {
-           var n = __nodes(RulesScreen({ state: __state, onGoSettings: function () {} }), "span", [], 0)
+           var n = __nodes(RulesScreen({ state: __state }), "span", [], 0)
              .filter(function (x) { return x.props && x.props.className === "lvl-said-name"; })[0];
            return n && n.kids ? String(n.kids[0]) : null;
          })()`,
@@ -773,7 +772,7 @@ describe("every screen renders (renderer)", () => {
     ctx.__state = populatedState();
     const shape = runInContext(
       `(function () {
-         var tree = RulesScreen({ state: __state, onGoSettings: function () {} });
+         var tree = RulesScreen({ state: __state });
          var cats = levelCategories(__state.level_modes);
          var listed = [];
          cats.forEach(function (c) { listed = listed.concat(c.detectors); });
@@ -858,7 +857,7 @@ describe("every screen renders (renderer)", () => {
     ctx.__state = populatedState();
     const paint = runInContext(
       `(function () {
-         var tree = RulesScreen({ state: __state, onGoSettings: function () {} });
+         var tree = RulesScreen({ state: __state });
          var byClass = function (tag, cls) {
            return __nodes(tree, tag, [], 0).filter(function (n) {
              return n.props && String(n.props.className || "").indexOf(cls) === 0;
@@ -1026,7 +1025,7 @@ describe("every screen renders (renderer)", () => {
     ctx.__state = populatedState();
     const shape = runInContext(
       `(function () {
-         var tree = RulesScreen({ state: __state, onGoSettings: function () {} });
+         var tree = RulesScreen({ state: __state });
          var titles = __nodes(tree, "Card", [], 0).map(function (n) { return n.props.title; });
          var buttons = __nodes(tree, "button", [], 0)
            .map(function (b) { return b.kids && typeof b.kids[0] === "string" ? b.kids[0] : ""; });
@@ -1054,19 +1053,19 @@ describe("every screen renders (renderer)", () => {
       { filename: "header without badge" },
     );
     expect(inHeader).toBe(0);
-    const badge = (state: AppState, onGoSettings: boolean = true) => {
+    const badge = (state: AppState, onGoRules: boolean = true) => {
       ctx.__state = state;
-      ctx.__manage = onGoSettings;
+      ctx.__manage = onGoRules;
       return runInContext(
         `(function () {
            var inner = ProtectionBadge({
              state: __state,
              enforcing: enforcingCount(__state),
-             onGoSettings: __manage ? function () {} : undefined,
+             onGoRules: __manage ? function () {} : undefined,
            });
            var pill = inner && inner.props ? String(inner.props.className || "") : "";
            var word = __nodes(inner, "strong", [], 0)[0];
-           // The whole line is the way to Settings, naming what it does there.
+           // The whole line is the way to Guardrails, naming what it does there.
            var clickable = !!(inner && inner.props && inner.props.onClick);
            return {
              kind: pill.replace("protbadge ", ""),
@@ -1120,7 +1119,7 @@ describe("every screen renders (renderer)", () => {
       },
     };
     expect(badge(tampered)).toEqual({ kind: "off", word: "Guard changed", manages: "Repair" });
-    // On Settings itself there is nowhere to Manage to: the word stays, the link goes.
+    // On Guardrails itself there is nowhere to Manage to: the word stays, the link goes.
     expect(badge(populatedState(), false)).toEqual({ kind: "protected", word: "Protected", manages: false });
   });
 
@@ -1173,8 +1172,7 @@ describe("every screen renders (renderer)", () => {
       ctx.__state = state;
       return (
         runInContext(
-          `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-             onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0 }),
+          `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0 }),
              "div", [], 0).filter(function (n) {
                return n.props && typeof n.props.className === "string" &&
                  n.props.className.indexOf("attnrow") === 0;
@@ -1226,8 +1224,7 @@ describe("every screen renders (renderer)", () => {
     ];
     ctx.__state = s;
     const chips = runInContext(
-      `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-         onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0 }),
+      `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0 }),
          "span", [], 0).filter(function (n) {
            return n.props && n.props.className === "chip" && (n.kids || [])[0] === "STOOD DOWN";
          }).map(function (n) { return n.props.title; })`,
@@ -1378,8 +1375,7 @@ describe("every screen renders (renderer)", () => {
     ];
     ctx.__state = s;
     const chips = runInContext(
-      `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-         onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0 }),
+      `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0 }),
          "span", [], 0).filter(function (n) {
            return n.props && n.props.className === "chip" && /CONFIDENCE|STOOD DOWN/.test(String((n.kids || [])[0]));
          }).map(function (n) { return [(n.kids || [])[0], n.props.title]; })`,
@@ -1418,12 +1414,8 @@ describe("every screen renders (renderer)", () => {
          var radar = [], ledger = [];
          var tree = OverviewScreen({ state: __state,
            onGoRadar: function (f) { radar.push(f === undefined ? null : f); },
-           onOpenSession: function (id, finding) { ledger.push([id, finding]); },
-           onTraceSecret: function () {} });
+           onOpenSession: function (id, finding) { ledger.push([id, finding]); } });
          __nodes(tree, "button", [], 0).forEach(function (n) {
-           // The active-exposure pill is the ONE route that goes to the whole
-           // Radar on purpose; it is asserted on its own below.
-           if (n.props && /ovr-count/.test(String(n.props.className))) return;
            if (n.props && typeof n.props.onClick === "function") n.props.onClick();
          });
          return { radar: radar, ledger: ledger };
@@ -1447,41 +1439,53 @@ describe("every screen renders (renderer)", () => {
   });
 
   /**
-   * The Overview prints how many exposures are ACTIVE — main's
+   * The Overview's posture line prints how many exposures are ACTIVE — main's
    * `open_exposures`, the same field the Radar's hero and the sidebar badge
-   * print, never a renderer-side count — and the pill is the route to the
-   * Radar, unfiltered.
+   * print, never a renderer-side count — beside the protection state, and
+   * folds "no agent running" into itself instead of an empty card.
    */
-  it("prints the active-exposure count from the summary and routes it to the Radar", () => {
+  it("prints the active-exposure count from the summary in the posture line", () => {
     const s = populatedState();
-    ctx.__state = s;
-    // The Overview's title row carries the count (app.jsx passes ActiveCount
-    // as SecurityHeader's action).
-    const seen = runInContext(
-      `(function () {
-         var radar = 0;
-         var tree = ActiveCount({ state: __state,
-           onGoRadar: function (f) { if (f === undefined) radar += 1; } });
-         var pill = __nodes(tree, "button", [], 0).filter(function (n) {
-           return n.props && /ovr-count/.test(String(n.props.className));
-         })[0];
-         var text = function (node) {
-           if (node == null || typeof node === "boolean") return "";
-           if (typeof node !== "object") return String(node);
-           if (Array.isArray(node)) return node.map(text).join("");
-           return (node.kids || []).map(text).join("");
-         };
-         pill.props.onClick();
-         return { text: text(pill), className: pill.props.className, radar: radar };
-       })()`,
+    // Main's count, deliberately different from the rows the renderer holds.
+    s.radar.summary = { ...s.radar.summary, open_exposures: 9 };
+    const posture = (state: AppState, noLive: boolean) => {
+      ctx.__state = state;
+      ctx.__noLive = noLive;
+      return runInContext(
+        `(function () {
+           var tree = PostureLine({ state: __state, noLive: __noLive });
+           var text = function (node) {
+             if (node == null || typeof node === "boolean") return "";
+             if (typeof node !== "object") return String(node);
+             if (Array.isArray(node)) return node.map(text).join("");
+             return (node.kids || []).map(text).join("");
+           };
+           return { text: text(tree), className: String(tree.props.className) };
+         })()`,
+        ctx as object,
+        { filename: "posture line" },
+      ) as { text: string; className: string };
+    };
+    const on = posture(s, false);
+    expect(on.text).toContain("Real-time protection on");
+    expect(on.text).toContain("9 open exposures");
+    expect(on.text).not.toContain("No agent running");
+    expect(on.className).toContain("protected");
+    // No live agent: said in the line, and the Active sessions card is not drawn.
+    expect(posture(s, true).text).toContain("No agent running right now");
+    const quiet = populatedState();
+    quiet.live = { ...quiet.live, sessions: [] };
+    ctx.__state = quiet;
+    const cards = runInContext(
+      `__nodes(OverviewScreen({ state: __state, onGoRadar: function () {}, onOpenSession: function () {} }), "ActiveSessions", [], 0).length`,
       ctx as object,
-      { filename: "active count" },
-    ) as { text: string; className: string; radar: number };
-    const open = s.radar.summary.open_exposures;
-    expect(seen.text).toContain(String(open));
-    expect(seen.text).toContain(open === 1 ? "exposure to review" : "exposures to review");
-    expect(seen.className).toContain(open > 0 ? "hot" : "live");
-    expect(seen.radar).toBe(1);
+      { filename: "no live card" },
+    );
+    expect(cards).toBe(0);
+    // Guard off: the line says so first.
+    const off = populatedState();
+    off.radar = { ...off.radar, guard_installed: false };
+    expect(posture(off, false).text).toMatch(/^Real-time protection off/);
   });
 
   /**
@@ -1502,7 +1506,7 @@ describe("every screen renders (renderer)", () => {
     const seen = runInContext(
       `(function () {
          var radar = [], ledger = [];
-         var tree = ActiveSessions({ state: __state,
+         var tree = ActiveSessions({ state: __state, live: liveRows(__state),
            onGoRadar: function (f) { radar.push(f); },
            onOpenSession: function (id, finding) { ledger.push([id, finding]); } });
          var rows = __nodes(tree, "div", [], 0).filter(function (n) { return n.props && String(n.props.className || "").indexOf("ovr-live-row") === 0; });
@@ -1545,8 +1549,7 @@ describe("every screen renders (renderer)", () => {
     const read = (props: string) =>
       runInContext(
         `(function () {
-           var tree = RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-             onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0, ${props} });
+           var tree = RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0, ${props} });
            var cards = __nodes(tree, "div", [], 0).filter(function (n) {
              return n.props && String(n.props.className || "").split(" ")[0] === "finding";
            });
@@ -1613,7 +1616,7 @@ describe("every screen renders (renderer)", () => {
       `(function () {
          var group = groupFindings(sortFindings(__state.radar.findings))[0];
          var tree = FindingGroup({ group: group, policy: __state.prefs.policy, state: __state,
-           onGoSettings: function () {}, onOpenSession: function () {} });
+           onOpenSession: function () {} });
          var text = function (node) {
            if (node == null || typeof node === "boolean") return "";
            if (typeof node !== "object") return String(node);
@@ -1635,7 +1638,7 @@ describe("every screen renders (renderer)", () => {
     expect(card).toContain("HIGH");
     expect(card).not.toMatch(/\bHigh\b/);
     expect(card.indexOf("HIGH")).toBeLessThan(card.indexOf("Credential file read"));
-    const headerEnd = card.indexOf("How to fix this?"); // the body's first control, under the header
+    const headerEnd = card.indexOf("Ask your agent"); // the body's first control, under the header
     expect(card.slice(0, headerEnd)).toContain("Credential file read");
     // …and WHEN it was last seen, in the app's relative form — the fixture's
     // latest sighting is a minute ago.
@@ -1651,8 +1654,9 @@ describe("every screen renders (renderer)", () => {
     expect(card.slice(0, headerEnd)).toMatch(/\d+[smhd] ago|just now$/); // the header ends with the time; the ask follows it
     // …and now (2026-09-21) on the step panel under Do next: after the
     // advice, before the decisions at the foot.
-    expect(card.indexOf("How to fix this?")).toBeGreaterThan(card.indexOf("Do next"));
-    expect(card.indexOf("How to fix this?")).toBeLessThan(card.indexOf("Mark reviewed"));
+    const decisions = "ResolvedFalse positiveAccept risk";
+    expect(card.indexOf("Ask your agent")).toBeGreaterThan(card.indexOf("Do next"));
+    expect(card.indexOf("Ask your agent")).toBeLessThan(card.indexOf(decisions));
     // The story: two labelled rows, What and Do next — no Means, no
     // Action row. Without an account the rule's own blurb is the story, its
     // fix the next step, and each appears exactly once.
@@ -1674,9 +1678,9 @@ describe("every screen renders (renderer)", () => {
     // The outcome is one capitalized word and nothing after it.
     expect(card).toContain("Warned");
     expect(card).not.toContain("it never ran");
-    // The button says what it does, never how many rows it covers.
-    expect(card).toContain("Mark reviewed");
-    expect(card).not.toMatch(/Mark all \d+ reviewed/);
+    // The buttons say what they do, never how many rows they cover.
+    expect(card).toContain(decisions);
+    expect(card).not.toMatch(/\d+ sightings? (resolved|reviewed)/i);
     // The record names the thing and — it being the only one — opens it: its
     // masked line is on the page without a click.
     expect(card).toContain(".env");
@@ -1710,7 +1714,7 @@ describe("every screen renders (renderer)", () => {
       `(function () {
          var group = groupFindings(sortFindings(__state.radar.findings))[0];
          var tree = FindingGroup({ group: group, policy: __state.prefs.policy, state: __state,
-           onGoSettings: function () {}, onOpenSession: function () {} });
+           onOpenSession: function () {} });
          var text = function (node) {
            if (node == null || typeof node === "boolean") return "";
            if (typeof node !== "object") return String(node);
@@ -1744,8 +1748,11 @@ describe("every screen renders (renderer)", () => {
     expect(card).not.toContain("GITHUB");
     expect(card).not.toContain("×3");
     expect(card).toContain("3 sightings · 2 sessions");
-    // The facts line still speaks for the whole exposure: outcomes disagree.
-    expect(card).toContain("Mixed");
+    // Action reads the STEP under review: AWS's three sightings were all held
+    // and allowed, so the step says so — the GITHUB sightings' Blocked is
+    // that step's answer, not this one's.
+    expect(card).toContain("Held3 allowed by you");
+    expect(card).not.toContain("Blocked");
     // Only the top thing (AWS, 3 rows) is open: three ways into sessions,
     // not five, and its masked line on the page.
     expect(card.split("session →")).toHaveLength(4);
@@ -1885,8 +1892,7 @@ describe("every screen renders (renderer)", () => {
     ctx.__state = s;
     const seen = runInContext(
       `(function () {
-         var tree = RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-           onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0,
+         var tree = RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0,
            sessionFilter: null, focusFindingId: null, focusNonce: 0 });
          var cards = __nodes(tree, "div", [], 0).filter(function (n) {
            return n.props && String(n.props.className || "").split(" ")[0] === "finding";
@@ -1899,7 +1905,7 @@ describe("every screen renders (renderer)", () => {
            return rendered ? text(rendered) : (node.kids || []).map(text).join("");
          };
          return cards.map(function (c) {
-           return { shut: String(c.props.className).split(" ").indexOf("shut") >= 0, body: /Mark (all )?reviewed/.test(text(c)),
+           return { shut: String(c.props.className).split(" ").indexOf("shut") >= 0, body: /Accept risk|Reopen/.test(text(c)),
                     toggle: __nodes(c, "div", [], 0).some(function (n) { return n.props && n.props.role === "button" && n.props["aria-expanded"] !== undefined; }) };
          });
        })()`,
@@ -1949,55 +1955,69 @@ describe("every screen renders (renderer)", () => {
   });
 
   /**
-   * TRIAGE IS ONE DECISION, MADE ONCE.
-   *
-   * Three things that used to let a card change state without anyone deciding
-   * to: a menu that wrote on click, a trigger that read as a second action
-   * ("Dismiss"), and a TRIAGED tab for the cards that had already left. Each
-   * is asserted here because each is a one-line regression.
+   * TRIAGE IS ONE DECISION, MADE ONCE: three buttons, each committing its
+   * verdict for EVERY sighting on the card, and a decided card that reads
+   * the verdict back beside the way to undo it.
    */
-  it("the verdict menu only SELECTS — nothing writes until Mark reviewed", () => {
-    const src = readFileSync(new URL("screens/radar.jsx", rendererDir), "utf8");
-    const card = src.slice(src.indexOf("function FindingGroup("), src.indexOf("function secretForMark("));
-    // The menu is handed the local setter, never the writer.
-    expect(card).toContain("<VerdictMenu value={verdict} onPick={setVerdict} />");
-    expect(card).not.toMatch(/onPick=\{setAll\}/);
-    // The commit button writes the picked REASON and nothing else: it is
-    // disabled until one is picked, because "reviewed, no reason" is not a
-    // state this card can write.
-    expect(card).toContain("disabled={!verdict}");
-    expect(card).toContain("onClick={() => verdict && setAll(verdict)}");
-    expect(card).not.toContain('setAll("resolved")');
-    expect(card).toContain("useState(null)");
-    // Nothing pushes the row's links to the far edge — the controls read left
-    // to right from the label column and wrap whole.
-    const row = card.slice(card.indexOf('<div className="row">'), card.indexOf('"Trace secret…" and "Open session" sat here'));
-    expect(row).not.toContain('className="spacer"');
-    // "Dismiss" is gone from the control entirely — it named an action, on a
-    // control that only qualifies one.
-    const menu = src.slice(src.indexOf("function VerdictMenu("));
-    expect(menu).not.toContain("Dismiss");
-    expect(src).not.toContain("DismissMenu");
-    // Two reasons, and Reviewed is NOT one of them: reviewing is what the
-    // button does; these only say what the review meant.
-    const choices = runInContext(
-      `VERDICT_CHOICES.map(function (c) { return c.id + ":" + c.label; })`,
-      ctx as object,
-      { filename: "verdict choices" },
-    ) as string[];
-    expect(choices).toEqual(["false_positive:False Positive", "accepted_risk:Accept Risk"]);
-    // Decided, the card holds the SAME control, disabled, showing the choice —
-    // beside the way back.
-    expect(card).toContain("<VerdictMenu value={face.status} disabled />");
-    expect(card).toMatch(/Reopen\{many \? " all" : ""\}/);
+  it("the three triage buttons commit their verdict for every sighting, and Reopen puts it back", () => {
+    const exposure = { exposure_key: "secret_egress\u0000project:/tmp/repo", place: "repo", place_kind: "project" as const };
+    const click = (status: FindingRow["status"]) => {
+      const s = populatedState();
+      s.radar.findings = [
+        finding({ ...exposure, finding_id: "t0", key_name: "AWS", session_id: "s1", status }),
+        finding({ ...exposure, finding_id: "t1", key_name: "AWS", session_id: "s2", status }),
+        finding({ ...exposure, finding_id: "t2", key_name: "GITHUB", session_id: "s3", status }),
+      ];
+      ctx.__state = s;
+      const bridge = ctx.doorman;
+      try {
+        return runInContext(
+          `(function () {
+             var writes = [], decided = [];
+             window.doorman = { setFindingStatusBulk: function (ids, st) { writes.push([ids.slice().sort(), st]); return Promise.resolve({ ok: true }); } };
+             var group = groupFindings(sortFindings(__state.radar.findings))[0];
+             var tree = FindingGroup({ group: group, policy: __state.prefs.policy, state: __state,
+               onOpenSession: function () {}, onDecided: function (st) { decided.push(st); } });
+             var row = __nodes(tree, "div", [], 0).filter(function (n) { return n.props && n.props.className === "fdecide"; })[0];
+             var label = function (n) { return (n.kids || []).filter(function (k) { return typeof k === "string"; }).join("").trim(); };
+             var buttons = __nodes(row, "button", [], 0);
+             var verdict = __nodes(row, "span", [], 0).map(label).filter(Boolean);
+             var names = buttons.map(label);
+             buttons.forEach(function (b) { b.props.onClick(); });
+             return { names: names, verdict: verdict, writes: writes, decided: decided };
+           })()`,
+          ctx as object,
+          { filename: "triage buttons" },
+        ) as { names: string[]; verdict: string[]; writes: Array<[string[], string]>; decided: string[] };
+      } finally {
+        ctx.doorman = bridge;
+      }
+    };
+    const all = ["t0", "t1", "t2"];
+    const open = click("open");
+    expect(open.names).toEqual(["Resolved", "False positive", "Accept risk"]);
+    // Each button writes its own verdict, once, for every sighting on the card.
+    expect(open.writes).toEqual([
+      [all, "resolved"],
+      [all, "false_positive"],
+      [all, "accepted_risk"],
+    ]);
+    expect(open.decided).toEqual(["resolved", "false_positive", "accepted_risk"]);
+    // Decided: the verdict read back, and the one way back — which reopens all.
+    const decided = click("accepted_risk");
+    expect(decided.names).toEqual(["Reopen"]);
+    expect(decided.verdict).toEqual(["Accepted risk"]);
+    expect(decided.writes).toEqual([[all, "open"]]);
+    expect(decided.decided).toEqual(["open"]);
+    expect(click("false_positive").verdict).toEqual(["False positive"]);
+    expect(click("resolved").verdict).toEqual(["Resolved"]);
   });
 
   it("the feed offers the queue and the whole feed — no Triaged tab", () => {
     const s = populatedState();
     ctx.__state = s;
     const segments = runInContext(
-      `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-         onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0 }),
+      `__nodes(RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0 }),
          "Segmented", [], 0)
          .filter(function (n) { return n.props && n.props.ariaLabel === "Triage"; })
          .map(function (n) { return n.props.options.map(function (o) { return o.key + ":" + o.label; }); })[0]`,
@@ -2016,8 +2036,7 @@ describe("every screen renders (renderer)", () => {
     const render = (prefs: Record<string, unknown>) =>
       runInContext(
         `(function () {
-           var tree = RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-             onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0 });
+           var tree = RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0 });
            var seg = __nodes(tree, "Segmented", [], 0)
              .filter(function (n) { return n.props && n.props.ariaLabel === "Triage"; })[0];
            var counts = {};
@@ -2113,22 +2132,25 @@ describe("every screen renders (renderer)", () => {
     const render = (state: AppState, prefs: Record<string, unknown>) =>
       runInContext(
         `(function () {
-           var tree = RadarScreen({ state: __state, onOpenSession: function () {}, onGoRules: function () {},
-             onGoIntegrations: function () {}, onGoSettings: function () {}, ruleFilter: "all", ruleNonce: 0 });
+           var tree = RadarScreen({ state: __state, onOpenSession: function () {}, ruleFilter: "all", ruleNonce: 0 });
            var seg = __nodes(tree, "Segmented", [], 0)
              .filter(function (n) { return n.props && n.props.ariaLabel === "Triage"; })[0];
-           var counts = {};
-           seg.props.options.forEach(function (o) { counts[o.key] = o.count; });
            var ids = [];
-           __nodes(tree, "FindingGroup", [], 0).forEach(function (n) {
+           var cards = __nodes(tree, "FindingGroup", [], 0);
+           cards.forEach(function (n) {
              n.props.group.rows.forEach(function (r) { ids.push(r.finding_id); });
            });
-           // The Confidence menu, as the harness paints the first (open) view.
-           var menu = __nodes(tree, "FilterMenu", [], 0)
-             .filter(function (n) { return n.props && n.props.label === "Confidence"; })[0];
-           var bands = menu ? { multi: menu.props.multi, value: menu.props.value, summary: menu.props.summary,
-             narrowed: menu.props.narrowed,
-             options: menu.props.options.map(function (o) { return [o.key, o.label, o.count]; }) } : null;
+           // The toggle stands down when its two views hold the same cards;
+           // then both counts are the feed's own.
+           var counts = { open: cards.length, all: cards.length, toggle: !!seg };
+           if (seg) seg.props.options.forEach(function (o) { counts[o.key] = o.count; });
+           // The Confidence section of the More filters menu, as the harness
+           // paints the first (open) view.
+           var more = __nodes(tree, "MoreFilters", [], 0)[0];
+           var menu = more ? more.props.sections.filter(function (s) { return s.key === "confidence"; })[0] : null;
+           var bands = menu ? { multi: menu.multi, value: menu.value, summary: menu.summary,
+             narrowed: menu.narrowed,
+             options: menu.options.map(function (o) { return [o.key, o.label, o.count]; }) } : null;
            var boxes = __nodes(tree, "span", [], 0).filter(function (n) {
              return n.props && n.props.className === "showchecks";
            }).length;
@@ -2162,6 +2184,8 @@ describe("every screen renders (renderer)", () => {
     // Any set at all: high unticked folds the sure rows away like any other band.
     expect(mediumOnly.ids).toEqual(["lead-medium"]);
     expect(mediumOnly.counts.open).toBe(1);
+    // One card in both views: the Needs review / All toggle has nothing to switch.
+    expect(mediumOnly.counts.toggle).toBeFalsy();
     // ONE menu of tick boxes, not a box per band in the count row. Plain
     // band names — no description on any of them — each with the cards
     // ticking it brings, against the other filters, in the OPEN view too,
@@ -2194,7 +2218,7 @@ describe("every screen renders (renderer)", () => {
     // alone by clear-filters and does not count as narrowing; a deep link to
     // a lead ticks its band for this visit without flipping the preference.
     const src = readFileSync(new URL("screens/radar.jsx", rendererDir), "utf8");
-    expect(src).toContain('label="Confidence"\n            multi\n            value={shownBands}');
+    expect(src).toMatch(/title: "Confidence",\s+multi: true,\s+value: shownBands,/);
     const pick = src.slice(src.indexOf("const pickBand = (key) => {"), src.indexOf("};", src.indexOf("const pickBand = (key) => {")));
     expect(pick).toContain("if (next.length === 0) return;");
     expect(pick).toContain("setRevealBands([])");
@@ -2207,12 +2231,12 @@ describe("every screen renders (renderer)", () => {
     const focus = src.slice(src.indexOf("if (!focusNonce) return;"), src.indexOf("}, [focusNonce]);"));
     expect(focus).toContain("if (target) setRevealBands((r) => (r.indexOf(band) === -1 ? r.concat([band]) : r));");
     expect(focus).not.toContain("setPrefs");
-    // The multi menu itself: ticked keys wear the tick, a pick toggles
-    // without closing, and the button wears the caller's summary.
-    const menu = readFileSync(new URL("components.jsx", rendererDir), "utf8");
-    expect(menu).toContain("function FilterMenu({ label, value, options, onPick, multi, summary, narrowed: narrowedProp })");
-    expect(menu).toContain("if (!multi) setOpen(false);");
-    expect(menu).toContain('aria-multiselectable={multi ? true : undefined}');
+    // The multi section itself: ticked keys wear the tick, a pick toggles
+    // without closing, and the button wears the narrowed sections' summary.
+    const more = src.slice(src.indexOf("function MoreFilters({ sections })"), src.indexOf("function HeldCallsLine("));
+    expect(more).toContain("if (!s.multi) setOpen(false);");
+    expect(more).toContain("aria-multiselectable={s.multi ? true : undefined}");
+    expect(more).toContain('const reading = active.map((s) => s.summary || s.title).join(" · ");');
     // The empty queue names what is folded away rather than claiming nothing
     // needs review; "All" names both kinds of hidden row.
     const sentence = (status: string, fp: number, leads: number) =>
@@ -2305,7 +2329,7 @@ describe("every screen renders (renderer)", () => {
       `(function () {
          var out = {};
          groupFindings(sortFindings(__state.radar.findings)).forEach(function (group) {
-           var tree = FindingGroup({ group: group, policy: __state.prefs.policy, state: __state, onGoSettings: function () {},
+           var tree = FindingGroup({ group: group, policy: __state.prefs.policy, state: __state,
              expanded: true, onToggle: function () {}, onOpenSession: function () {} });
            var text = function (node) {
              if (node == null || typeof node === "boolean") return "";
@@ -2642,13 +2666,13 @@ describe("every screen renders (renderer)", () => {
    carrying its series totals, the three-question summary, and the rule table
    folded into families. Each one is only as good as the sentence it prints, so
    these assert the WORDS, not that a div rendered. */
-describe("My wallets on Settings (renderer/screens/settings.jsx)", () => {
+describe("My wallets on Guardrails (renderer/screens/rules.jsx)", () => {
   const ctx = loadApp();
   const nodesWith = (wallets: Record<string, unknown> | undefined, tag: string) => {
     const state = blankState();
     ctx.__state = { ...state, prefs: { ...state.prefs, policy: { ...state.prefs.policy, ...(wallets === undefined ? {} : { wallets }) } } };
     return runInContext(
-      `__nodes(SettingsScreen({ state: __state, onGoRules: function () {} }), ${JSON.stringify(tag)}, [], 0)
+      `__nodes(RulesScreen({ state: __state }), ${JSON.stringify(tag)}, [], 0)
         .map(function (n) { return { cls: (n.props && n.props.className) || "", kids: JSON.stringify(n.kids), aria: (n.props && n.props["aria-label"]) || "" }; })`,
       ctx as object,
       { filename: "settings-wallets" },
@@ -2715,7 +2739,7 @@ describe("the wizard popup (renderer/screens/rules.jsx)", () => {
     const state = populatedState();
     ctx.__state = state;
     const buttons = runInContext(
-      `__nodes(RulesScreen({ state: __state, onGoSettings: function () {} }), "button", [], 0)
+      `__nodes(RulesScreen({ state: __state }), "button", [], 0)
         .map(function (n) { return JSON.stringify(n.kids); })`,
       ctx as object,
       { filename: "rules-cards" },
@@ -2727,7 +2751,7 @@ describe("the wizard popup (renderer/screens/rules.jsx)", () => {
   it("View reads a saved set against its level's defaults, marking only the rules it changes", () => {
     const state = populatedState();
     const protective = state.level_modes.protective;
-    // A Protective set with one rule moved by hand from Hold to Block.
+    // A Protective set with one rule moved by hand from Ask to Block.
     const modes = { ...protective, secret_egress: "block" as const };
     expect(protective.secret_egress).toBe("ask");
     const set = { id: "s1", name: "Stricter deletes", saved_at: "2026-09-01T00:00:00Z", level: "protective" as const, modes, packs: [] as string[] };
@@ -2758,9 +2782,9 @@ describe("the wizard popup (renderer/screens/rules.jsx)", () => {
     // Every rule the ladder has an opinion about is a row.
     expect(view.rules).toBe(Object.keys(protective).length);
     // Exactly the one hand-moved rule differs: its row reads saved Block
-    // beside the default Hold, and wears the one Custom tag.
+    // beside the default Ask, and wears the one Custom tag.
     expect(view.differs).toHaveLength(1);
-    expect(view.differs[0]).toMatch(/CustomBlockHold$/);
+    expect(view.differs[0]).toMatch(/CustomBlockAsk$/);
     expect(view.custom).toBe(1);
     expect(view.text).toContain("One rule differs from Protective");
     // A set that matches its level says so, and marks nothing.
@@ -2894,9 +2918,12 @@ describe("Security Analytics reads its window out loud (renderer/screens/analyti
     expect(Array.isArray(legends[0]!.props!.days), "the legend should be carrying values").toBe(true);
   });
 
-  it("answers the three questions in the order a person asks them", () => {
-    const heads = nodes(populatedState(), "h4").map((n) => (n.kids || []).join(""));
-    expect(heads).toEqual(["What happened", "Why it matters", "What to do next"]);
+  it("says what to do next: the rule carrying the window, then the one step", () => {
+    const state = populatedState();
+    expect(nodes(state, "Card").map((n) => n.props!.title)).toContain("What to do next");
+    expect(nodes(state, "h4").map((n) => (n.kids || []).join(""))).toEqual(["Carrying the most", "Next step"]);
+    // Nothing fired: no rule carries anything, and the step is to wait.
+    expect(nodes(blankState(), "h4").map((n) => (n.kids || []).join(""))).toEqual(["Next step"]);
   });
 
   it("folds the rule list into families, one row per rule, with the columns still one click away", () => {
@@ -3153,18 +3180,18 @@ describe("the Updates card says when this copy is outdated", () => {
   });
 });
 
-describe("the guard card's problems stay short (renderer/screens/settings.jsx)", () => {
+describe("the guard card's problems stay short (renderer/screens/rules.jsx)", () => {
   const ctx = loadApp();
   const host = (id: string, label: string, present: boolean) => ({
     id, label, source: id, doc_path: "~/." + id, present, installed: false, native_ask: false,
   });
   const LABELS = ["Claude Code", "Codex", "Cursor", "Gemini CLI", "Goose"];
-  /** Every node of one tag in SettingsScreen's tree for a radar shape. */
+  /** Every node of one tag in Guardrails' tree for a radar shape. */
   const nodes = (radar: Record<string, unknown>, tag: string) => {
     const state = blankState();
     ctx.__state = { ...state, platform: "macos", radar: { ...state.radar, ...radar } };
     return runInContext(
-      `__nodes(SettingsScreen({ state: __state, onGoRules: function () {} }), ${JSON.stringify(tag)}, [], 0)
+      `__nodes(RulesScreen({ state: __state }), ${JSON.stringify(tag)}, [], 0)
         .map(function (n) { var p = n.props || {}; return { cls: p.className || "", kids: JSON.stringify(n.kids), role: p.role || "", disabled: !!p.disabled, tip: p["data-tip"] || "" }; })`,
       ctx as object,
       { filename: "settings-guard-problems" },
@@ -3207,12 +3234,12 @@ describe("the guard card's problems stay short (renderer/screens/settings.jsx)",
 
 describe("the AI-delivered protection row downloads its model without being asked", () => {
   const ctx = loadApp();
-  /** SettingsScreen's tree for one `model_assist.injection_classifier` shape. */
+  /** Guardrails' tree (the Protection card) for one `model_assist.injection_classifier` shape. */
   const row = (ic: Record<string, unknown>) => {
     ctx.__state = { ...blankState(), model_assist: { injection_classifier: ic, second_opinion: {}, env: false } };
     return runInContext(
       `(function () {
-         var tree = SettingsScreen({ state: __state, onGoRules: function () {} });
+         var tree = RulesScreen({ state: __state });
          return {
            text: JSON.stringify(__nodes(tree, "div", [], 0).filter(function (n) {
              return n.props && n.props.className === "d";
@@ -3288,7 +3315,7 @@ describe("the AI-delivered protection row downloads its model without being aske
     return runInContext(
       `(function () {
          window.doorman = { setInjectionClassifier: function (p) { __patches.push(p); return Promise.resolve({ ok: true }); } };
-         var tree = SettingsScreen({ state: __state, onGoRules: function () {} });
+         var tree = RulesScreen({ state: __state });
          var select = __nodes(tree, "select", [], 0).filter(function (n) { return n.props["aria-label"] === "Injection model"; })[0];
          if (select) select.props.onChange({ target: { value: "stock" } });
          var options = select ? __nodes(select, "option", [], 0).map(function (o) { return [o.props.value, o.kids.join("")]; }) : [];
@@ -3461,28 +3488,39 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
     const state = populatedState();
     ctx.__state = state;
     // The door is the title row's one action (app.jsx passes it on the Radar);
-    // while the sub page is open the row says where you are, with no door.
+    // while the sub page is open the row says where you are, with no door,
+    // and the way back sits above the title.
     const head = runInContext(
       `(function () {
          var door = TraceSecretBar({ pronounced: true, onOpen: ${noop} });
          var withDoor = SecurityHeader({ screen: "radar", action: door });
-         var traced = SecurityHeader({ screen: "radar", title: "Trace a secret" });
+         var back = 0;
+         var traced = SecurityHeader({ screen: "radar", title: "Trace a secret",
+           back: { label: "Security Radar", onClick: function () { back += 1; } } });
+         var tracedButtons = __nodes(traced, "button", [], 0);
+         tracedButtons.forEach(function (b) { b.props.onClick(); });
          return {
            door: String(door.props.className),
            kids: __nodes(withDoor, "TraceSecretBar", [], 0).length + __nodes(withDoor, "button", [], 0).length,
            title: String(__nodes(traced, "h1", [], 0).map(function (n) { return n.kids; })),
+           backs: tracedButtons.map(function (b) { return (b.kids || []).join(""); }),
+           back: back,
+           order: traced.kids.map(function (k) { return k && k.type; }).filter(Boolean),
          };
        })()`,
       ctx as object,
       { filename: "security head" },
-    ) as { door: string; kids: number; title: string };
+    ) as { door: string; kids: number; title: string; backs: string[]; back: number; order: string[] };
     expect(head.door).toBe("tracebar pronounced");
     expect(head.kids).toBeGreaterThan(0);
     expect(head.title).toBe("Trace a secret");
+    expect(head.backs).toEqual(["← Security Radar"]);
+    expect(head.back).toBe(1);
+    expect(head.order.slice(0, 2)).toEqual(["button", "h1"]);
     const app = readFileSync(new URL("app.jsx", rendererDir), "utf8");
     expect(app).toContain('<TraceSecretBar pronounced onOpen={() => openTrace("")} />');
     const radar = (trace: string) =>
-      `RadarScreen({ state: __state, onOpenSession: ${noop}, onGoRules: ${noop}, onGoIntegrations: ${noop}, onGoSettings: ${noop}, ruleFilter: "all", ruleNonce: 0, trace: ${trace}, onTraceClose: ${noop}, onTrace: ${noop} })`;
+      `RadarScreen({ state: __state, onOpenSession: ${noop}, ruleFilter: "all", ruleNonce: 0, trace: ${trace} })`;
     for (const s of [populatedState(), blankState()]) {
       ctx.__state = s;
       const count = (name: string, trace: string) =>
@@ -3501,9 +3539,10 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
     expect(radarSrc).not.toMatch(/<TraceSecretBar/);
     const overviewSrc = readFileSync(new URL("screens/overview.jsx", rendererDir), "utf8");
     expect(overviewSrc).not.toMatch(/<TraceSecretBar/);
-    // …and the Overview's title row carries its count the same way.
-    expect(overviewSrc).not.toMatch(/<ActiveCount state/);
-    expect(app).toContain('<ActiveCount state={state} onGoRadar={openRadar} />');
+    // The Overview's title row carries no count pill: the posture line says it.
+    expect(app).not.toContain("ActiveCount");
+    // The back link lives in the header only — not again in the trace's body.
+    expect(readFileSync(new URL("screens/radar-trace.jsx", rendererDir), "utf8")).not.toContain("← Security Radar");
     // The menus reach it: the tray and the app menu both carry the door.
     const tray = readFileSync(new URL("main/tray.ts", root), "utf8");
     const menu = readFileSync(new URL("main/menu.ts", root), "utf8");
@@ -3523,7 +3562,7 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
          var out = [];
          groups.forEach(function (group) {
            if (!/\\[redacted/.test(group.face.excerpt || "")) return;
-           __nodes(FindingGroup({ group: group, policy: __state.prefs.policy, state: __state, onGoSettings: ${noop}, expanded: true, onToggle: ${noop}, onOpenSession: ${noop}, onTrace: ${noop} }), "button", [], 0)
+           __nodes(FindingGroup({ group: group, policy: __state.prefs.policy, state: __state, expanded: true, onToggle: ${noop}, onOpenSession: ${noop} }), "button", [], 0)
              .forEach(function (n) { out.push(String(n.kids)); });
          });
          return out;
@@ -3578,9 +3617,9 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
         { filename: "trace reveal " + platform },
       ) as string;
     };
-    expect(links("macos")).toContain("show in Finder →");
-    expect(links("windows")).toContain("show in Explorer →");
-    expect(links("linux")).toContain("show in folder →");
+    expect(links("macos")).toContain("Reveal in Finder →");
+    expect(links("windows")).toContain("Show in Explorer →");
+    expect(links("linux")).toContain("Open folder →");
     expect(links("linux")).not.toContain("Finder");
   });
 });
@@ -3606,16 +3645,15 @@ describe("no Mac wording off macOS (renderer)", () => {
     /macOS notifications/,
   ];
   const calls: Array<[string, string]> = [
-    ["Overview", `OverviewScreen({ state: __state, onGoRadar: ${noop}, onOpenSession: ${noop}, onTraceSecret: ${noop} })`],
+    ["Overview", `OverviewScreen({ state: __state, onGoRadar: ${noop}, onOpenSession: ${noop} })`],
     [
       "Radar",
-      `RadarScreen({ state: __state, onOpenSession: ${noop}, onGoRules: ${noop}, onGoIntegrations: ${noop},
-        onGoSettings: ${noop}, ruleFilter: "all", ruleNonce: 0 })`,
+      `RadarScreen({ state: __state, onOpenSession: ${noop}, ruleFilter: "all", ruleNonce: 0 })`,
     ],
     ["Analytics", `AnalyticsScreen({ state: __state, onOpenRule: ${noop}, onGoRules: ${noop} })`],
-    ["Rules", `RulesScreen({ state: __state, onGoSettings: ${noop} })`],
-    ["Settings", `SettingsScreen({ state: __state, onGoRules: ${noop} })`],
-    ["Integrations", "IntegrationsScreen({ state: __state })"],
+    ["Rules", `RulesScreen({ state: __state })`],
+    ["Settings", "SettingsScreen({ state: __state, checkNonce: 0 })"],
+    ["Integrations", `IntegrationsScreen({ state: __state, onGoRules: ${noop} })`],
     ["Onboarding", "OnboardingScreen({ state: __state })"],
     ["Usage", `GraphsScreen({ state: __state, onOpenTask: ${noop} })`],
     [
@@ -3687,7 +3725,12 @@ describe("no Mac wording off macOS (renderer)", () => {
   it("says the five v0.5.2 sentences the platform's way", () => {
     const settings = (platform: string) => {
       ctx.__state = on(platform, populatedState());
-      return words(`SettingsScreen({ state: __state, onGoRules: ${noop} })`);
+      return words("SettingsScreen({ state: __state, checkNonce: 0 })");
+    };
+    // The on-device model's row moved to Guardrails' Protection card.
+    const guardrails = (platform: string) => {
+      ctx.__state = on(platform, populatedState());
+      return words("RulesScreen({ state: __state })");
     };
     const usage = (platform: string) => {
       // The use-case card (and its "nothing leaves" note) needs a week with time in it.
@@ -3704,7 +3747,7 @@ describe("no Mac wording off macOS (renderer)", () => {
       return words(`GraphsScreen({ state: __state, onOpenTask: ${noop} })`);
     };
     const linux = settings("linux");
-    expect(linux).toContain("It runs inside this app on this computer, and nothing it reads leaves the machine.");
+    expect(guardrails("linux")).toContain("Nothing it reads leaves this computer.");
     expect(linux).toContain("read what this computer has metered");
     expect(linux).toContain("only silences the duplicate in the desktop's notification list");
     expect(settings("windows")).toContain("only silences the duplicate in the Windows notification center");
@@ -3714,7 +3757,7 @@ describe("no Mac wording off macOS (renderer)", () => {
     expect(usage("linux")).toContain("nothing leaves this computer");
     // macOS keeps its own names.
     const mac = settings("macos");
-    expect(mac).toContain("It runs inside this app on this Mac");
+    expect(guardrails("macos")).toContain("Nothing it reads leaves this Mac.");
     expect(mac).toContain("read what this Mac has metered");
     expect(mac).toContain("the duplicate in Notification Center");
     expect(mac).toContain("Menu bar");

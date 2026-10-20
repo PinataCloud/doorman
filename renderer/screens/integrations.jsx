@@ -2,19 +2,8 @@
    (transcript trees), and what enforces (the PreToolUse guard). Presence,
    freshness and totals all come from the capture engine. */
 
-function IntegrationsScreen({ state, onGoSettings, focus, onFocused }) {
+function IntegrationsScreen({ state, onGoRules }) {
   const cap = state.capture;
-
-  // A link from another screen names the section it means ("mcp" from the
-  // Radar's "MCP servers unreviewed" row, "coverage" from "could be guarded");
-  // land on it rather than on the page top, then hand the focus back so the
-  // next visit starts at the top again.
-  useEffect(() => {
-    if (!focus) return;
-    const el = document.querySelector('[data-section="' + focus + '"]');
-    if (el) el.scrollIntoView({ block: "start" });
-    if (onFocused) onFocused();
-  }, [focus]);
 
   return (
     <div>
@@ -24,7 +13,7 @@ function IntegrationsScreen({ state, onGoSettings, focus, onFocused }) {
 
       <SetupHealthCard doctor={state.doctor} />
 
-      <CoverageCard state={state} onGoSettings={onGoSettings} />
+      <CoverageCard state={state} onGoRules={onGoRules} />
 
       {surfaceShown("editor_extension") ? <EditorExtensionCard state={state} /> : null}
 
@@ -33,11 +22,8 @@ function IntegrationsScreen({ state, onGoSettings, focus, onFocused }) {
           server nobody had reviewed. It comes back when the family does. */}
       {mcpFamilyShown() ? <McpInventoryCard mcp={state.mcp} state={state} /> : null}
 
-      {/* Enforcement deliberately has NO card here anymore. It lived on both
-          this screen and Settings → Real time protection — two switches for the
-          same guard, drifting copy, and a duplicated error path. Settings owns
-          it now (whose rules, then the rules); Radar's posture line already
-          links there for anyone arriving from the security side. */}
+      {/* Enforcement has NO card here: the guard's switches live once, in
+          Guardrails → Protection, so there is one switch and one error path. */}
     </div>
   );
 }
@@ -173,8 +159,7 @@ function SetupHealthCard({ doctor }) {
               The guard and editor wiring all check out
             </div>
             <div className="d">
-              Re-checked at start, on every change to a hook file, and every 30 minutes
-              {d.last_run_at ? " · last " + relTime(d.last_run_at) : ""}.
+              Re-checked at start, on every change to a hook file, and every 30 minutes.
             </div>
           </div>
         </div>
@@ -324,7 +309,7 @@ const captureStatFor = (capture, toolId) =>
   (capture && capture.apps ? capture.apps[toolId] : null) ||
   null;
 
-function CoverageCard({ state, onGoSettings }) {
+function CoverageCard({ state, onGoRules }) {
   const cap = state.capture;
   const guardInstalled = !!state.radar.guard_installed;
   const [wiring, setWiring] = useState(false);
@@ -371,13 +356,32 @@ function CoverageCard({ state, onGoSettings }) {
 
   const plural = (n, one) => n.toLocaleString("en-US") + " " + one + (n === 1 ? "" : "s");
 
-  const row = (t, dotClass) => {
+  // One explanation per group: when every row of a group carries the same
+  // note, it is said once under the group label and the rows keep only what
+  // differs between them.
+  const sharedNote = (list) =>
+    list.length > 0 && list[0].note && list.every((t) => t.note === list[0].note) ? list[0].note : null;
+  const guardedNote = sharedNote(guarded);
+
+  const row = (t, dotClass, groupNote) => {
     const stat = t.captured ? captureStatFor(cap, t.id) : null;
-    const when = stat && stat.last_at
-      ? " · last activity " + relTime(stat.last_at)
-      : t.last_active_at
-        ? " · active " + relTime(t.last_active_at)
-        : "";
+    const parts = [];
+    if (t.note && t.note !== groupNote) parts.push(t.note);
+    if (stat && stat.turns > 0) {
+      parts.push(
+        plural(stat.sessions, "session") +
+          " · " +
+          plural(stat.turns, "turn") +
+          " · " +
+          /* A rail with turns but no tokens is UNMETERED, not idle —
+             several of the hosts read through the transcript-source
+             registry report no token counts at all, and "0 tokens"
+             would read as "nothing ran" rather than "we don't know". */
+          (stat.tokens > 0 ? fmtTokens(stat.tokens) + " tokens" : "tokens not reported"),
+      );
+    }
+    if (stat && stat.last_at) parts.push("last activity " + relTime(stat.last_at));
+    else if (t.last_active_at) parts.push("active " + relTime(t.last_active_at));
     return (
       <div className="setting" key={t.id}>
         <div className="what">
@@ -390,24 +394,7 @@ function CoverageCard({ state, onGoSettings }) {
             <ToolMark tool={t.id} /> {t.name}
             <span className="cover-meta" style={{ fontWeight: 400 }}> · {SHADOW_KIND_LABELS[t.kind] || t.kind}</span>
           </div>
-          <div className="d">
-            {t.note}
-            {stat && stat.turns > 0 ? (
-              <span className="cover-meta">
-                {" · " +
-                  plural(stat.sessions, "session") +
-                  " · " +
-                  plural(stat.turns, "turn") +
-                  " · " +
-                  /* A rail with turns but no tokens is UNMETERED, not idle —
-                     several of the hosts read through the transcript-source
-                     registry report no token counts at all, and "0 tokens"
-                     would read as "nothing ran" rather than "we don't know". */
-                  (stat.tokens > 0 ? fmtTokens(stat.tokens) + " tokens" : "tokens not reported")}
-              </span>
-            ) : null}
-            {when}
-          </div>
+          {parts.length > 0 ? <div className="d cover-meta">{parts.join(" · ")}</div> : null}
         </div>
         {/* No chip. The group label says Covered, the dot says it in colour and
             the note says how — a green "watching" pill on top was a fourth copy
@@ -424,12 +411,17 @@ function CoverageCard({ state, onGoSettings }) {
     >
       <div className="cover-strip" role="list" aria-label="Coverage summary">
         <span className="mode-chip covered" role="listitem"><span className="dot" aria-hidden="true" /><b>{guarded.length}</b> guarded</span>
-        <span className="mode-chip watch" role="listitem"><span className="dot" aria-hidden="true" /><b>{meteredOnly.length}</b> watch only</span>
-        <span className="mode-chip act" role="listitem"><span className="dot" aria-hidden="true" /><b>{oneSwitch.length}</b> one switch away</span>
-        <span className="mode-chip soon" role="listitem"><span className="dot" aria-hidden="true" /><b>{soon.length}</b> identified</span>
-        <span className="mode-chip none" role="listitem"><span className="dot" aria-hidden="true" /><b>{missing.length}</b> not detected</span>
+        {meteredOnly.length > 0 ? (
+          <span className="mode-chip watch" role="listitem"><span className="dot" aria-hidden="true" /><b>{meteredOnly.length}</b> watch only</span>
+        ) : null}
+        {oneSwitch.length > 0 ? (
+          <span className="mode-chip act" role="listitem"><span className="dot" aria-hidden="true" /><b>{oneSwitch.length}</b> one switch away</span>
+        ) : null}
+        {soon.length > 0 ? (
+          <span className="mode-chip soon" role="listitem"><span className="dot" aria-hidden="true" /><b>{soon.length}</b> identified</span>
+        ) : null}
       </div>
-      <div className="cardnote" style={{ marginTop: 0 }}>
+      <div className="cardnote lead">
         Every AI tool found on this computer and what Doorman does for it right now — guarded means risky
         tool calls are held before they run; metered means sessions and token usage are read. A local scan
         of each tool's own folders — nothing leaves this computer.
@@ -438,7 +430,10 @@ function CoverageCard({ state, onGoSettings }) {
       {guarded.length > 0 ? (
         <>
           <div className="cover-group"><span className="lab">Guarded</span></div>
-          {guarded.map((t) => row(t, "on"))}
+          {guardedNote ? (
+            <div className="cardnote" style={{ marginTop: "var(--s2)" }}>{guardedNote}</div>
+          ) : null}
+          {guarded.map((t) => row(t, "on", guardedNote))}
         </>
       ) : null}
 
@@ -449,7 +444,7 @@ function CoverageCard({ state, onGoSettings }) {
             {/* Two different asks. With the guard OFF, switching it on is a
                 decision with consequences beyond this card (hold window,
                 auto-deny, every agent on the Mac), so this is a LINK to the
-                switch in Settings → Real time protection, where those live —
+                switch on Guardrails → Real-time protection, where those live —
                 not a button that flips it from an inventory screen. With the
                 guard ON but not in these hosts yet, "Wire in" is a repair:
                 the decision was made, this just finishes it. */}
@@ -465,10 +460,10 @@ function CoverageCard({ state, onGoSettings }) {
             ) : (
               <button
                 className="linkbtn"
-                title="The switch lives in Settings → Real time protection, with the hold window and what happens when nobody answers"
-                onClick={() => onGoSettings && onGoSettings()}
+                title="The switch lives on Guardrails, with the hold window and what happens when nobody answers"
+                onClick={() => onGoRules && onGoRules()}
               >
-                Turn real time protection on in Settings →
+                Turn on real-time protection →
               </button>
             )}
           </div>
@@ -507,10 +502,10 @@ function CoverageCard({ state, onGoSettings }) {
                   ) : (
                     <button
                       className="linkbtn"
-                      title="The switch lives in Settings → Real time protection"
-                      onClick={() => onGoSettings && onGoSettings()}
+                      title="The switch lives on Guardrails"
+                      onClick={() => onGoRules && onGoRules()}
                     >
-                      Turn real time protection on in Settings →
+                      Turn on real-time protection →
                     </button>
                   )
                 ) : null}
@@ -544,7 +539,7 @@ function CoverageCard({ state, onGoSettings }) {
         // search over it, because 30-odd names is a scan and one typed word
         // is not.
         <Advanced label={"Not detected (" + missing.length + ")"}>
-          <div className="cardnote" style={{ marginTop: 0 }}>
+          <div className="cardnote lead">
             Doorman looked for these AI tools but didn't find them on this computer.
           </div>
           <div className="cover-none-body">
@@ -862,7 +857,7 @@ function McpInventoryCard({ mcp, state }) {
 
   return (
     <Card title="MCP servers" hint={hint} section="mcp">
-      <div className="cardnote" style={{ marginTop: 0 }}>
+      <div className="cardnote lead">
         {review
           ? "Every MCP server this computer's agents can call — from their configs and from transcripts. Review one with " +
             "Doorman AI; recognizing it, or routing it through the gateway, is a click under the answer. A recognized " +

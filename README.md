@@ -62,7 +62,7 @@ On first launch, a short setup:
    history included, so usage and findings fill in from what they have
    already done.
 2. **Asks about the guard.** *Pause risky actions and ask me first* is off
-   until you turn it on, here or later in Settings → Real time protection.
+   until you turn it on, here or later in Guardrails → Protection.
    With it on, a risky tool call waits for your answer in a floating prompt
    before it runs. On Windows the guard needs [Node.js](https://nodejs.org)
    on the PATH for now; on macOS and Linux it runs on the app's own runtime.
@@ -194,7 +194,7 @@ sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doo
   the guard's state in the status bar, and lets you answer held calls in the
   editor. It is packaged into a `.vsix` at build time and installed through the
   editor's own `code` CLI.
-- **"How to fix this?"**: beside a finding, this builds a prompt from the
+- **"Ask your agent"**: beside a finding, this builds a prompt from the
   masked evidence (`main/ai-assistant.ts`) for you to copy into your own coding
   agent. The app sends nothing itself.
 - **Setup health** (`main/lib/doctor.ts`): checks that the guard's hook entries,
@@ -219,7 +219,7 @@ sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doo
   (`main/lib/model-assets.ts`), written only after it verifies, and re-hashed
   each time the app loads it (a file that no longer matches is re-fetched,
   with the other model running meanwhile if it is installed). Two models
-  can be selected in Settings → AI-delivered protection:
+  can be selected in Guardrails → Protection → AI-delivered protection:
   - **Doorman (fine-tuned, recommended)**, the default: Llama Prompt Guard 2
     22M fine-tuned for tool output (int8 ONNX, about 96 MB with its
     tokenizer). It downloads from Hugging Face,
@@ -233,7 +233,7 @@ sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doo
 
   While the fine-tuned model cannot be fetched (no network, an HTTP error,
   a file that fails its sha256 pin), the app downloads and runs the
-  **stock** model in its place (never no model) and says so in Settings; it
+  **stock** model in its place (never no model) and says so in Guardrails; it
   retries, and switches to the fine-tuned model by itself once that
   installs. So with the default selection the one download is the
   fine-tuned model from `PinataCloud/Llama-Doorman-22M`; stock is fetched
@@ -369,7 +369,7 @@ run refuses to write hook documents in the real home.
 
 ### Environment settings
 
-The injection classifier has one row in Settings → AI-delivered protection:
+The injection classifier has one row in Guardrails → Protection → AI-delivered protection:
 an on/off switch and a model dropdown (Doorman's fine-tuned model, the
 default, or stock Prompt Guard 2). The stored choice is written only when it
 is stock (`injection_classifier.model` in the policy); no value means the

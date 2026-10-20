@@ -57,15 +57,6 @@ const INITIAL_SCREEN = SCREEN_IDS.includes(REQUESTED_SCREEN) ? REQUESTED_SCREEN 
 function App() {
   const [state, setState] = useState(null);
   const [screen, setScreen] = useState(INITIAL_SCREEN);
-  // Which Integrations section a cross-screen link asked for ("mcp",
-  // "coverage"): the screen scrolls it into view once mounted, then clears it.
-  // Without this the Radar's "MCP servers →" landed on the top of Integrations
-  // and left the reader to find the section themselves.
-  const [integrationsFocus, setIntegrationsFocus] = useState(null);
-  const goIntegrations = (section) => {
-    setIntegrationsFocus(section || null);
-    setScreen("integrations");
-  };
   // Radar → ledger deep link: which session the ledger should open on arrival,
   // and (when the click came from a specific finding, not just a group) which
   // finding to scroll to and highlight once it's loaded.
@@ -102,6 +93,12 @@ function App() {
     setScreen("radar");
   };
   traceRef.current = openTrace;
+  // Each screen opens at its top; the content pane is shared, so its scroll
+  // would otherwise carry over from the last screen.
+  const contentRef = useRef(null);
+  useEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [screen]);
 
   useEffect(() => {
     let live = true;
@@ -191,6 +188,12 @@ function App() {
         : state.radar.summary.open;
   const enforcing = enforcingCount(state);
   const protection = protectionState(state, enforcing);
+  // Picking a sidebar item lands on that screen's top level: the Radar's
+  // Trace sub page is part of where you were, not where you asked to go.
+  const pickScreen = (id) => {
+    setTrace(null);
+    setScreen(id);
+  };
 
   return (
     <div className="shell">
@@ -200,7 +203,7 @@ function App() {
       <div className="sidebar">
         {/* The brand carries what protection amounts to, on every screen: a
             badge on the mark (the menu-bar icon's status dot) and the line under
-            the name, which is also the way to Settings — so not a link there. */}
+            the name, which is also the way to Guardrails — so not a link there. */}
         <div className="brand">
           <span className="brand-mark">
             <img src="_asset/doorman-mark-512.png" alt="" />
@@ -211,11 +214,11 @@ function App() {
             <ProtectionBadge
               state={state}
               enforcing={enforcing}
-              onGoSettings={screen === "settings" ? undefined : () => setScreen("settings")}
+              onGoRules={screen === "rules" ? undefined : () => setScreen("rules")}
             />
           </span>
         </div>
-        <Nav screen={screen} onPick={setScreen} radarOpen={radarOpen} />
+        <Nav screen={screen} onPick={pickScreen} radarOpen={radarOpen} />
         <div className="foot">
           <button
             type="button"
@@ -244,7 +247,7 @@ function App() {
         </div>
       </div>
 
-      <div className="content">
+      <div className="content" ref={contentRef}>
         <div className="drag-strip" />
         {/* The content pane's own right/bottom padding is dead cream space —
             same background, nothing ever renders there — but it wasn't
@@ -263,11 +266,10 @@ function App() {
           <SecurityHeader
             screen={screen}
             title={screen === "radar" && trace ? "Trace a secret" : undefined}
+            back={screen === "radar" && trace ? { label: "Security Radar", onClick: () => setTrace(null) } : undefined}
             action={
               screen === "radar" && !trace ? (
                 <TraceSecretBar pronounced onOpen={() => openTrace("")} />
-              ) : screen === "overview" ? (
-                <ActiveCount state={state} onGoRadar={openRadar} />
               ) : null
             }
           />
@@ -294,30 +296,23 @@ function App() {
           <RadarScreen
             state={state}
             onOpenSession={openSession}
-            onGoRules={() => setScreen("rules")}
-            onGoIntegrations={goIntegrations}
-            onGoSettings={() => setScreen("settings")}
             ruleFilter={radarRule}
             ruleNonce={radarRuleNonce}
             sessionFilter={radarSession}
             focusFindingId={radarFocusFinding}
             focusNonce={radarFocusNonce}
             trace={trace}
-            onTraceClose={() => setTrace(null)}
-            onTrace={openTrace}
           />
         ) : null}
         {screen === "analytics" ? <AnalyticsScreen state={state} onOpenRule={openRule} onGoRules={() => setScreen("rules")} /> : null}
-        {screen === "rules" ? <RulesScreen state={state} onGoSettings={() => setScreen("settings")} /> : null}
+        {screen === "rules" ? <RulesScreen state={state} /> : null}
         {screen === "integrations" ? (
           <IntegrationsScreen
             state={state}
-            onGoSettings={() => setScreen("settings")}
-            focus={integrationsFocus}
-            onFocused={() => setIntegrationsFocus(null)}
+            onGoRules={() => setScreen("rules")}
           />
         ) : null}
-        {screen === "settings" ? <SettingsScreen state={state} onGoRules={() => setScreen("rules")} checkNonce={updateCheck} /> : null}
+        {screen === "settings" ? <SettingsScreen state={state} checkNonce={updateCheck} /> : null}
       </div>
 
       <NoticeStack notices={state.notices || []} onNav={setScreen} state={state} onGoSettings={() => setScreen("settings")} />
@@ -441,10 +436,10 @@ function protectionState(state, enforcing) {
     kind === "protected"
       ? levelPart + enforcing.acting + " of " + enforcing.total + " rules act before a tool call runs · " + agentsPart
       : kind === "watch"
-        ? levelPart + "real time protection is on, but no rule is set to hold or block — every rule only watches · " + agentsPart
+        ? levelPart + "real-time protection is on, but no rule is set to Ask or Block — every rule only watches · " + agentsPart
         : enforcing.tampered
-          ? "The guard was changed outside this app, so no rule can act until it is reinstalled — repair it in Settings"
-          : "Real time protection is off, so no rule can act — turn it on in Settings";
+          ? "The guard was changed outside this app, so no rule can act until it is reinstalled — repair it in Guardrails"
+          : "Real-time protection is off, so no rule can act — turn it on in Guardrails";
   return { kind, word, why, level, guarded, acting, tampered: !!enforcing.tampered, action: kind === "off" ? (enforcing.tampered ? "Repair" : "Turn on") : "Manage" };
 }
 
@@ -453,9 +448,9 @@ function protectionState(state, enforcing) {
  * the agents guarded (the rules acting when no agent is installed yet). The
  * level and the rule count are the tip. When nothing can act the line is the
  * state and an arrow, the way to the fix (its label and tip name it: Turn on,
- * Repair). The whole line is the way to Settings; on Settings it is just text.
+ * Repair). The whole line is the way to Guardrails; there it is just text.
  */
-function ProtectionBadge({ state, enforcing, onGoSettings }) {
+function ProtectionBadge({ state, enforcing, onGoRules }) {
   const p = protectionState(state, enforcing);
   const kids = [
     <strong key="w">{p.word}</strong>,
@@ -465,17 +460,17 @@ function ProtectionBadge({ state, enforcing, onGoSettings }) {
         {p.guarded > 0 ? p.guarded + (p.guarded === 1 ? " agent" : " agents") : enforcing.acting + "/" + enforcing.total + " rules"}
       </span>
     ) : null,
-    onGoSettings ? <span key="a" className="pb-arrow" aria-hidden="true">›</span> : null,
+    onGoRules ? <span key="a" className="pb-arrow" aria-hidden="true">›</span> : null,
   ];
   const className = "protbadge " + p.kind;
-  return onGoSettings ? (
+  return onGoRules ? (
     <button
       className={className}
       data-tampered={p.tampered ? "" : undefined}
       data-action={p.action}
       data-tip={p.why}
-      aria-label={p.word + " — " + p.why + ". " + p.action + " in Settings"}
-      onClick={onGoSettings}
+      aria-label={p.word + " — " + p.why + ". " + p.action + " in Guardrails"}
+      onClick={onGoRules}
     >
       {kids}
     </button>
@@ -514,9 +509,16 @@ function ProtectionMarkBadge({ protection }) {
   );
 }
 
-function SecurityHeader({ screen, title, action }) {
+/* `back`: { label, onClick } for a sub page — the way up sits above the
+   title, where a breadcrumb reads, not in the page body. */
+function SecurityHeader({ screen, title, action, back }) {
   return (
     <div className="screen-head sechead">
+      {back ? (
+        <button type="button" className="linkbtn sechead-back" onClick={back.onClick}>
+          ← {back.label}
+        </button>
+      ) : null}
       <h1>{title || SECURITY_TITLES[screen] || "Security"}</h1>
       {action ? <span className="spacer" /> : null}
       {action || null}
@@ -533,7 +535,7 @@ const NOTICE_NAV_LABELS = {
   ledger: "Open Event Ledger",
   integrations: "Open Integrations",
   settings: "Open Settings",
-  integrations: "Open Integrations",
+  overview: "Open Overview",
 };
 
 /**

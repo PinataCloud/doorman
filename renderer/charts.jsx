@@ -75,13 +75,13 @@ function xLabelEvery(innerW, n) {
 /**
  * Which x positions get a label: every `every`-th, plus ALWAYS the last one
  * (the axis has to state where the range ends) — and a regular tick is dropped
- * when it lands too close to that last one. Without the gap rule a 14-day
- * window at step 2 printed "MON" and "TODAY" a few pixels apart and they
- * overprinted into a smudge.
+ * when it lands too close to that last one, so a 14-day window at step 2 does
+ * not print "MON" and "TODAY" a few pixels apart. When every slot is labelled
+ * there is room for all of them, so no gap applies.
  */
 function xLabelVisible(i, n, every) {
   if (i === n - 1) return true;
-  const gap = Math.max(2, Math.ceil(every / 2));
+  const gap = every === 1 ? 1 : Math.max(2, Math.ceil(every / 2));
   return i % every === 0 && n - 1 - i >= gap;
 }
 
@@ -308,7 +308,7 @@ function ColumnChart({ days, series, format, height = 208, todayIso, tipNote }) 
  * series, so no legend: 2px line, a 10% wash under it, and an end dot with a
  * 2px surface ring so it stays legible over the fill.
  */
-function CumulativeArea({ days, valueOf, format, color = "var(--c1)", height = 150 }) {
+function CumulativeArea({ days, valueOf, format, color = "var(--c1)", height = 150, todayIso }) {
   const [ref, width] = useChartWidth();
   const [hover, setHover] = useState(null);
   const wrapRef = useRef(null);
@@ -386,7 +386,11 @@ function CumulativeArea({ days, valueOf, format, color = "var(--c1)", height = 1
                 y={height - 7}
                 textAnchor={i === 0 ? "start" : i === points.length - 1 ? "end" : "middle"}
               >
-                {xLabelVisible(i, points.length, every) ? dayLabel(p.date) : ""}
+                {todayIso && p.date === todayIso
+                  ? "TODAY"
+                  : xLabelVisible(i, points.length, every)
+                    ? dayLabel(p.date)
+                    : ""}
               </text>
               <rect
                 x={PAD_L + stepX * i - stepX / 2}
@@ -435,8 +439,17 @@ function RankedBars({ rows, format, height = 22, maxRows = 8, onPick, activeKey 
           className={"rk" + (onPick ? " pick" : "") + (activeKey === r.key ? " on" : "")}
           key={r.key}
           onClick={onPick ? () => onPick(r.key) : undefined}
+          role={onPick ? "button" : undefined}
           tabIndex={onPick ? 0 : undefined}
-          onKeyDown={onPick ? (e) => (e.key === "Enter" ? onPick(r.key) : null) : undefined}
+          onKeyDown={
+            onPick
+              ? (e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  onPick(r.key);
+                }
+              : undefined
+          }
           title={r.title || undefined}
         >
           <span className="rk-label">{r.label}</span>

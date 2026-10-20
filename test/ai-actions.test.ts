@@ -105,10 +105,10 @@ describe("aiActionsFor", () => {
   it("a finding: triage statuses it is NOT already in, plus holding an enforceable rule that only watches", async () => {
     const actions = aiActionsFor("finding", { finding_id: "f1" }, state);
     expect(actions.map((a) => a.label)).toEqual([
-      "Mark false positive",
-      "Accept the risk",
-      "Mark resolved",
-      "Hold this rule from now on",
+      "False positive",
+      "Accept risk",
+      "Resolved",
+      "Set this rule to Ask",
     ]);
     await actions[0]!.run();
     await actions[3]!.run();
@@ -120,13 +120,13 @@ describe("aiActionsFor", () => {
 
   it("an already-triaged finding offers Reopen instead of its own status, and a radar-only or custom rule offers no mode change", () => {
     const labels = (id: string) => aiActionsFor("finding", { finding_id: id }, state).map((a) => a.label);
-    expect(labels("f4")).toEqual(["Accept the risk", "Mark resolved", "Reopen"]);
-    expect(labels("f5")).toEqual(["Mark false positive", "Accept the risk", "Mark resolved"]);
+    expect(labels("f4")).toEqual(["Accept risk", "Resolved", "Reopen"]);
+    expect(labels("f5")).toEqual(["False positive", "Accept risk", "Resolved"]);
   });
 
   it("an exposure triages every open sighting under it in one bulk call — the same rows the Radar card acts on", async () => {
     const actions = aiActionsFor("exposure", { finding_id: "f1" }, state);
-    expect(actions[0]!.label).toBe("Mark false positive");
+    expect(actions[0]!.label).toBe("False positive");
     expect(actions[0]!.done).toBe("Marked 2 sightings false positive");
     await actions[0]!.run();
     // f3 is already triaged — a different bucket, left alone.

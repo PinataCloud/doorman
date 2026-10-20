@@ -1,7 +1,7 @@
-/* Doorman AI in the Mac app — "How to fix this?" beside a finding.
+/* Doorman AI in the Mac app — "Ask your agent" beside an issue.
 
    Placement: where the issues are. A finding card, the held-call overlay, an
-   exposure on the Radar — each carries a "How to fix this?" entry point
+   exposure on the Radar — each carries an "Ask your agent" entry point
    (AiAskButton) that opens ONE drawer on the right with that thing as its
    subject. The drawer writes a prompt for the person's own coding agent
    (Claude Code, Codex, Cursor) from the masked context main builds for the
@@ -18,10 +18,10 @@ function askDoorman(contextRef, seedQuestion, title) {
   window.dispatchEvent(new CustomEvent("doorman-ai-open", { detail: { contextRef, seedQuestion, title } }));
 }
 
-/** What the button says when a caller doesn't override it. The label names the
-    ANSWER the person wants, not the machinery that produces it — "Ask AI" made
-    the assistant the subject; on a finding the subject is the fix. */
-const AI_ASK_LABEL = "How to fix this?";
+/** What the button says. The drawer writes a prompt for the person's own
+    coding agent, on every kind of subject (a finding, a held call, blocked
+    notifications), so the label names that and promises no particular answer. */
+const AI_ASK_LABEL = "Ask your agent";
 
 /**
  * The entry point: a small button where the issue is. The mark rides beside
@@ -157,12 +157,12 @@ function aiActionsFor(kind, ref, state, nav) {
         ? rows.filter((r) => r.exposure_key === face.exposure_key && bucket(r) === bucket(face)).map((r) => r.finding_id)
         : [face.finding_id];
     const what = ids.length > 1 ? ids.length + " sightings" : "this finding";
-    if (face.status !== "false_positive") out.push(triage(ids, "false_positive", "Mark false positive", "Marked " + what + " false positive"));
-    if (face.status !== "accepted_risk") out.push(triage(ids, "accepted_risk", "Accept the risk", "Accepted the risk on " + what));
-    if (face.status !== "resolved") out.push(triage(ids, "resolved", "Mark resolved", "Marked " + what + " resolved"));
+    if (face.status !== "false_positive") out.push(triage(ids, "false_positive", "False positive", "Marked " + what + " false positive"));
+    if (face.status !== "accepted_risk") out.push(triage(ids, "accepted_risk", "Accept risk", "Marked " + what + " accepted risk"));
+    if (face.status !== "resolved") out.push(triage(ids, "resolved", "Resolved", "Marked " + what + " resolved"));
     if (face.status !== "open") out.push(triage(ids, "open", "Reopen", "Reopened " + what));
     if (enforceable(face.detector) && modes[face.detector] !== "ask" && modes[face.detector] !== "block") {
-      out.push({ id: "mode:ask", label: "Hold this rule from now on", done: "Rule set to hold and ask", run: () => doorman.setDetectorMode(face.detector, "ask") });
+      out.push({ id: "mode:ask", label: "Set this rule to Ask", done: "Rule set to Ask", run: () => doorman.setDetectorMode(face.detector, "ask") });
     }
     return out;
   }
@@ -290,6 +290,18 @@ function AiDrawer({ state, onOpenSession }) {
     return () => window.removeEventListener("doorman-ai-open", onOpen);
   }, []);
 
+  // Escape closes — unless a held call is up: its overlay sits on top and
+  // owns Escape (Deny).
+  const holding = !!(state && state.approvals && state.approvals.length);
+  useEffect(() => {
+    if (!open || holding) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, holding]);
+
   const close = () => setOpen(false);
   if (!open || !subject) return null;
 
@@ -338,7 +350,7 @@ function AiDrawer({ state, onOpenSession }) {
       <div className="ai-head">
         <span className="ai-mark"><Icon name="spark" size={14} strokeWidth={2} /></span>
         <div className="ai-title">
-          <b>How to fix this</b>
+          <b>{AI_ASK_LABEL}</b>
           <span className="muted">
             <span className="ai-kind">{kindLabel}</span>
             {/* "This Mac · This Mac" when the kind IS the title — say it once. */}

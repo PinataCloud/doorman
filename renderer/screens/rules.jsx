@@ -26,20 +26,21 @@
         the server, an optional preceding taint and a directory scope, plan C1;
         the editor offers a dry run over the last 14 days first — advice, not a
         gate), exceptions (the ignore list, including the dated project-scoped
-        allows the approval panel writes, plan A2), and the way back: restore
-        every shipped rule to the mode Doorman ships it at.
+        allows the approval panel writes, plan A2), and My wallets (the custom
+        half of the Crypto wallets & keys family).
+
+   Above both sits PROTECTION: the guard itself (Real-time protection, the hold
+   window, the timeout fallback, the AI re-read, the injection escalation).
+   With it off every rule below is observe-only, so it is the first answer.
 
    Radar-only rules are NOT on this page any more. They read whole transcripts
    after the fact, so there is no call to hold and no rung to set — a control
    that offered one was offering a choice that did nothing.
 
-   Install-level guard behaviour (the toggle, the hold window, the timeout
-   fallback, the injection escalation) stays in Settings, and the footer says so.
-
    With the guard NOT installed there is nothing to run before a call, so every
    mode on this screen is inert. The table then shows what is in force —
-   observe, all of it — with the controls disabled and a banner saying where
-   the choice went. The stored policy is never rewritten: those modes are what
+   observe, all of it — with the controls disabled and a banner pointing at the
+   Protection card. The stored policy is never rewritten: those modes are what
    resumes the moment the guard goes on. */
 
 const CUSTOM_SEVERITIES = ["critical", "high", "medium", "low"];
@@ -52,7 +53,7 @@ const CUSTOM_TAINTS = [
   { value: "sql_result", label: "after a database query" },
 ];
 
-function RulesScreen({ state, onGoSettings }) {
+function RulesScreen({ state }) {
   const policy = state.prefs.policy || {};
   const modes = policy.modes || {};
   const enforceable = Object.keys(SEC_DETECTORS).filter((id) => !SEC_DETECTORS[id].radarOnly);
@@ -74,16 +75,11 @@ function RulesScreen({ state, onGoSettings }) {
   return (
     <div>
       {/* The title row is SecurityHeader's — see radar.jsx. */}
-      {installed ? null : <GuardOffNotice wanted={wanted} onGoSettings={onGoSettings} />}
+      {installed ? null : <GuardOffNotice wanted={wanted} />}
 
-      {state.radar.guard_sync_error ? (
-        <GuardProblem
-          title={guardSyncTitle(state.radar.guard_sync_failures)}
-          error={state.radar.guard_sync_error}
-          failures={state.radar.guard_sync_failures}
-          note="The modes below are what the app wants. Wherever the update didn't land, the guard may still run an older policy, or none."
-        />
-      ) : null}
+      {/* A failed policy sync is reported once, inside Protection. */}
+      <ProtectionCard state={state} />
+
       <LevelCard state={state} frozen={frozen} installed={installed} />
 
       {/* Everything that belongs to no kind of risk, behind one disclosure —
@@ -97,7 +93,7 @@ function RulesScreen({ state, onGoSettings }) {
       <details className="rules-adv">
         <summary>
           Advanced
-          <span className="muted"> · saved sets, rule packs, your own rules, exceptions</span>
+          <span className="muted"> · saved sets, rule packs, your own rules, exceptions, my wallets</span>
         </summary>
 
         <SavedRuleSetsCard state={state} frozen={frozen} />
@@ -109,6 +105,8 @@ function RulesScreen({ state, onGoSettings }) {
         <CustomRulesCard state={state} guardOff={!installed} />
 
         <ExceptionsCard state={state} />
+
+        <WalletsCard state={state} />
       </details>
 
       {/* No "Restore Doorman defaults" box. Protective's mode map IS
@@ -117,15 +115,652 @@ function RulesScreen({ state, onGoSettings }) {
           notice's "Put Protective back" is it in one click from where the
           drift is reported. A second control doing the same write, with its
           own count of the same difference, could only ever agree or be a bug. */}
+    </div>
+  );
+}
 
-      <div className="cardnote" style={{ marginTop: "var(--s5)" }}>
-        The guard itself — on or off, how long a held call waits, what happens when nobody answers, the injection
-        escalation — lives in{" "}
-        <button className="linkbtn" onClick={onGoSettings}>
-          Settings →
+const HOLD_OPTIONS = [
+  { value: 30, label: "30 seconds" },
+  { value: 60, label: "1 minute" },
+  { value: 120, label: "2 minutes" },
+  { value: 300, label: "5 minutes" },
+];
+
+/** What the guard's SWITCH is called — the product's name for it everywhere.
+    The strip's dot and the sentence under it carry the STATE, so the name does
+    not have to. */
+function guardTitle() {
+  return "Real-time protection";
+}
+
+/**
+ * The guard strip's one sentence: which agents it guards, whether any agent
+ * on this Mac is left out, and — off — what turning it on would cover. Agents
+ * that are not on this Mac are not mentioned at all: "Gemini CLI — not on this
+ * Mac" is a fact about the catalog, not about this person's setup.
+ */
+function guardHostsSentence(hosts, installed, platform) {
+  const here = (hosts || []).filter((h) => h.present);
+  if (here.length === 0) return "On, but no supported agent is on " + thisMachine(platform) + ".";
+  const names = here.map((h) => h.label);
+  if (!installed) {
+    return "Off — the Radar's rules only watch. On, it holds or blocks what they catch in " + listOf(names) + " before the tool runs.";
+  }
+  const guarded = here.filter((h) => h.installed).map((h) => h.label);
+  const missing = here.filter((h) => !h.installed).map((h) => h.label);
+  let s = guarded.length > 0
+    ? "Guarding " + listOf(guarded) + " — flagged tool calls are checked before they run."
+    : "On, but not wired into any agent yet.";
+  if (missing.length > 0) s += " " + listOf(missing) + (missing.length === 1 ? " is" : " are") + " on " + thisMachine(platform) + " but not wired in yet.";
+  if (guarded.includes("Codex")) s += " Restart Codex and trust the hook in /hooks after the first install.";
+  return s;
+}
+
+/** "Claude Code asks natively; Codex warns and continues because native ask is
+    unsupported" — which half a host lands in is its descriptor's
+    supportsNativeAsk, not a hard-coded name. */
+function fallbackSentence(hosts, confirm) {
+  const list = hosts || [];
+  const join = (labels, one, many) => labels.join(" and ") + " " + (labels.length === 1 ? one : many);
+  const parts = [];
+  const ask = list.filter((h) => h.native_ask).map((h) => h.label);
+  const noAsk = list.filter((h) => !h.native_ask).map((h) => h.label);
+  if (ask.length > 0) parts.push(join(ask, "asks natively", "ask natively"));
+  if (noAsk.length > 0) {
+    // What a host with no prompt of its own does is the row below this one.
+    const strict = !confirm || confirm.unattended !== "continue";
+    parts.push(
+      strict
+        ? join(noAsk, "is denied", "are denied") + " because native ask is unsupported"
+        : join(noAsk, "warns and continues", "warn and continue") + " because native ask is unsupported",
+    );
+  }
+  if (parts.length === 0) return "Off uses each agent's own fallback.";
+  return "Off uses each agent's fallback: " + parts.join("; ") + ".";
+}
+
+/** The sentence under "Deny when Doorman can't ask": which installed hosts it
+ * actually changes anything for (those without a native ask). */
+function unattendedSentence(hosts, confirm) {
+  const list = hosts || [];
+  const noAsk = list.filter((h) => !h.native_ask).map((h) => h.label);
+  const strict = !confirm || confirm.unattended !== "continue";
+  const who = noAsk.length > 0 ? noAsk.join(", ") : "an agent without a prompt of its own";
+  if (strict) {
+    return (
+      "If this app isn't running and the agent can't ask you itself, a held call is denied instead of running — " +
+      who + ". Agents with a native prompt (Claude Code, Cursor, Copilot) ask on their own either way."
+    );
+  }
+  return "Off: with this app closed, " + who + " warns and continues — the call runs.";
+}
+
+/**
+ * The guard strip with no supported agent on this machine: an empty state, not
+ * an error. Before, the switch stayed live, and flipping it printed every
+ * agent and every folder it is looked for in — twice, as two red callouts.
+ * The first three agents by name, the rest behind a tooltip.
+ */
+function NoAgentsLine({ hosts, platform }) {
+  const labels = (hosts || []).map((h) => h.label);
+  const shown = labels.slice(0, 3);
+  const rest = labels.slice(3);
+  return (
+    <div className="d">
+      {"No AI agent on " + thisMachine(platform) + " yet. Doorman guards " + shown.join(", ")}
+      {rest.length > 0 ? " and " : null}
+      {rest.length > 0 ? (
+        <span className="gmore" data-tip={rest.join(", ")} tabIndex={0}>
+          {rest.length} more
+        </span>
+      ) : null}
+      {" "}— install one, then switch this on.
+    </div>
+  );
+}
+
+/* Scrolls to the Protection card and focuses its switch — the target of every
+   "turn real-time protection on" link on this screen. */
+function focusProtection() {
+  const card = document.querySelector('[data-section="protection"]');
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "start" });
+  const sw = card.querySelector('.guardbar [role="switch"]');
+  if (sw) sw.focus({ preventScroll: true });
+}
+
+/**
+ * Protection — the guard itself: installed or not, its hold behaviour, the
+ * AI re-read, the injection escalation, and whether it is still as the app
+ * left it. First on Guardrails because with it off every rule below is
+ * observe-only.
+ */
+function ProtectionCard({ state }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  // The position the switch is TRAVELLING to, or null when it is at rest.
+  // Separate from `busy` because they end at different moments: the IPC call
+  // resolves when the hook documents are written, but `guard_installed` only
+  // becomes true on the next broadcast state — holding the switch pending
+  // until the app's own state agrees is what stops it snapping back to "off"
+  // for a frame between the two.
+  const [pendingGuard, setPendingGuard] = useState(null);
+  const installed = state.radar.guard_installed;
+  const policy = state.prefs.policy || {};
+  const confirm = policy.confirm || { interactive: true, hold_seconds: 60, on_timeout: "deny", unattended: "deny" };
+  const integrity = state.radar.integrity;
+  const hosts = state.radar.guard_hosts || [];
+  const e = enforcingCount(state);
+  // Nothing on this machine for the guard to live in. While it's off, that is
+  // an empty state with the switch at rest — there is nothing it could do.
+  const noAgents = !installed && hosts.length > 0 && hosts.every((h) => !h.present);
+
+  // The app's own state caught up with what was asked for — the switch is at
+  // rest again. Also the release valve for a flip that FAILED: main leaves
+  // `guard_installed` where it was, `pendingGuard` still points the other way,
+  // and the error callout below says why, so the switch must return to the
+  // truth rather than sit striped forever. (A failure clears it directly; this
+  // covers the success path and any state change from elsewhere — the doctor
+  // re-merging the guard, a second window.)
+  useEffect(() => {
+    if (pendingGuard != null && installed === pendingGuard) setPendingGuard(null);
+  }, [installed, pendingGuard]);
+
+  const toggleGuard = () => {
+    // Fires ONCE: the switch is disabled while pending, and this guards the
+    // keyboard/double-click path into the same handler.
+    if (busy || pendingGuard != null) return;
+    const target = !installed;
+    setPendingGuard(target);
+    setBusy(true);
+    setError(null);
+    const call = installed ? window.doorman.uninstallGuard() : window.doorman.installGuard();
+    call.then((res) => {
+      setBusy(false);
+      if (res && res.ok === false) {
+        // The last agent went away between render and click: the strip below
+        // already says so, an error would only repeat it.
+        if (!res.no_agents) setError({ on: target, error: res.error || "unknown error", failures: res.failures || [] });
+        setPendingGuard(null);
+      }
+      // On success the switch stays pending until `guard_installed` agrees
+      // (the effect above) — writing the hooks and the state broadcast that
+      // reports them are two different moments.
+    });
+  };
+
+  return (
+    <Card
+      title="Protection"
+      section="protection"
+      /* No hint while the guard is off: the switch in this very card already
+         says so, and the header's red 0/N ratio says it on every security
+         screen. */
+      hint={installed ? e.enforcing + " of " + e.total + " rules act before a tool runs" : undefined}
+    >
+      {error ? (
+        <GuardProblem
+          title={error.on ? "Couldn't turn the guard on" : "Couldn't turn the guard off"}
+          error={error.error}
+          failures={error.failures}
+        />
+      ) : null}
+      {/* A sync that can't reach a hook document (usually a config file the
+          merge can't follow) means the guard in that agent is running an OLDER
+          policy than the one shown below, or none — while every other agent
+          took it. The error names each such agent; the one state this card
+          must never be quiet about. */}
+      {state.radar.guard_sync_error && !error ? (
+        <GuardProblem
+          title={guardSyncTitle(state.radar.guard_sync_failures)}
+          error={state.radar.guard_sync_error}
+          failures={state.radar.guard_sync_failures}
+          note="The modes below are what the app wants. Wherever the update didn't land, the guard may still run an older policy, or none."
+        />
+      ) : null}
+      {/* The other state this card must never be quiet about: the guard's
+          entry or bundle is not what the app left. A silent fail-open, made
+          loud — with the one action that fixes it. */}
+      {integrity && integrity.status === "tampered" ? (
+        <div className="callout bad" style={{ marginBottom: "var(--s4)" }}>
+          <b>The guard was changed outside this app.</b>{" "}
+          {integrity.problems.indexOf("entry_missing") >= 0 ? "Its hook entry is gone. " : ""}
+          {integrity.problems.indexOf("entry_altered") >= 0 ? "Its hook entry was rewritten. " : ""}
+          {integrity.problems.indexOf("artifact_missing") >= 0 ? "Its plugin files are missing or changed, so the entry points at nothing. " : ""}
+          {integrity.problems.indexOf("companion_missing") >= 0 ? "Its consent entry is gone, so the host skips the hook. " : ""}
+          {integrity.bundle_modified.length > 0 || integrity.bundle_missing.length > 0
+            ? (integrity.healed_bundle ? "Its files were modified and have been restored from the app. " : "Its files were modified. ")
+            : ""}
+          Nothing is being held until it is reinstalled.
+          <div style={{ marginTop: "var(--s3)" }}>
+            <button className="btn primary" disabled={busy} onClick={() => { setBusy(true); window.doorman.installGuard().then(() => setBusy(false)); }}>
+              {busy ? "Reinstalling…" : "Reinstall the guard"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* The guard's state is the first thing this card has to answer — with it
+          off, every control below is theatre. So it is a tinted strip, not a
+          setting row: amber while the rules are decorative, green while they are
+          law, with a switch that IS the state instead of an Install/Uninstall
+          verb the reader has to invert ("which state am I in that this button
+          would leave?"). Install/uninstall stays async underneath — the switch
+          disables while the hooks are being written. */}
+      <div className={"guardbar " + (installed ? "on" : noAgents ? "none" : "off")}>
+        <span className="gdot" aria-hidden="true" />
+        <div className="gtext">
+          <div className="t">{guardTitle(hosts)}</div>
+          {/* One sentence, built from the host registry (main: guard/hosts/
+              index.ts) so a new adapter shows up without an edit — but as
+              prose, not a ledger. "Claude Code — guarded · Codex — guarded ·
+              Cursor — not installed · …" made five rows of the same word; what
+              a person wants to know is WHICH agents are covered, and whether
+              any that live on this Mac is not. Agents that are not on this Mac
+              are simply not mentioned. */}
+          {noAgents ? (
+            <NoAgentsLine hosts={hosts} platform={state.platform} />
+          ) : (
+            <div className="d">{guardHostsSentence(hosts, installed, state.platform)}</div>
+          )}
+        </div>
+        {/* Named for what is happening, not "working…": installing writes
+            three hook documents, and the wait is long enough that a person
+            deserves to know which direction it is going. */}
+        {pendingGuard != null ? (
+          <span className="gbusy">{pendingGuard ? "turning on…" : "turning off…"}</span>
+        ) : busy ? (
+          <span className="gbusy">working…</span>
+        ) : null}
+        <Switch
+          ariaLabel={guardTitle(hosts)}
+          on={installed}
+          pending={pendingGuard}
+          disabled={busy || noAgents}
+          onChange={toggleGuard}
+        />
+      </div>
+
+      {/* AI-delivered protection: the local model that re-reads what the rules
+          catch (lib/injection-classifier.ts). One switch, default on, because
+          the fact a reader needs is the privacy one: the model runs in this
+          app's process and nothing it reads leaves the Mac. Beside it, WHICH
+          model: Doorman's fine-tuned one (the default) or stock Prompt Guard 2.
+          The row always names the model that actually RUNS — while the
+          fine-tuned one has no download yet, that is stock, and it says so.
+          The environment overrides (policy-env.ts) still win when set, and the
+          row says so rather than showing a control that changes nothing. */}
+      {(() => {
+        const assist = state.model_assist || {};
+        const ic = assist.injection_classifier || {};
+        const envSet = !!assist.env;
+        const choice = ic.model_choice || {};
+        const modelNote = injectionModelNote(choice);
+        const mb = (n) => Math.max(1, Math.round((n || 0) / 1048576));
+        // The model's own line: what is on disk, against the build the app
+        // pins. "Up to date" is exactly "every pinned file present" — a newer
+        // app pins a newer build, the old files miss the pins, the download
+        // starts on its own, and this line says so while it runs.
+        let status;
+        if (ic.downloading) {
+          status = (ic.installed ? "Updating the model… " : "Installing the model… ") + mb(ic.downloading.bytes_done) + " of " + mb(ic.downloading.bytes_total) + " MB.";
+        } else if (ic.download_error) {
+          status = "The model download failed (" + ic.download_error + ") — it retries on its own.";
+        } else if (!ic.runtime_present) {
+          status = "The on-device runtime is missing from this build.";
+        } else if (ic.installed) {
+          status = "Model installed and up to date" + (ic.version ? " (build " + ic.version + ")" : "") + ".";
+        } else {
+          status = "Model not installed yet — it downloads on its own" + (ic.enabled === false ? " once this is on" : "") + ".";
+        }
+        return (
+          <div className={"setting" + (envSet ? " is-off" : "")}>
+            <div className="what">
+              <div className="t">AI-delivered protection</div>
+              <div className="d">
+                An on-device model re-reads tool results a rule flags: plain text is stood down, real injections are
+                held with more confidence. Nothing it reads leaves {thisMachine(state.platform)}. {status}
+                {envSet ? " Set by the environment (DOORMAN_INJECTION_CLASSIFIER) — the switch is read-only." : ""}
+              </div>
+              {modelNote ? (
+                <div className="d injection-model-note" style={{ marginTop: "var(--s2)" }}>
+                  {modelNote}
+                </div>
+              ) : null}
+              {/* No "Built with Llama" line here (2026-09-06). The Llama
+                  license's attribution is carried where the model is actually
+                  named — the Guardrails screen's classifier row — and shipped
+                  in full as the LICENSE/NOTICE beside the model files. This row
+                  never names it, so the credit read as a stray fragment under a
+                  sentence about Doorman's own model. */}
+              {/* The bar while it downloads: the same meter the app-update row
+                  uses, so the two downloads in this app look like one thing.
+                  Only while it runs — a full bar sitting under a finished
+                  install is a control nobody needs. The sentence above already
+                  carries the MB, so the bar is the shape, not the numbers. */}
+              {ic.downloading && ic.downloading.bytes_total > 0 ? (
+                <div
+                  className="meter"
+                  style={{ height: 6, marginTop: "var(--s3)", maxWidth: 360 }}
+                  role="progressbar"
+                  aria-label="Downloading the on-device threat model"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round((ic.downloading.bytes_done / ic.downloading.bytes_total) * 100)}
+                >
+                  <span
+                    className="mp"
+                    style={{
+                      width: Math.max(2, Math.round((ic.downloading.bytes_done / ic.downloading.bytes_total) * 100)) + "%",
+                      background: "var(--c1)",
+                      transition: "width 300ms ease",
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <div className="row hold-controls">
+              <select
+                aria-label="Injection model"
+                title={choice.env ? "Set by DOORMAN_INJECTION_CLASSIFIER_MODEL" : "Which on-device model re-reads flagged tool results"}
+                disabled={!!choice.env || ic.enabled === false}
+                value={choice.selected || "doorman-1"}
+                onChange={(e) => window.doorman.setInjectionClassifier({ model: e.target.value })}
+              >
+                {INJECTION_MODEL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <Switch
+                ariaLabel="AI-delivered protection"
+                on={ic.enabled !== false}
+                disabled={envSet}
+                onChange={(v) => window.doorman.setInjectionClassifier({ enabled: v })}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* No Integrity row (2026-09-06). The check still runs at boot, on every
+          change to a hook document and every minute for the bundle — but a
+          row that reads "installed as the app left it" 99% of the time is a
+          row nobody needs, and the 1% is the red banner above with its
+          Reinstall button. Setup health on Integrations lists the same checks
+          per host with a Fix, so "Check now" has a home there too. */}
+
+      {/* The hold rows describe what the GUARD does with a flagged call, so
+          with the guard off they are inert — dimmed and disabled, same as the
+          two dependent rows already dim when holding itself is off. */}
+      {/* Two rows where there were three (2026-09-06). The hold window is not a
+          setting of its own — it is HOW LONG the hold row holds — so it sits in
+          that row's control cluster, beside the switch (beautifului.dev's
+          inspector rows: one label, the compact controls that qualify it at the
+          right). And "if nobody answers" is a yes/no — deny, or fall through to
+          the agent's own prompt — so it is a switch, with the agent-by-agent
+          fallback sentence as its description while it is off. */}
+      <div className={"setting" + (installed ? "" : " is-off")}>
+        <div className="what">
+          <div className="t">Hold the call and ask here</div>
+          <div className="d">
+            {installed
+              ? "A flagged call waits for your answer for up to this long."
+              : "Needs the guard above — nothing is held while it is off."}
+          </div>
+        </div>
+        <div className="row hold-controls">
+          <select
+            aria-label="Hold window"
+            title="How long the agent waits for your answer before the row below applies"
+            disabled={!installed || !confirm.interactive}
+            value={String(confirm.hold_seconds)}
+            onChange={(e) => window.doorman.setConfirmPolicy({ hold_seconds: Number(e.target.value) })}
+          >
+            {HOLD_OPTIONS.map((o) => (
+              <option key={o.value} value={String(o.value)}>{o.label}</option>
+            ))}
+          </select>
+          <Switch
+            ariaLabel="Hold the call and ask here"
+            on={!!confirm.interactive}
+            disabled={!installed}
+            onChange={(v) => window.doorman.setConfirmPolicy({ interactive: v })}
+          />
+        </div>
+      </div>
+      <div className={"setting" + (installed && confirm.interactive ? "" : " is-off")}>
+        <div className="what">
+          <div className="t">Auto-deny if nobody answers</div>
+          <div className="d">
+            {confirm.on_timeout === "deny"
+              ? "Past the hold window the call is denied — the safe answer when you walked away mid-session."
+              : fallbackSentence(hosts, confirm)}
+          </div>
+        </div>
+        <Switch
+          ariaLabel="Auto-deny if nobody answers"
+          on={confirm.on_timeout === "deny"}
+          disabled={!installed || !confirm.interactive}
+          onChange={(v) => window.doorman.setConfirmPolicy({ on_timeout: v ? "deny" : "ask" })}
+        />
+      </div>
+      {/* An `ask`
+          nobody can answer, on a host with no prompt of its own. Default deny
+          since 2026-09-10 — "nobody could be asked" is not an approval. Off
+          restores the visible warn-and-continue. Independent of the hold switch:
+          it also governs holding-off and a mid-hold app quit. */}
+      <div className={"setting" + (installed ? "" : " is-off")}>
+        <div className="what">
+          <div className="t">Deny when Doorman can't ask</div>
+          <div className="d">{unattendedSentence(hosts, confirm)}</div>
+        </div>
+        <Switch
+          ariaLabel="Deny when Doorman can't ask"
+          on={confirm.unattended !== "continue"}
+          disabled={!installed}
+          onChange={(v) => window.doorman.setConfirmPolicy({ unattended: v ? "deny" : "continue" })}
+        />
+      </div>
+      {/* The one flow rule the guard CAN act on before the fact: when a tool
+          result earlier this session carried an injected instruction, hold the
+          next call that could carry it out (network, exec, send, secret read).
+          Best-effort — the evidence travels transcript → app → guard, so a call
+          inside that window isn't caught; the radar's after-the-fact finding
+          stays the complete record. On a gatewayed MCP server the same rule is
+          exact: the gateway is in the stream. */}
+      <div className={"setting" + (installed && confirm.interactive ? "" : " is-off")}>
+        <div className="what">
+          <div className="t">Hold the next risky call after an injection</div>
+          <div className="d">
+            When a tool result carried an injected instruction, hold the session's next
+            network / exec / send / secret-read call. Best-effort, near-live — not a guarantee.
+          </div>
+        </div>
+        <Switch
+          ariaLabel="Hold the next risky call after an injection"
+          on={(state.prefs.policy.armed_escalation ?? true) !== false}
+          disabled={!installed || !confirm.interactive}
+          onChange={(v) => window.doorman.setConfirmPolicy({ armed_escalation: v })}
+        />
+      </div>
+    </Card>
+  );
+}
+
+/* ── My wallets ──────────────────────────────────────────────────────────────
+   The custom half of the Crypto wallets & keys family. The person pastes an
+   address ONCE; main classifies it, hashes it with a per-machine salt and
+   stores the hash under the label they gave it — so prefs.json never lists
+   anyone's wallets, and the Radar can still say "your cold storage address
+   left in a prompt" by label. Chains and the unknown-address posture are the
+   two settings; a web3 developer whose repo is full of contract addresses
+   flips the second and keeps only the rows about their own wallets. */
+const WALLET_CHAIN_NAMES = {
+  btc: "Bitcoin", ltc: "Litecoin", doge: "Dogecoin", bch: "Bitcoin Cash", evm: "Ethereum / EVM", sol: "Solana",
+  trx: "TRON", xrp: "XRP", ada: "Cardano", atom: "Cosmos", xlm: "Stellar", ton: "TON", xtz: "Tezos",
+  dot: "Polkadot", algo: "Algorand", xmr: "Monero", sui: "Sui", apt: "Aptos",
+};
+/* Checksum-carrying chains first. Three shapes have no checksum to verify —
+   Solana (recorded only when the text around it names it) and the 0x+64-hex
+   Sui / Aptos form (every transaction hash looks the same; ships off). */
+const WALLET_CHAIN_ORDER = ["btc", "evm", "sol", "ltc", "doge", "bch", "trx", "xrp", "ada", "atom", "xlm", "ton", "xtz", "dot", "algo", "xmr", "sui", "apt"];
+const WALLET_SHAPE_ONLY = new Set(["sol", "sui", "apt"]);
+
+function WalletsCard({ state }) {
+  const policy = state.prefs.policy || {};
+  const wallets = policy.wallets || { chains: WALLET_CHAIN_ORDER.filter((c) => c !== "sui" && c !== "apt"), unknown_address: "observe", own: [] };
+  const own = wallets.own || [];
+  const chains = new Set(wallets.chains || []);
+  const [address, setAddress] = useState("");
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [added, setAdded] = useState(null);
+  const [chainsOpen, setChainsOpen] = useState(false);
+
+  const add = () => {
+    if (address.trim() === "") return;
+    setBusy(true);
+    setError(null);
+    setAdded(null);
+    window.doorman.addWallet(address.trim(), label.trim()).then((res) => {
+      setBusy(false);
+      if (res && res.ok) {
+        setAdded(res.chain_label);
+        setAddress("");
+        setLabel("");
+      } else {
+        setError((res && res.error) || "Couldn't add that wallet.");
+      }
+    });
+  };
+  const toggleChain = (c, on) => {
+    const next = WALLET_CHAIN_ORDER.filter((id) => (id === c ? on : chains.has(id)));
+    window.doorman.setWallets({ chains: next });
+  };
+
+  return (
+    <Card
+      title="My wallets"
+      hint={own.length === 0 ? "None listed" : own.length + " listed · stored as hashes"}
+    >
+      <div className="cardnote lead" title="An address is public by design; one of yours leaving is a different finding from a stranger's.">
+        List your own wallet addresses: one leaving in a prompt or network call is flagged at high confidence, by
+        your label. The address is hashed here and never stored, synced or shown again.
+      </div>
+
+      <div className="setting" style={{ alignItems: "flex-start" }}>
+        <div className="what">
+          <div className="t">Add a wallet</div>
+          <div className="d">
+            Bitcoin, Ethereum and other EVM chains, Solana, TRON, XRP, Cardano, Cosmos, Stellar, TON, Tezos, Polkadot,
+            Algorand, Monero, Litecoin, Dogecoin, Bitcoin Cash. The chain is read from the address.
+          </div>
+        </div>
+        <input
+          type="text"
+          placeholder="bc1q… / 0x… / …"
+          value={address}
+          aria-label="Wallet address"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ width: 260, fontFamily: "var(--mono)", fontSize: "var(--t-2)" }}
+          disabled={busy}
+          onChange={(e) => setAddress(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+        />
+        <input
+          type="text"
+          placeholder="Label (cold storage)"
+          value={label}
+          aria-label="Wallet label"
+          maxLength={40}
+          style={{ width: 160 }}
+          disabled={busy}
+          onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") add(); }}
+        />
+        <button className="btn" disabled={busy || address.trim() === ""} onClick={add}>
+          {busy ? "Adding…" : "Add"}
         </button>
       </div>
-    </div>
+      {error ? <div className="callout bad" style={{ marginTop: "var(--s2)" }}>{error}</div> : null}
+      {added ? <div className="callout" style={{ marginTop: "var(--s2)" }}>Added as a {added} wallet. The address itself was not kept.</div> : null}
+
+      {own.map((w) => (
+        <div className="setting" key={w.hash}>
+          <div className="what">
+            <div className="t">{w.label}</div>
+            <div className="d">{WALLET_CHAIN_NAMES[w.chain] || w.chain} · hash {w.hash.slice(0, 8)}…</div>
+          </div>
+          <ConfirmButton verb="Remove" ariaLabel={"Remove " + w.label} onConfirm={() => window.doorman.removeWallet(w.hash)} />
+        </div>
+      ))}
+
+      <div className="setting">
+        <div className="what">
+          <div className="t">Addresses that aren't yours</div>
+          <div className="d">
+            {wallets.unknown_address === "ignore"
+              ? "Ignored. Only the wallets listed above can raise a finding — the setting for a repo full of contract addresses."
+              : "Recorded on the Radar at medium severity when they appear in a prompt, a tool argument or a network call. Never held."}
+          </div>
+        </div>
+        <Switch
+          ariaLabel="Record addresses that aren't yours"
+          on={wallets.unknown_address !== "ignore"}
+          onChange={(v) => window.doorman.setWallets({ unknown_address: v ? "observe" : "ignore" })}
+        />
+      </div>
+
+      <div className="setting">
+        <div className="what">
+          <div className="t">Chains watched</div>
+          <div className="d">
+            {WALLET_CHAIN_ORDER.filter((c) => chains.has(c)).map((c) => WALLET_CHAIN_NAMES[c]).join(", ") || "None"}
+            {". Solana keys carry no checksum and are recorded only when the surrounding text names them; the Sui / Aptos form is every transaction hash too, so it ships off."}
+          </div>
+        </div>
+        <button className="btn" onClick={() => setChainsOpen(!chainsOpen)}>{chainsOpen ? "Done" : "Choose"}</button>
+      </div>
+      {chainsOpen ? (
+        <div className="setting" style={{ flexWrap: "wrap", gap: "var(--s2)" }}>
+          {WALLET_CHAIN_ORDER.map((c) => (
+            <label key={c} className="chip" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={chains.has(c)} onChange={(e) => toggleChain(c, e.target.checked)} aria-label={WALLET_CHAIN_NAMES[c]} />
+              {WALLET_CHAIN_NAMES[c]}{WALLET_SHAPE_ONLY.has(c) ? " (shape only)" : ""}
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+/* Two-step destructive button: the first click arms it ("Confirm delete",
+   danger) for four seconds, the second acts. Shared by every delete/remove on
+   this screen so none of them is one stray click from gone. */
+function ConfirmButton({ verb, ariaLabel, onConfirm, disabled, className }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return undefined;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button
+      type="button"
+      className={(className || "btn") + (armed ? " danger" : "")}
+      aria-label={ariaLabel ? (armed ? ariaLabel + " — click again to confirm" : ariaLabel) : undefined}
+      disabled={disabled}
+      onClick={() => {
+        if (!armed) return setArmed(true);
+        setArmed(false);
+        onConfirm();
+      }}
+    >
+      {armed ? "Confirm " + verb.toLowerCase() : verb}
+    </button>
   );
 }
 
@@ -177,10 +812,18 @@ function LevelCard({ state, frozen, installed }) {
      per-category bars. Counted over the categories actually shown, so the four
      numbers add up to the rules on screen. */
   const shown = cats.flatMap((cat) => cat.detectors);
-  const tally = [3, 2, 1, 0].map((rung) => ({
+  // Ascending, Observe → Block: the same order as the OBS WARN ASK BLOCK segment.
+  const tally = [0, 1, 2, 3].map((rung) => ({
     ...RUNGS[rung],
     count: shown.filter((id) => RUNG_OF[effective(id)] === rung).length,
   }));
+  /* A set-all click on a MIXED family overwrites rules that disagree, so with
+     the family shut it asks first: { cat, mode } while that question is up. */
+  const [mixedPick, setMixedPick] = useState(null);
+  const setAll = (cat, mode) => cat.detectors.forEach((id) => window.doorman.setDetectorMode(id, mode));
+  // Per-rule activity over the last 14 days, keyed by detector.
+  const activity = {};
+  for (const r of (((state.radar && state.radar.rule_stats) || {})[14] || {}).rules || []) activity[r.detector] = r;
 
   const move = (to) => {
     if (frozen) return;
@@ -333,7 +976,7 @@ function LevelCard({ state, frozen, installed }) {
           />
         ) : null}
 
-        {/* The whole level as four numbers, strongest first, under the
+        {/* The whole level as four numbers, Observe → Block, under the
             question they answer. */}
         <div className="lvl-tally" role="note" aria-label="What's protected?">
           <span className="lvl-tally-h">What&#8217;s protected?</span>
@@ -361,7 +1004,7 @@ function LevelCard({ state, frozen, installed }) {
           /* The row: the kind's name and rule count, and the set-all segment.
              The accessible name carries how the kind's rules divide across
              the rungs, in words. */
-          const split = [3, 2, 1, 0]
+          const split = [0, 1, 2, 3]
             .map((i) => ({ ...RUNGS[i], count: cat.detectors.filter((id) => RUNG_OF[effective(id)] === i).length }))
             .filter((part) => part.count > 0);
           const on = cat.key === openCat;
@@ -395,20 +1038,52 @@ function LevelCard({ state, frozen, installed }) {
                     <span className="lvl-cat-name">{cat.label}</span>
                     <span className="lvl-cat-n">
                       {cat.detectors.length} rule{cat.detectors.length === 1 ? "" : "s"}
-                      {common === "" ? " · mixed" : ""}
                     </span>
                   </span>
                 </button>
                 {/* Set the whole kind at once. Lit at the mode every rule
-                    shares; nothing lit when they differ, and the count line
-                    says "mixed". The dropdown below still sets each rule on
-                    its own. */}
+                    shares; "Mixed" when they differ — and then, with the kind
+                    shut, a click asks before overwriting rules you can't see.
+                    Opened, the rules are in view and it applies directly. */}
                 <ModeSeg
                   value={common}
+                  mixed={common === ""}
+                  ariaLabel={"Mode for every " + cat.label + " rule"}
                   disabled={frozen}
-                  onChange={(mode) => cat.detectors.forEach((id) => window.doorman.setDetectorMode(id, mode))}
+                  onChange={(mode) => (common === "" && !on ? setMixedPick({ cat: cat.key, mode }) : setAll(cat, mode))}
                 />
               </div>
+              {mixedPick && mixedPick.cat === cat.key ? (
+                <div className="lvl-mixed-confirm" role="alert">
+                  <span>
+                    Set all {cat.detectors.length} {cat.label} rules to <b>{RUNGS[RUNG_OF[mixedPick.mode]].word}</b>? They
+                    are set differently now.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={() => {
+                      setAll(cat, mixedPick.mode);
+                      setMixedPick(null);
+                    }}
+                  >
+                    Set all
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      setOpenCat(cat.key);
+                      setMixedPick(null);
+                    }}
+                  >
+                    Show rules
+                  </button>
+                  <button type="button" className="linkbtn" onClick={() => setMixedPick(null)}>
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
               {on ? (
                 <KindRules
                   cat={cat}
@@ -416,6 +1091,7 @@ function LevelCard({ state, frozen, installed }) {
                   levelMode={(id) => (levelModes[chosen] || {})[id]}
                   frozen={frozen}
                   assist={state.model_assist || null}
+                  activity={activity}
                 />
               ) : null}
             </div>
@@ -473,28 +1149,23 @@ function HandEditNotice({ edited, onPick }) {
 }
 
 /**
- * One kind of risk, opened: its rules, each with the one-word outcome as the
- * control and a `?` carrying what the rule actually catches.
- *
- * A word, not the four-button OBS/WARN/ASK/BLOCK strip: inside a level card the
- * strip asks you to re-decide the ladder on every row, which is the thing the
- * level exists to stop. The word is still the control — it opens the same four
- * choices — so nothing is less settable than it was.
- */
-/**
  * A kind's rules, dropped out under its row. Each rule carries the mode
  * segment the app has always used for a rule's rung — OBS / WARN / ASK /
- * BLOCK, the same control the custom-rule editor and the exceptions use —
- * rather than a word that opened a list. One vocabulary for "what does this
- * rule do", wherever a rule is set.
+ * BLOCK, the same control the custom-rule editor and the exceptions use. One
+ * vocabulary for "what does this rule do", wherever a rule is set. Beside the
+ * name, how often it fired in the last 14 days (`rule_stats[14]`, the window
+ * Analytics and the Radar spark read), so a rung is chosen with its noise in
+ * view.
  */
-function KindRules({ cat, effective, levelMode, frozen, assist }) {
+function KindRules({ cat, effective, levelMode, frozen, assist, activity }) {
   return (
     <div className="lvl-rules">
       {cat.detectors.map((id) => {
         const meta = SEC_DETECTORS[id] || { label: id, blurb: "" };
         const mode = effective(id);
         const off = levelMode(id) !== undefined && levelMode(id) !== mode;
+        const act = (activity || {})[id];
+        const fired = act && act.exposures > 0;
         return (
           <div key={id} className={"lvl-rule" + (off ? " edited" : "")}>
             <span className="lvl-rule-n">{meta.label}</span>
@@ -507,6 +1178,20 @@ function KindRules({ cat, effective, levelMode, frozen, assist }) {
             >
               ?
             </span>
+            <span
+              className={"lvl-rule-act" + (fired ? "" : " quiet")}
+              title={
+                fired
+                  ? act.exposures + " exposure" + (act.exposures === 1 ? "" : "s") + " in the last 14 days" +
+                    (act.last_fired_at ? ", last " + relTime(act.last_fired_at) : "")
+                  : "Didn't fire in the last 14 days"
+              }
+            >
+              {fired
+                ? act.exposures + " exposure" + (act.exposures === 1 ? "" : "s") + " in 14 days" +
+                  (act.last_fired_at ? " · last " + relTime(act.last_fired_at) : "")
+                : "quiet"}
+            </span>
             {/* Then, at the control's side, the tag for a rule set by hand —
                 the same word the level control uses when the machine is off
                 the ladder, so the two read as one fact. Beside the segment,
@@ -516,7 +1201,7 @@ function KindRules({ cat, effective, levelMode, frozen, assist }) {
                 Custom
               </span>
             ) : null}
-            <ModeSeg value={mode} disabled={frozen} onChange={(next) => window.doorman.setDetectorMode(id, next)} />
+            <ModeSeg value={mode} ariaLabel={meta.label} disabled={frozen} onChange={(next) => window.doorman.setDetectorMode(id, next)} />
           </div>
         );
       })}
@@ -620,6 +1305,13 @@ function SavedRuleSetsCard({ state, frozen }) {
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
   const [confirm, setConfirm] = useState(null);
+  // The set armed for deletion; disarms itself after four seconds.
+  const [deleting, setDeleting] = useState(null);
+  useEffect(() => {
+    if (!deleting) return undefined;
+    const t = setTimeout(() => setDeleting(null), 4000);
+    return () => clearTimeout(t);
+  }, [deleting]);
   /* The set being read, by id — a popup over the card, like the wizards. */
   const [viewing, setViewing] = useState(null);
   const viewed = viewing ? sets.find((set) => set.id === viewing) : null;
@@ -642,7 +1334,7 @@ function SavedRuleSetsCard({ state, frozen }) {
         </WizardPopup>
       ) : null}
       {sets.length === 0 ? (
-        <div className="cardnote" style={{ marginTop: 0 }}>
+        <div className="cardnote lead">
           Nothing saved yet. Moving the security level offers to keep the rules it is about to overwrite — and you can
           save the rules as they stand at any time.
         </div>
@@ -678,6 +1370,22 @@ function SavedRuleSetsCard({ state, frozen }) {
                         Keep
                       </button>
                     </React.Fragment>
+                  ) : deleting === set.id ? (
+                    <React.Fragment>
+                      <button
+                        type="button"
+                        className="btn danger"
+                        onClick={() => {
+                          setDeleting(null);
+                          window.doorman.deleteRuleSet(set.id);
+                        }}
+                      >
+                        Confirm delete
+                      </button>{" "}
+                      <button type="button" className="linkbtn" onClick={() => setDeleting(null)}>
+                        Keep
+                      </button>
+                    </React.Fragment>
                   ) : (
                     // One "⋯" per row instead of two spelled-out links: the
                     // row stays about its name, and Delete is no longer a
@@ -688,7 +1396,7 @@ function SavedRuleSetsCard({ state, frozen }) {
                       items={[
                         { id: "view", label: "View", onPick: () => setViewing(set.id) },
                         { id: "restore", label: "Restore", disabled: frozen, onPick: () => setConfirm(set.id) },
-                        { id: "delete", label: "Delete", danger: true, onPick: () => window.doorman.deleteRuleSet(set.id) },
+                        { id: "delete", label: "Delete", danger: true, onPick: () => setDeleting(set.id) },
                       ]}
                     />
                   )}
@@ -861,38 +1569,33 @@ function savedWhen(iso) {
 
 /**
  * The guard is off, so nothing on this screen acts. Same banner shape and
- * words as Radar's posture line, because it is the same fact.
- *
- * It ROUTES to Settings rather than installing from here: switching the guard
- * on or off is install behaviour, which deliberately kept in Settings
- * (and a test pins Rules for not carrying it). Radar's posture line owns the
- * one-click install; this screen owns the policy the install then enforces.
+ * words as Radar's posture line, because it is the same fact. The button takes
+ * you to the Protection card's switch on this same screen.
  *
  * It names the saved modes on purpose: a table that silently switched to OBS
  * would read as "my configuration is gone".
  */
-function GuardOffNotice({ wanted, onGoSettings }) {
+function GuardOffNotice({ wanted }) {
   const kept = [
     wanted.blocking > 0 ? wanted.blocking + " block" : null,
-    wanted.asking > 0 ? wanted.asking + " hold & ask" : null,
+    wanted.asking > 0 ? wanted.asking + " ask" : null,
     wanted.warning > 0 ? wanted.warning + " warn" : null,
   ].filter(Boolean);
   return (
     <div className="posture off">
       <span className="pdot" />
       <div className="ptext">
-        <b>None of these guardrails can act.</b> Real time protection is off, so every rule below is
-        observe only: findings are still recorded from your transcripts, but no tool call is held or refused.
-        {kept.length > 0
-          ? " Your modes are saved and take effect the moment real time protection is on."
-          : " Set the modes once real time protection is on."}
+        <b>None of these guardrails can act.</b> Real-time protection is off: findings are still recorded, but no
+        tool call is held or refused.
+        {kept.length > 0 ? " Your modes are saved and apply once it is on." : ""}
       </div>
-      <button className="btn primary" onClick={onGoSettings}>
-        Turn real time protection on →
+      <button className="btn primary" onClick={focusProtection}>
+        Turn real-time protection on
       </button>
     </div>
   );
 }
+
 /** Shipped rule packs: switchable sets of custom-format rules. */
 function RulePacksCard({ state }) {
   const packs = state.rule_packs || [];
@@ -900,9 +1603,9 @@ function RulePacksCard({ state }) {
   if (packs.length === 0) return null;
   return (
     <Card title="Rule packs" hint={enabled.size + " of " + packs.length + " on"}>
-      <div className="cardnote" style={{ marginTop: 0 }}>
-        New detections shipped in the same format as your own rules — worked examples you can copy, and switch off
-        per machine. A pack's rules show up in the feed under their own labels.
+      <div className="cardnote lead">
+        New detections in the same format as your own rules — examples you can copy, switchable per machine. They
+        appear in the feed under their own labels.
       </div>
       {packs.map((p) => (
         <div className="setting" key={p.id}>
@@ -1409,7 +2112,7 @@ function RuleWizard({ form, setForm, initialStep, unlocked, problems, dry, savin
                     t.value === ""
                       ? "The call alone is enough."
                       : t.value === "injection"
-                        ? "A flow rule the guard can also hold, through the escalation switch in Settings."
+                        ? "A flow rule the guard can also hold, through the escalation switch in Protection."
                         : "A flow rule — evidence only. The radar records it; the guard has no such taints to act on.",
                 }))}
               />
@@ -1682,11 +2385,13 @@ function CustomRulesCard({ state, guardOff }) {
       ) : null}
       {/* The list stays put while the popup is up — the wizard used to replace it. */}
       <React.Fragment>
-          <div className="cardnote" style={{ marginTop: 0 }}>
-            A rule is regexes over what a call IS — the tool, its arguments, the shell command, the MCP server — and,
-            optionally, what it FOLLOWS in the session. No code runs; unsafe patterns are refused. Custom ids can never
-            shadow a shipped rule. A saved rule applies from the next
-            tool call — dry run it first to see what it would have caught in your last 14 days.
+          <div
+            className="cardnote"
+            style={{ marginTop: 0 }}
+            title="No code runs; unsafe patterns are refused. Custom ids can never shadow a shipped rule."
+          >
+            Regexes over a call — tool, arguments, shell command, MCP server — optionally only after something earlier in
+            the session. Applies from the next call; dry run it against your last 14 days first.
           </div>
 
           {rules.length > 0 ? (
@@ -1727,8 +2432,8 @@ function CustomRulesCard({ state, guardOff }) {
                     <td>
                       <div className="row" style={{ gap: "var(--s2)" }}>
                         <Switch ariaLabel={"Enable " + r.label} on={r.enabled !== false} disabled={saving} onChange={(v) => toggle(r, v)} />
-                        <button className="linkbtn" onClick={() => open(ruleToForm(r), { at: RULE_STEPS.length - 1, unlocked: true, existing: true })}>edit</button>
-                        <button className="linkbtn danger" onClick={() => remove(r.id)}>delete</button>
+                        <button className="linkbtn" onClick={() => open(ruleToForm(r), { at: RULE_STEPS.length - 1, unlocked: true, existing: true })}>Edit</button>
+                        <ConfirmButton className="linkbtn" verb="Delete" ariaLabel={"Delete " + r.label} disabled={saving} onConfirm={() => remove(r.id)} />
                       </div>
                     </td>
                   </tr>
@@ -1780,10 +2485,13 @@ function ExceptionsCard({ state }) {
 
   return (
     <Card title="Exceptions" hint={ignore.length === 0 ? "none" : ignore.length + " ignore rule" + (ignore.length === 1 ? "" : "s")}>
-      <div className="cardnote" style={{ marginTop: 0 }}>
-        A finding whose visible fields match an exception is not raised. "Allow for this project" on the approval panel
-        writes one of these — scoped to the call's directory and dated to expire — so a false positive never has to be
-        answered by switching a rule off everywhere.
+      <div
+        className="cardnote"
+        style={{ marginTop: 0 }}
+        title="So a false positive never has to be answered by switching a rule off everywhere."
+      >
+        A finding matching an exception is not raised. "Allow for this project" on the approval panel writes one,
+        scoped to the call's directory and dated to expire.
       </div>
       {ignore.length > 0 ? (
         <table className="rows">
@@ -1812,9 +2520,7 @@ function ExceptionsCard({ state }) {
                     {r.note ? <div style={{ fontSize: "var(--t-3)" }}>{r.note}</div> : null}
                   </td>
                   <td>
-                    <button className="linkbtn danger" onClick={() => window.doorman.removeIgnoreRule(i)}>
-                      remove
-                    </button>
+                    <ConfirmButton className="linkbtn" verb="Remove" ariaLabel={"Remove exception " + r.pattern} onConfirm={() => window.doorman.removeIgnoreRule(i)} />
                   </td>
                 </tr>
               );

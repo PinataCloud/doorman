@@ -28,8 +28,6 @@ function notificationListName(platform) {
 
 /** The button that opens a folder in the OS file browser. */
 const REVEAL_LABELS = { macos: "Reveal in Finder", windows: "Show in Explorer", linux: "Open folder" };
-/** The same as a trailing link ("show in Finder →"). */
-const REVEAL_LINKS = { macos: "show in Finder", windows: "show in Explorer", linux: "show in folder" };
 /** What encrypts the evidence vault: Electron's safeStorage, which is the
  * Keychain on macOS, DPAPI (the signed-in account) on Windows and the
  * desktop keyring on Linux. */
@@ -496,7 +494,7 @@ const RUNGS = [
   },
   {
     mode: "ask",
-    word: "Hold",
+    word: "Ask",
     verb: "hold it",
     tip: "The tool stops and waits for your answer. No answer and it is refused.",
   },
@@ -669,17 +667,21 @@ const RESOLUTION_SENTENCE = {
   unavailable: "Doorman wasn't running to ask you, so the call was denied — it never ran. Retry it with the app open if it was intended.",
 };
 
-/** Which outcome bucket a finding row falls in. */
+/** Which outcome bucket a finding row falls in. A row with a hold resolution
+    was HELD, whatever the guard wrote once it was answered (a denied hold is
+    recorded as `deny`): its ending is the resolution, not a straight block. */
 const findingOutcome = (f) =>
-  f.enforced === "deny"
-    ? "blocked"
-    : f.enforced === "ask"
-      ? "held"
-      : f.enforced === "warn"
-        ? "warned"
-        : f.enforced === "excepted"
-          ? "excepted"
-          : "observed";
+  f.resolution
+    ? "held"
+    : f.enforced === "deny"
+      ? "blocked"
+      : f.enforced === "ask"
+        ? "held"
+        : f.enforced === "warn"
+          ? "warned"
+          : f.enforced === "excepted"
+            ? "excepted"
+            : "observed";
 
 /* A MIRROR of main/lib/findings.ts callNeverRan — the renderer is
    a classic script and cannot import main. A call the guard refused, or held
@@ -1162,26 +1164,50 @@ function SearchBox({ value, onChange, placeholder }) {
   );
 }
 
-/** The OBS / ASK / BLOCK tri-state, per the Detection Rules design. Each mode
- * carries its meaning as a tooltip rather than a paragraph above the table —
- * explained where the choice is actually made. */
-function ModeSeg({ value, onChange, disabled }) {
+/** The OBS / WARN / ASK / BLOCK segment, per the Detection Rules design. Each
+ * mode carries its meaning as a tooltip, explained where the choice is made.
+ * A radio group, so assistive tech hears which mode is set. `mixed` (a family
+ * whose rules disagree) lights nothing and says "Mixed" instead of leaving an
+ * empty segment to be read as "unset". */
+function ModeSeg({ value, onChange, disabled, ariaLabel, mixed }) {
   const modes = [
     { id: "observe", label: "OBS", title: "Observe — record it, let the call through" },
     { id: "warn", label: "WARN", title: "Warn — let the call through, but raise a heads-up banner" },
     { id: "ask", label: "ASK", title: "Ask — hold the call open until you answer" },
     { id: "block", label: "BLOCK", title: "Block — refuse the call without asking" },
   ];
+  // Arrow keys move between modes like a native radio group.
+  const onKey = (e, i) => {
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!step || disabled) return;
+    e.preventDefault();
+    const j = (i + step + modes.length) % modes.length;
+    onChange(modes[j].id);
+    const btn = e.currentTarget.parentNode.querySelectorAll("button[role=radio]")[j];
+    if (btn) btn.focus();
+  };
+  const current = modes.findIndex((m) => m.id === value);
   return (
-    <span className={"modeseg" + (disabled ? " off" : "")}>
-      {modes.map((m) => (
+    <span
+      className={"modeseg" + (disabled ? " off" : "") + (mixed ? " mixed" : "")}
+      role="radiogroup"
+      aria-label={(ariaLabel || "Mode") + (mixed ? " (mixed)" : "")}
+      aria-disabled={disabled || undefined}
+    >
+      {mixed ? <span className="modeseg-mixed" aria-hidden="true">Mixed</span> : null}
+      {modes.map((m, i) => (
         <button
           key={m.id}
+          type="button"
+          role="radio"
+          aria-checked={value === m.id}
+          tabIndex={i === (current >= 0 ? current : 0) ? 0 : -1}
           data-tip={value === m.id ? undefined : m.title}
           aria-label={m.title}
           className={value === m.id ? "on mode-" + m.id : ""}
           disabled={disabled}
           onClick={() => onChange(m.id)}
+          onKeyDown={(e) => onKey(e, i)}
         >
           {m.label}
         </button>
@@ -1284,7 +1310,7 @@ function FilterMenu({ label, value, options, onPick, multi, summary, narrowed: n
  * menu and calls `onPick` — nothing else, so a caller that needs a confirm
  * step puts it where the trigger was, as the saved rule sets do.
  *
- * Fixed + anchored like .verdict-pop, so the card's own scroll cannot clip
+ * Fixed + anchored like .fmenu-pop, so the card's own scroll cannot clip
  * it; and, for the same reason, movement closes it rather than letting it
  * drift from its button.
  */
@@ -1448,13 +1474,21 @@ const TASK_META = {
 };
 const taskLabel = (t) => TASK_META[t] || t;
 
+/* The ramp in SERIES_VARS order puts blue (c1) and azure (c3) two ranks
+   apart, close enough that the 1st and 3rd use case read as one colour. Use
+   cases alternate hue AND lightness instead, so any two of the top five
+   differ in at least one. */
+const TASK_SERIES_VARS = ["--c1", "--c2", "--c8", "--c6", "--c3"];
+const taskSeriesColor = (i, key) =>
+  key === "other" ? "var(--c-other)" : `var(${TASK_SERIES_VARS[i % TASK_SERIES_VARS.length]})`;
+
 /** Task-series descriptors for a by_task TimeDay fold — colors are positional
     by rank (house rule), with "other" always the reserved neutral. */
 function taskSeries(tasks) {
   return tasks.map((t, i) => ({
     key: t,
     label: taskLabel(t),
-    color: seriesColor(i, t),
+    color: taskSeriesColor(i, t),
     valueOf: (day) => day.by_task[t] || 0,
   }));
 }

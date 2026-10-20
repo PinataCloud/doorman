@@ -535,7 +535,9 @@ describe("capture engine × vault", () => {
 });
 
 describe("ledger export", () => {
-  const SESSION_ROW: Required<Omit<SessionSummary, "task">> & { task: SessionSummary["task"] } = {
+  // `exposures` is snapshot-only (main/index.ts decorates COPIES of the
+  // sessions); the export reads engine.sessions(), which never carries it.
+  const SESSION_ROW: Required<Omit<SessionSummary, "task" | "exposures">> & { task: SessionSummary["task"] } = {
     id: "s1",
     source: "claude-code",
     title: "Rotate the keys",

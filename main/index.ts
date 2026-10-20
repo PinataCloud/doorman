@@ -99,7 +99,7 @@ import {
   type WindowStats,
 } from "./lib/findings.js";
 import { createPlaceResolver, exposureKey } from "./lib/exposures.js";
-import { alertsBySession, alertsByTask, detectionsExportFor, ledgerExportFor, radarRows, ruleStatsWindow, sessionTaskLookup } from "./lib/app-views.js";
+import { alertsBySession, detectionsExportFor, exposuresBySession, exposuresByTask, ledgerExportFor, radarRows, ruleStatsWindow, sessionTaskLookup } from "./lib/app-views.js";
 import { shadowAiNow } from "./shadow-ai-now.js";
 import {
   ALL_DETECTORS,
@@ -1616,6 +1616,7 @@ function recompute(): void {
     a.last_seen_at < b.last_seen_at ? 1 : a.last_seen_at > b.last_seen_at ? -1 : 0,
   );
   const alertCounts = alertsBySession(findings);
+  const exposureCounts = exposuresBySession(findings, app.getPath("home"));
   const turns = [...engine.turns.values()];
   const now = new Date();
   const labels = customLabels();
@@ -1668,6 +1669,7 @@ function recompute(): void {
     return {
       ...s,
       alerts: alertCounts.get(s.id) ?? 0,
+      exposures: exposureCounts.get(s.id) ?? 0,
       ...(resume === undefined ? {} : { resume_command: resume }),
     };
   });
@@ -1703,7 +1705,7 @@ function recompute(): void {
       // over EVERY stored row so the renderer groups on the same key main
       // counted with — lib/exposures.ts, via lib/app-views.ts radarRows.
       findings: radarRows(findings, app.getPath("home"), SNAPSHOT_FINDINGS),
-      alerts_by_task: alertsByTask(engine.shownFindings(), taskOf),
+      exposures_by_task: exposuresByTask(findings, taskOf, app.getPath("home")),
       guard_installed: isGuardInstalled(),
       // One row per REGISTERED host (guard/hosts/index.ts): the Settings card
       // and the coverage card name hosts from this, never from a hard-coded

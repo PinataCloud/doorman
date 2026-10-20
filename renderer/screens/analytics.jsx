@@ -3,25 +3,23 @@
    Where Radar answers "what needs me now" over the worst few findings, this
    reads the whole record over a window the person picks (7 / 14 / 30 / 90
    days). The unit everywhere is an EXPOSURE — one rule × one PLACE
-   (main/lib/exposures.ts) — with THINGS (rule × exposed name) and SIGHTINGS
-   (rows) shown under it: sixty-seven fixture secrets in one repo are one
-   decision, and counting things made 146 sound like 146 problems when it
-   was about 40.
+   (main/lib/exposures.ts) — with SIGHTINGS (rows) shown under it:
+   sixty-seven fixture secrets in one repo are one decision.
 
    Layout, after beautifului.dev's insight cards and the presentation devices
    catalogued off Harmonic Security's usage explorer:
-
      · a GENERATED HEADLINE over the two figures that justify it — new
-       exposures and how many the guard stopped — each with the delta sentence
-       against the window before ("74% fewer than the 14 days before"), so the
-       reader gets the conclusion and the evidence at once;
+       exposures and how many the guard stopped (blocked, or held and
+       denied) — each with the delta sentence against the window before
+       ("74% fewer than the 14 days before"), so the reader gets the
+       conclusion and the evidence at once;
      · the supporting counts as a stat LEDGER rather than a comma run-on;
-     · four tiles for the things the ledger can't say — a rate, a latency;
+     · tiles for what the ledger can't say — a rate, a latency, rule counts;
      · the per-day chart of NEW exposures (an exposure counts on the day it was
        first seen — a re-sighting is not news), its legend carrying each
        outcome's window total so the magnitudes read without a hover;
-     · a THREE-QUESTION summary — what happened, why it matters, what to do
-       next — read straight off the counters, with no model involved;
+     · a NEXT STEP read straight off the counters — the rule carrying the
+       most, and what to change — with no model involved;
      · the rule list folded into its FAMILIES, each rule a name plus one meta
        line instead of eleven numeric columns, with the full grid still one
        click away under it;
@@ -71,13 +69,18 @@ function windowDelta(now, before, days) {
  * Enforcement is judged on the SHARE stopped, never the count: if exposures
  * halve, the stopped count halving with them is enforcement holding steady,
  * not enforcement failing. The 5-point band keeps a one-exposure wobble in a
- * quiet window from being reported as a trend.
+ * quiet window from being reported as a trend. A window where nothing was
+ * stopped says exactly that — 0% against 0% is not "held steady".
  */
-function windowHeadline(newExposures, prev, stopped, days) {
+function windowHeadline(newExposures, prev, stopped, allowed, days) {
   if (newExposures === 0) {
     return prev && prev.new_exposures > 0 ? "Nothing new surfaced this window." : "Nothing has surfaced yet.";
   }
-  if (!prev) return newExposures + " new exposure" + (newExposures === 1 ? "" : "s") + " in the last " + days + " days.";
+  const none = "Nothing was stopped — every new exposure was " + (allowed > 0 ? "observed, warned or allowed." : "observed or warned.");
+  if (!prev) {
+    const counted = newExposures + " new exposure" + (newExposures === 1 ? "" : "s") + " in the last " + days + " days.";
+    return stopped === 0 ? counted + " " + none : counted;
+  }
   const first =
     prev.new_exposures === 0
       ? "Exposures are up."
@@ -86,9 +89,10 @@ function windowHeadline(newExposures, prev, stopped, days) {
         : newExposures > prev.new_exposures
           ? "Exposures are up."
           : "Exposures held steady.";
+  if (stopped === 0) return first + " " + none;
   // A share needs a denominator on both sides; without one the sentence stops
   // at the half it can stand behind.
-  if (newExposures === 0 || prev.new_exposures === 0) return first;
+  if (prev.new_exposures === 0) return first;
   const share = stopped / newExposures;
   const prevShare = prev.stopped / prev.new_exposures;
   const second =
@@ -112,6 +116,24 @@ const plural = (n, word, suffix = "s") => n + " " + word + (n === 1 ? "" : suffi
 /** For the words whose plural isn't a trailing "s" — "1 family / 5 families". */
 const pluralAs = (n, one, many) => n + " " + (n === 1 ? one : many);
 
+/* What happened to each new exposure, worst outcome first — the day buckets
+   main writes (lib/findings.ts StatsDay). Blocked and Denied are "stopped";
+   Allowed is a hold you let through, so it ran. */
+const ANALYTICS_OUTCOMES = [
+  { key: "blocked", label: "Blocked", color: OUTCOME_META.blocked.color },
+  { key: "denied", label: "Denied", color: OUTCOME_META.held.color },
+  { key: "allowed", label: "Allowed", color: OUTCOME_META.excepted.color },
+  { key: "warned", label: "Warned", color: OUTCOME_META.warned.color },
+  { key: "observed", label: "Observed", color: OUTCOME_META.observed.color },
+];
+
+/** Sightings of one rule whose call never ran. `stopped` is main's count; a
+    stat without it falls back to blocked + denied + timed out. */
+const ruleStopped = (r) => (r.stopped != null ? r.stopped : r.blocked + r.denied + (r.timed_out || 0));
+
+/** Rule modes as prose — the segment labels stay OBS/WARN/ASK/BLOCK. */
+const ANALYTICS_MODE_WORDS = { observe: "Observe", warn: "Warn", ask: "Ask", block: "Block" };
+
 function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
   const [days, setDays] = useState(14);
   const [busyExport, setBusyExport] = useState(null);
@@ -133,29 +155,33 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
   const exposures = stats.exposures != null ? stats.exposures : stats.things;
   const newExposures = stats.new_exposures != null ? stats.new_exposures : stats.new_things;
 
+  /* The rule count is the Guardrails count — shipped rules that can act on a
+     call plus your own pre-call rules, the same set enforcingCount (app.jsx)
+     totals for Settings and the header. Radar-only rules (session-flow
+     analysis, your "after …" rules) fire too, but there is no mode to set on
+     them, so they are counted on the side rather than inflating the total. */
   const enforceable = Object.keys(SEC_DETECTORS).filter((id) => !SEC_DETECTORS[id].radarOnly);
   const customRules = (policy.custom_rules || []).filter((r) => r.enabled !== false);
-  const totalRules = Object.keys(SEC_DETECTORS).length + customRules.length;
-  const firedIds = new Set(stats.rules.map((r) => r.detector));
-  const neverFired =
-    totalRules - [...firedIds].filter((id) => SEC_DETECTORS[id] || customRules.some((r) => "custom:" + r.id === id)).length;
+  const guardrailIds = new Set([...enforceable, ...customRules.filter((r) => !r.after).map((r) => "custom:" + r.id)]);
+  const totalRules = guardrailIds.size;
+  const firedGuardrails = stats.rules.filter((r) => guardrailIds.has(r.detector)).length;
+  const firedRadarOnly = stats.rules.length - firedGuardrails;
+  const neverFired = totalRules - firedGuardrails;
 
-  const trendSeries = [
-    { key: "blocked", label: OUTCOME_META.blocked.label, color: OUTCOME_META.blocked.color, valueOf: (d) => d.blocked },
-    { key: "held", label: OUTCOME_META.held.label, color: OUTCOME_META.held.color, valueOf: (d) => d.held },
-    { key: "warned", label: OUTCOME_META.warned.label, color: OUTCOME_META.warned.color, valueOf: (d) => d.warned },
-    { key: "observed", label: OUTCOME_META.observed.label, color: OUTCOME_META.observed.color, valueOf: (d) => d.observed },
-  ];
+  const trendSeries = ANALYTICS_OUTCOMES.map((o) => ({ key: o.key, label: o.label, color: o.color, valueOf: (d) => d[o.key] || 0 }));
   const daily = stats.daily || [];
-  const stopped = daily.reduce((n, d) => n + d.blocked + d.held, 0);
-  const warnedThings = daily.reduce((n, d) => n + d.warned, 0);
-  const observedThings = daily.reduce((n, d) => n + d.observed, 0);
+  const outcomeTotal = (key) => daily.reduce((n, d) => n + (d[key] || 0), 0);
+  const outcomeParts = ANALYTICS_OUTCOMES.map((o) => ({ key: o.key, label: o.label, value: outcomeTotal(o.key), color: o.color }));
+  const presentOutcomes = outcomeParts.filter((p) => p.value > 0);
+  // Stopped = blocked + denied: a hold you allowed ran, so it is not stopped.
+  const stopped = outcomeTotal("blocked") + outcomeTotal("denied");
+  const allowedExposures = outcomeTotal("allowed");
 
   // The window before this one, over the same two measures. Absent on a
   // snapshot written before main computed it — then the figures stand without
   // a direction rather than claiming one.
   const prev = stats.prev;
-  const headline = windowHeadline(newExposures, prev, stopped, days);
+  const headline = windowHeadline(newExposures, prev, stopped, allowedExposures, days);
   const exposureDelta = prev ? windowDelta(newExposures, prev.new_exposures, days) : null;
   /* The stopped figure states a SHARE, for the same reason the headline judges
      enforcement on one: 8 of 27 after 9 of 44 is enforcement gaining ground,
@@ -167,7 +193,7 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
     stoppedShare == null
       ? null
       : prevStoppedShare == null
-        ? { arrow: "", text: stoppedShare + "% of them — blocked outright, or held for your call.", tone: "flat" }
+        ? { arrow: "", text: stoppedShare + "% of them — blocked, or held and denied.", tone: "flat" }
         : stoppedShare === prevStoppedShare
           ? { arrow: "—", text: stoppedShare + "% of them, the same share as the " + days + " days before.", tone: "flat" }
           : {
@@ -181,18 +207,29 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
   const modeOf = (detector) => {
     if (detector.indexOf("custom:") === 0) {
       const rule = customRules.find((r) => "custom:" + r.id === detector);
+      if (rule && rule.after) return "radar";
       return rule ? rule.mode : "observe";
     }
     return SEC_DETECTORS[detector] && SEC_DETECTORS[detector].radarOnly ? "radar" : modes[detector] || "observe";
   };
   const modeColor = (mode) =>
     mode === "block" ? "var(--bad)" : mode === "ask" ? "var(--warn)" : mode === "warn" ? "var(--gold)" : "var(--tan-3)";
+  const byExposures = (a, b) => (b.exposures || b.things) - (a.exposures || a.things) || b.fired - a.fired;
 
   // Graduation candidates: enforceable, on observe, fired in the window — the
   // rules whose noise level is now a fact rather than a guess.
   const graduation = stats.rules
     .filter((r) => enforceable.includes(r.detector) && (modes[r.detector] || "observe") === "observe")
-    .sort((a, b) => (b.exposures || b.things) - (a.exposures || a.things) || b.things - a.things);
+    .sort(byExposures);
+  /* The next step's candidates: every Guardrails rule (shipped or yours) that
+     fired while on Observe or Warn — on either, the call it flagged went
+     through. Ask is the step up that makes the next one wait for you. */
+  const raisable = stats.rules
+    .filter((r) => guardrailIds.has(r.detector) && ["observe", "warn"].includes(modeOf(r.detector)))
+    .sort(byExposures);
+  // The reading the sidebar and the header use (app.jsx), so "off" means the same here.
+  const protection = protectionState(state, enforcingCount(state));
+  const guardOff = protection.kind === "off";
 
   const exportReport = (format) => {
     setBusyExport(format);
@@ -219,6 +256,13 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
   const byHuman = (via.panel || 0) + (via.window || 0) + (via.notification || 0) + (via.editor || 0) + (via.terminal || 0);
   const peakDay = daily.reduce((best, d) => (d.total > (best ? best.total : 0) ? d : best), null);
   const topRule = stats.rules.length ? stats.rules[0] : null;
+  const next = raisable.length ? raisable[0] : null;
+  /* Sightings with no enforcement on them are observed whatever the rule's
+     mode: they were read from transcripts after the call ran (before the guard
+     was installed, while it was off, or from an agent it doesn't cover), so no
+     mode was ever applied. Said beside a Warn rule so "Warn · 0 warned" isn't
+     a contradiction. */
+  const observedRows = (r) => Math.max(0, r.fired - r.warned - r.held - r.blocked);
 
   /* The rule list, folded into families. Groups are ordered by how much of the
      window each one carries rather than by the fixed catalogue order: on a
@@ -244,8 +288,8 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
      columns. Only the parts that carry a number are printed: "0 warned" on
      every row is noise, and its absence is the same fact. */
   const ruleMeta = (r) => {
-    const parts = [plural(r.things, "thing"), plural(r.fired, "sighting"), plural(r.sessions, "session")];
-    const stoppedHere = r.blocked + r.denied;
+    const parts = [plural(r.fired, "sighting"), plural(r.sessions, "session")];
+    const stoppedHere = ruleStopped(r);
     if (stoppedHere > 0) parts.push(stoppedHere + " stopped");
     if (r.warned > 0) parts.push(r.warned + " warned");
     if (r.allowed > 0) parts.push(r.allowed + " allowed");
@@ -318,21 +362,21 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                 {stoppedDelta.arrow} {stoppedDelta.text}
               </div>
             ) : (
-              <div className="pf-delta flat">blocked outright, or held for your call.</div>
+              <div className="pf-delta flat">blocked, or held and denied.</div>
             )}
             {daily.length > 1 ? (
-              <MicroSpark data={daily.map((d) => d.blocked + d.held)} color={OUTCOME_META.blocked.color} width={240} height={46} />
+              <MicroSpark data={daily.map((d) => (d.blocked || 0) + (d.denied || 0))} color={OUTCOME_META.blocked.color} width={240} height={46} />
             ) : null}
           </div>
         </div>
         {/* The supporting counts as rows, not as a comma run-on inside the
             hero note — each one is a different unit and reads as one. */}
         <div className="herostats">
+          {/* Every exposure with a sighting in the window — including ones first
+              seen earlier — so it is labelled by its window, never as the
+              Radar's all-time open count. */}
           <span className="hs">
-            <b>{exposures}</b> exposure{exposures === 1 ? "" : "s"} needing review
-          </span>
-          <span className="hs">
-            <b>{stats.things}</b> thing{stats.things === 1 ? "" : "s"} under them
+            <b>{exposures}</b> exposure{exposures === 1 ? "" : "s"} seen in the last {days} days
           </span>
           <span className="hs">
             <b>{stats.total}</b> sighting{stats.total === 1 ? "" : "s"}
@@ -351,26 +395,24 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
         </div>
         {newExposures > 0 ? (
           <div className="hero-split">
-            <MeterBar
-              parts={[
-                { key: "blocked", label: "blocked", value: daily.reduce((n, d) => n + d.blocked, 0), color: OUTCOME_META.blocked.color },
-                { key: "held", label: "held for you", value: daily.reduce((n, d) => n + d.held, 0), color: OUTCOME_META.held.color },
-                { key: "warned", label: "warned", value: warnedThings, color: OUTCOME_META.warned.color },
-                { key: "observed", label: "observed", value: observedThings, color: OUTCOME_META.observed.color },
-              ]}
-              height={10}
-              title="What the guard did with each new exposure"
-            />
+            {/* One outcome would paint a single-colour 100% bar; the key line
+                below already says it. */}
+            {presentOutcomes.length > 1 ? (
+              <MeterBar parts={outcomeParts} height={10} title="What the guard did with each new exposure" />
+            ) : null}
             <div className="sevkeys">
-              <span className="sevkey"><span className="sw" style={{ background: OUTCOME_META.blocked.color }} />stopped <b>{stopped}</b></span>
-              <span className="sevkey"><span className="sw" style={{ background: OUTCOME_META.warned.color }} />warned <b>{warnedThings}</b></span>
-              <span className="sevkey"><span className="sw" style={{ background: OUTCOME_META.observed.color }} />observed <b>{observedThings}</b></span>
+              {presentOutcomes.map((p) => (
+                <span className="sevkey" key={p.key}>
+                  <span className="sw" style={{ background: p.color }} />
+                  {p.label} <b>{p.value}</b>
+                </span>
+              ))}
             </div>
           </div>
         ) : null}
       </Card>
 
-      {/* The four tiles keep only what the ledger above cannot say: a rate, a
+      {/* The tiles keep only what the ledger above cannot say: a rate, a
           latency, and the two counts about rules rather than exposures. */}
       <div className="statgrid wide">
         {/* A RATE, not a count: "17 sessions" cannot be managed, "a third
@@ -394,24 +436,31 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                       " days before.")
           }
         />
-        <Kpi
-          num={stats.median_hold_ms != null ? fmtHold(stats.median_hold_ms) : "—"}
-          label="Median time to decide"
-          note={
-            stats.decisions > 0
-              ? stats.decisions + " held call" + (stats.decisions === 1 ? "" : "s") + " · " + byHuman + " answered by you"
-              : "no held calls decided yet"
-          }
-        />
+        {/* No held call decided in the window means no latency to state; the
+            tile goes and the grid reflows rather than printing a dash. */}
+        {stats.decisions > 0 ? (
+          <Kpi
+            num={stats.median_hold_ms != null ? fmtHold(stats.median_hold_ms) : "—"}
+            label="Median time to decide"
+            note={plural(stats.decisions, "held call") + " · " + byHuman + " answered by you"}
+          />
+        ) : null}
         <Kpi
           num={neverFired + " / " + totalRules}
           label="Rules never triggered"
-          note={neverFired === totalRules ? "no rule has fired in this window" : "quiet rules are not broken rules"}
+          note={neverFired === totalRules ? "no rule on Guardrails fired in this window" : "quiet rules are not broken rules"}
         />
         <Kpi
           num={String(stats.rules.length)}
           label="Rules that fired"
-          note={peakDay && peakDay.total > 0 ? "busiest day " + fullDayLabel(peakDay.date) + " · " + peakDay.total + " new" : "nothing fired"}
+          note={
+            (firedRadarOnly > 0 ? "incl. " + firedRadarOnly + " Radar-only · " : "") +
+            (peakDay && peakDay.total > 0
+              ? "busiest day " + fullDayLabel(peakDay.date) + " · " + peakDay.total + " new"
+              : stats.rules.length > 0
+                ? "nothing new surfaced"
+                : "nothing fired")
+          }
         />
       </div>
 
@@ -436,111 +485,95 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
               columns={[
                 { key: "day", label: "Day" },
                 { key: "blocked", label: "Blocked", right: true },
-                { key: "held", label: "Held", right: true },
+                { key: "denied", label: "Denied", right: true },
+                { key: "allowed", label: "Allowed", right: true },
                 { key: "warned", label: "Warned", right: true },
                 { key: "observed", label: "Observed", right: true },
               ]}
               rows={daily
                 .filter((d) => d.total > 0)
-                .map((d) => ({ day: fullDayLabel(d.date), blocked: d.blocked, held: d.held, warned: d.warned, observed: d.observed }))}
+                .map((d) => ({
+                  day: fullDayLabel(d.date),
+                  blocked: d.blocked || 0,
+                  denied: d.denied || 0,
+                  allowed: d.allowed || 0,
+                  warned: d.warned || 0,
+                  observed: d.observed || 0,
+                }))}
             />
           </React.Fragment>
         )}
       </Card>
 
-      {/* The three questions a person arrives with, in the order they ask them,
-          answered off the counters above — no model involved, which is why the
-          hint says so. */}
-      <Card
-        title="What this window says"
-        hint="read off the counts on this screen — no model involved"
-      >
+      {/* Only what the counts above don't already say: which rule carries the
+          window, and what to change. Read off the counters — no model
+          involved, which is why the hint says so. */}
+      <Card title="What to do next" hint="read off the counts on this screen — no model involved">
         <div className="qa">
-          <div className="qa-block">
-            <h4>What happened</h4>
-            {newExposures === 0 ? (
+          {topRule ? (
+            <div className="qa-block">
+              <h4>Carrying the most</h4>
               <p>
-                Nothing new surfaced in the last {days} days.
-                {exposures > 0
-                  ? " " + plural(exposures, "exposure") + " from before the window " + (exposures === 1 ? "is" : "are") + " still open."
-                  : " No rule has anything open."}
+                <b>{topRule.label}</b> — {plural(topRule.exposures != null ? topRule.exposures : topRule.things, "exposure")}{" "}
+                across {plural(topRule.sessions, "session")} in the last {days} days, on{" "}
+                {modeOf(topRule.detector) === "radar" ? "the Radar only" : ANALYTICS_MODE_WORDS[modeOf(topRule.detector)] || "Observe"}.
               </p>
-            ) : (
-              <p>
-                <b>{plural(newExposures, "new exposure")}</b> surfaced across{" "}
-                <b>{plural(stats.rules.length, "rule")}</b> in the last {days} days
-                {sessionRate != null
-                  ? ", in " + stats.sessions + " of the " + plural(stats.window_sessions, "session") + " that ran"
-                  : ""}
-                .{" "}
-                {peakDay && peakDay.total > 0
-                  ? "The busiest day was " + fullDayLabel(peakDay.date) + ", with " + peakDay.total + "."
-                  : ""}
-              </p>
-            )}
-          </div>
+            </div>
+          ) : null}
 
           <div className="qa-block">
-            <h4>Why it matters</h4>
-            {newExposures === 0 ? (
-              <p>
-                A quiet window is the result you want, not a gap in coverage —{" "}
-                {plural(totalRules - neverFired, "rule")} fired at some point, and{" "}
-                {neverFired} {neverFired === 1 ? "has" : "have"} not needed to.
-              </p>
-            ) : (
-              <p>
-                <b>{stopped}</b> of them the guard stopped — blocked outright or held for your call —{" "}
-                <b>{warnedThings}</b> warned, and <b>{observedThings}</b> only watched: those passed straight through to the
-                model.{" "}
-                {topRule
-                  ? "The rule carrying the most is " +
-                    topRule.label +
-                    " (" +
-                    plural(topRule.exposures != null ? topRule.exposures : topRule.things, "exposure") +
-                    " across " +
-                    plural(topRule.sessions, "session") +
-                    ")."
-                  : ""}
-                {typeof stats.burned_tokens === "number"
-                  ? " Stuck loops burned " + fmtTokens(stats.burned_tokens) + " tokens of model time in this window — usage that bought nothing."
-                  : ""}
-              </p>
-            )}
-          </div>
-
-          <div className="qa-block">
-            <h4>What to do next</h4>
-            {graduation.length > 0 ? (
-              <React.Fragment>
-                <p>
-                  Raise <b>{graduation[0].label}</b> to <b>ask</b>. It fired on{" "}
-                  {plural(graduation[0].exposures != null ? graduation[0].exposures : graduation[0].things, "exposure")} across{" "}
-                  {plural(graduation[0].sessions, "session")} here, so its noise level is a fact rather than a guess — and on
-                  ask, the next call it flags waits for you instead of going through.
-                </p>
-                <button className="btn" onClick={() => window.doorman.setDetectorMode(graduation[0].detector, "ask")}>
-                  Raise {graduation[0].label} to ask
-                </button>
-              </React.Fragment>
-            ) : via.timeout > 0 ? (
-              <p>
-                {plural(via.timeout, "held call")} timed out and {via.timeout === 1 ? "was" : "were"} denied by default. If
-                that is the wrong answer for the rule that held them, lower it to <b>warn</b> on{" "}
-                <button className="linkbtn" onClick={onGoRules}>
-                  Rules
-                </button>
-                .
-              </p>
-            ) : neverFired === totalRules ? (
+            <h4>Next step</h4>
+            {stats.rules.length === 0 ? (
               <p>
                 Nothing has fired yet. Leave the rules where they are and come back after a week of real work — a posture
                 set before the noise level is known is a guess.
               </p>
+            ) : guardOff ? (
+              <p>
+                {protection.tampered
+                  ? "The guard was changed outside this app, so no rule can act on a call — every rule only observes, whatever its mode. Repair it in "
+                  : "Real-time protection is off, so every rule only observes, whatever its mode. Turn it on in "}
+                <button className="linkbtn" onClick={onGoRules}>
+                  Guardrails →
+                </button>
+              </p>
+            ) : next ? (
+              <React.Fragment>
+                <p>
+                  Set <b>{next.label}</b> to <b>Ask</b>. It is on {ANALYTICS_MODE_WORDS[modeOf(next.detector)]} and flagged{" "}
+                  {plural(next.exposures != null ? next.exposures : next.things, "exposure")} across{" "}
+                  {plural(next.sessions, "session")} here, each call let through — on Ask, the next one waits for you.
+                  {observedRows(next) > 0 && modeOf(next.detector) === "warn"
+                    ? " " + plural(observedRows(next), "sighting") + " read as observed, not warned: " +
+                      (observedRows(next) === 1 ? "it was" : "they were") +
+                      " found in transcripts after the call ran, where no mode applies."
+                    : ""}
+                  {raisable.length > 1
+                    ? " " + pluralAs(raisable.length - 1, "other rule", "other rules") + " on Observe or Warn fired too."
+                    : ""}
+                </p>
+                {next.detector.indexOf("custom:") === 0 ? (
+                  <button className="btn" onClick={onGoRules}>
+                    Guardrails →
+                  </button>
+                ) : (
+                  <button className="btn" onClick={() => window.doorman.setDetectorMode(next.detector, "ask")}>
+                    Set to Ask
+                  </button>
+                )}
+              </React.Fragment>
+            ) : via.timeout > 0 ? (
+              <p>
+                {plural(via.timeout, "held call")} timed out and {via.timeout === 1 ? "was" : "were"} denied by default. If
+                that is the wrong answer for the rule that held them, lower it to <b>Warn</b> on{" "}
+                <button className="linkbtn" onClick={onGoRules}>
+                  Guardrails →
+                </button>
+              </p>
             ) : (
               <p>
-                Nothing to change. Every rule that fired in this window is already enforcing, and the watch-only ones stayed
-                quiet.
+                Nothing to change. Every rule that fired in this window and can act on a call is already on Ask or Block
+                {firedRadarOnly > 0 ? "; Radar-only rules have no mode to raise." : "."}
               </p>
             )}
           </div>
@@ -555,8 +588,9 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
         hint={
           stats.rules.length === 0
             ? "nothing fired in this window"
-            : plural(stats.rules.length, "rule") + " of " + totalRules + " fired, in " + pluralAs(groups.length, "family", "families") +
-              " — click a rule to open it on Radar"
+            : firedGuardrails + " of " + plural(totalRules, "rule") + " fired" +
+              (firedRadarOnly > 0 ? ", plus " + firedRadarOnly + " Radar-only" : "") +
+              ", in " + pluralAs(groups.length, "family", "families") + " — click a rule to open it on Radar"
         }
       >
         {stats.rules.length === 0 ? (
@@ -576,10 +610,13 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                   {group.rules.map((r) => {
                     const mode = modeOf(r.detector);
                     const count = r.exposures != null ? r.exposures : r.things;
+                    /* The whole row opens the rule on Radar. The name stays a
+                       button so the row is reachable by keyboard; its click
+                       bubbles up to the row's handler. */
                     return (
-                      <div className="rr-row" key={r.detector}>
+                      <div className="rr-row" key={r.detector} onClick={() => onOpenRule(r.detector)}>
                         <div className="rr-main">
-                          <button className="rule-name" title={r.label + " · " + r.detector} onClick={() => onOpenRule(r.detector)}>
+                          <button className="rule-name" title={"Open " + r.label + " on Radar · " + r.detector}>
                             <span className={"mode " + (mode === "radar" ? "observe" : mode)}>
                               {mode === "radar" ? "RADAR" : mode.toUpperCase()}
                             </span>
@@ -598,6 +635,9 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                           <b>{count}</b>
                           <span>exposure{count === 1 ? "" : "s"}</span>
                         </div>
+                        <span className="rr-go" aria-hidden="true">
+                          <Icon name="chevron" size={14} />
+                        </span>
                       </div>
                     );
                   })}
@@ -610,7 +650,6 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                 { key: "rule", label: "Rule" },
                 { key: "mode", label: "Mode" },
                 { key: "exposures", label: "Exposures", right: true },
-                { key: "things", label: "Things", right: true },
                 { key: "fired", label: "Seen", right: true },
                 { key: "sessions", label: "Sessions", right: true },
                 { key: "stopped", label: "Stopped", right: true },
@@ -622,10 +661,9 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                 rule: r.label,
                 mode: modeOf(r.detector),
                 exposures: r.exposures != null ? r.exposures : r.things,
-                things: r.things,
                 fired: r.fired,
                 sessions: r.sessions,
-                stopped: r.blocked + r.denied,
+                stopped: ruleStopped(r),
                 allowed: r.allowed,
                 warned: r.warned,
                 decide: r.median_hold_ms != null ? fmtHold(r.median_hold_ms) : "—",
@@ -651,14 +689,14 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
         title="Ready to enforce"
         hint={
           graduation.length === 0
-            ? "no observe-mode rule has fired in this window"
-            : graduation.length + " watch-only rule" + (graduation.length === 1 ? "" : "s") + " fired — their noise level is a fact now"
+            ? "no Observe-mode rule has fired in this window"
+            : graduation.length + " Observe-mode rule" + (graduation.length === 1 ? "" : "s") + " fired — their noise level is a fact now"
         }
       >
-        <div className="cardnote" style={{ marginTop: 0 }}>
-          A rule ships on watch until its real-world noise level is known. These have fired on this machine in the
-          window; the counts say how many exposures and things, across how many sessions. Raising one to <b>ask</b>{" "}
-          holds the next call it flags.
+        <div className="cardnote lead">
+          A rule ships on Observe until its real-world noise level is known. These have fired on this machine in the
+          window; the counts say how many exposures, across how many sessions. Setting one to <b>Ask</b> holds the next
+          call it flags.
         </div>
         {graduation.length === 0 ? (
           <Empty>Nothing to graduate yet.</Empty>
@@ -668,7 +706,6 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
               <tr>
                 <th>Rule</th>
                 <th className="right">Exposures</th>
-                <th className="right">Things</th>
                 <th className="right" title="sightings — one row per session">Seen</th>
                 <th className="right">Sessions</th>
                 <th>Worst</th>
@@ -686,7 +723,6 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                     </span>
                   </td>
                   <td className="num-cell"><b>{r.exposures != null ? r.exposures : r.things}</b></td>
-                  <td className="num-cell muted">{r.things}</td>
                   <td className="num-cell muted">{r.fired}</td>
                   <td className="num-cell">{r.sessions}</td>
                   <td>{r.worst ? <SeverityBadge severity={r.worst} /> : "—"}</td>
@@ -694,7 +730,7 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
                   <td>
                     <div className="row" style={{ gap: "var(--s2)", justifyContent: "flex-end" }}>
                       <button className="btn" onClick={() => window.doorman.setDetectorMode(r.detector, "ask")}>
-                        Raise to ask
+                        Set to Ask
                       </button>
                     </div>
                   </td>

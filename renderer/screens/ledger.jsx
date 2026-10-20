@@ -245,7 +245,7 @@ function LedgerScreen({
     if (hitSessions !== null && !hitSessions.has(s.id)) return false;
     if (source !== "all" && s.source !== source) return false;
     if (task !== "all" && (s.task || "other") !== task) return false;
-    if (alertsOnly && !(s.alerts > 0)) return false;
+    if (alertsOnly && !(s.exposures > 0)) return false;
     return true;
   });
   // Task types actually present, with their session counts — the menu never
@@ -293,8 +293,8 @@ function LedgerScreen({
   const summary = state.sessions.find((s) => s.id === selected);
   const maxTokens = visible.reduce((n, s) => Math.max(n, sessionTokens(s)), 0);
   const shownTokens = visible.reduce((n, s) => n + sessionTokens(s), 0);
-  const shownAlerts = visible.reduce((n, s) => n + (s.alerts || 0), 0);
-  const withAlerts = state.sessions.filter((s) => s.alerts > 0).length;
+  const shownWithExposures = visible.filter((s) => s.exposures > 0).length;
+  const withExposures = state.sessions.filter((s) => s.exposures > 0).length;
   const filtered = hitSessions !== null || source !== "all" || task !== "all" || alertsOnly;
 
   return (
@@ -304,7 +304,7 @@ function LedgerScreen({
       </div>
 
       {/* One filter row, above the pane it scopes. */}
-      <div className="filterbar">
+      <div className="filterbar ledger-filters">
         <SearchBox
           placeholder="Search titles and turn text…"
           value={query}
@@ -344,17 +344,17 @@ function LedgerScreen({
             {
               key: "flagged",
               label: "Flagged only",
-              count: withAlerts,
+              count: withExposures,
               dot: "var(--bad)",
-              title: "Only sessions the Security Radar flagged",
+              title: "Only sessions with open Radar exposures",
             },
           ]}
           onPick={() => setAlertsOnly(!alertsOnly)}
         />
         <span className="spacer" />
-        <span className="fb-note">
+        <span className="fb-note" title={visible.length + " shown · " + fmtTokens(shownTokens) + " tokens"}>
           {visible.length} shown · {fmtTokens(shownTokens)} tokens
-          {shownAlerts > 0 ? " · " + shownAlerts + " alert" + (shownAlerts === 1 ? "" : "s") : ""}
+          {shownWithExposures > 0 ? " · " + shownWithExposures + " with exposures" : ""}
         </span>
         {/* The ledger as JSON in the Doorman ledger schema — every session,
             or the one open on the right. Redacted text, fingerprints only. */}
@@ -424,11 +424,11 @@ function LedgerScreen({
                       <span className="meta">
                         {s.turns} turn{s.turns === 1 ? "" : "s"} · {sessionTokensLabel(s)}
                         {hits > 0 ? " · " + hits + " match" + (hits === 1 ? "" : "es") : ""}
-                        {s.alerts > 0 ? (
+                        {s.exposures > 0 ? (
                           <React.Fragment>
                             {" · "}
                             <span className="alert">
-                              {s.alerts} alert{s.alerts === 1 ? "" : "s"}
+                              {s.exposures} exposure{s.exposures === 1 ? "" : "s"}
                             </span>
                           </React.Fragment>
                         ) : null}
@@ -685,6 +685,9 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
     if (total > 0 && turns.length >= total) onFocusFindingConsumed();
   }, [focusFindingId, findings, turns, total, rows, openRuns]);
 
+  // Repeated clicks on the header's exposure count walk the inline cards.
+  const radarCycle = useRef(0);
+
   return (
     <div>
       <div className="detail-head">
@@ -702,10 +705,22 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
               </span>
               <span>{summary.turns} turns</span>
               <span>{fmtTokens(totalTokens)} tokens</span>
-              {summary.alerts > 0 ? (
-                <span className="alert">
-                  {summary.alerts} radar alert{summary.alerts === 1 ? "" : "s"}
-                </span>
+              {summary.exposures > 0 ? (
+                <button
+                  className="alert linkish"
+                  title="Jump to this session's Radar cards (click again for the next)"
+                  onClick={() => {
+                    const cards = document.querySelectorAll(".radar-inline:not(.source)");
+                    if (cards.length === 0) return;
+                    const el = cards[radarCycle.current % cards.length];
+                    radarCycle.current += 1;
+                    placeInPane(el);
+                    el.classList.add("just-focused");
+                    setTimeout(() => el.classList.remove("just-focused"), 2200);
+                  }}
+                >
+                  {summary.exposures} exposure{summary.exposures === 1 ? "" : "s"}
+                </button>
               ) : null}
               {(summary.covered_tokens || 0) + (summary.overage_tokens || 0) + (summary.billed_tokens || 0) > 0 ? (
                 <SettlementSplitLine summary={summary} />
@@ -917,8 +932,21 @@ function TurnBubble({ turn, ordinal, inRun }) {
     );
   } else if (t.text) {
     body = <div className="body">{t.text}</div>;
-  } else {
-    body = <span className="faint">no prose — tool calls only</span>;
+  } else if (t.role !== "user") {
+    // Tool-only turn: one compact line instead of an empty card.
+    return (
+      <div className={"toolturn" + (inRun ? " in-run" : "")}>
+        <ModelMark model={t.model} />
+        <span className="tt-label">{label}</span>
+        <span className="er-chips">
+          {(t.tools || []).map((tool, i) => (
+            <span key={tool + i} className="er-chip" title={tool}>
+              {tool}
+            </span>
+          ))}
+        </span>
+      </div>
+    );
   }
 
   return (
@@ -1249,11 +1277,11 @@ function LiveRow({ row, selected, onSelect, canFocus }) {
         </span>
         <span className="meta">
           {meta.join(" · ")}
-          {row.alerts > 0 ? (
+          {row.exposures > 0 ? (
             <React.Fragment>
               {" · "}
               <span className="alert">
-                {row.alerts} alert{row.alerts === 1 ? "" : "s"}
+                {row.exposures} exposure{row.exposures === 1 ? "" : "s"}
               </span>
             </React.Fragment>
           ) : null}

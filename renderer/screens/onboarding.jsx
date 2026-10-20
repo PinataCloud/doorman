@@ -25,7 +25,7 @@
 /* The happy path. The app-location step is NOT in here — it is prepended by
    `onboardingSteps` only on a machine that needs it, so the step count and the
    progress dots tell the truth about how much is left. */
-const ONBOARDING_STEPS = ["welcome", "tools", "watching", "done"];
+const ONBOARDING_STEPS = ["welcome", "watching", "done"];
 
 /**
  * macOS launched this copy from somewhere a baked path won't survive, so a
@@ -115,11 +115,9 @@ function OnboardingScreen({ state, onDone }) {
   const last = at >= steps.length - 1;
 
   /**
-   * Leave the flow. `go` is a screen to land on INSTEAD of the app's own
-   * opening screen — the door on the last step, for someone who wants to see
-   * what "risky" means now rather than find Guardrails later. Without it the
-   * app opens where it always does (the Radar), which after the re-scan below
-   * is the one screen showing what was found on THIS Mac.
+   * Leave the flow and land on `go` — Overview from the primary button, or
+   * Guardrails from the door beside it, for someone who wants to see what
+   * "risky" means now rather than find it later.
    */
   const finish = (go) => {
     // The initial pass over transcripts already on disk, so the app is not
@@ -160,7 +158,6 @@ function OnboardingScreen({ state, onDone }) {
       <div className="onb-body">
         {step === "place" ? <OnboardingPlace busy={busy === "place"} error={moveError} /> : null}
         {step === "welcome" ? <OnboardingWelcome /> : null}
-        {step === "tools" ? <OnboardingTools state={state} /> : null}
         {step === "watching" ? (
           <OnboardingWatching state={state} pending={guardPending} onSet={setWarnings} />
         ) : null}
@@ -207,8 +204,8 @@ function OnboardingScreen({ state, onDone }) {
               {busy === "place" ? "Moving…" : "Move and restart"}
             </button>
           ) : last ? (
-            <button type="button" className="btn primary" onClick={() => finish()}>
-              Open Doorman
+            <button type="button" className="btn primary" onClick={() => finish("overview")}>
+              Go to Overview
             </button>
           ) : (
             <button type="button" className="btn primary" onClick={next}>
@@ -265,64 +262,53 @@ function OnboardingWelcome() {
 }
 
 /**
- * Step: what is on this Mac.
- *
- * Deliberately has NO per-tool switches. Capture is per rail and the guard
- * installs into every host it has an adapter for, so a switch here would be a
- * control that changes nothing — and a setup screen that lies about what it
- * can do is worse than one that shows less. It reports, and the next step is
- * where something actually turns on.
+ * What is on this Mac, listed above the protection switch on the watching
+ * step. Deliberately has NO per-tool switches: capture is per rail and the
+ * guard installs into every host it has an adapter for, so a per-tool switch
+ * would change nothing. The one decision is the switch below it.
  */
-function OnboardingTools({ state }) {
+function OnboardingToolList({ state }) {
   const tools = onboardingTools(state);
   const watching = tools.filter((t) => t.covered).length;
-  return (
-    <div className="onb-mid">
-      <div className="onb-said onb-said-left">
-        <h1>
-          {tools.length === 0
-            ? "No AI tools found yet"
-            : tools.length === 1
-              ? "We found 1 AI tool on this computer"
-              : "We found " + tools.length + " AI tools on this computer"}
-        </h1>
-        <p>
-          {tools.length === 0
-            ? "Install Claude Code, Codex or another agent and Doorman will pick it up on its own."
-            : "This is what Doorman can see. Nothing to choose here."}
-        </p>
+  if (tools.length === 0) {
+    return (
+      <div className="onb-fact">
+        <span className="dot off" />
+        No AI tools found yet — install Claude Code, Codex or another agent and Doorman picks it up on its own.
       </div>
-      {tools.length > 0 ? (
-        <div className="onb-list">
-          {tools.map((t) => (
-            <div key={t.id} className="onb-row">
-              <span className="onb-row-mark">
-                <ToolMark tool={t.id} size={18} />
-              </span>
-              <span className="onb-row-said">
-                <span className="onb-row-name">{t.name}</span>
-                <span className="onb-row-kind">{ONBOARDING_KIND_LABELS[t.kind] || t.kind}</span>
-              </span>
-              {t.covered ? (
-                <span className="chip good">Watching</span>
-              ) : t.pending ? (
-                <span className="chip">Next step</span>
-              ) : (
-                <span className="onb-row-kind">Not supported yet</span>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {tools.length > 0 ? (
-        <div className="onb-fact">
-          <span className={"dot" + (watching > 0 ? "" : " off")} />
-          {watching === tools.length
-            ? "All of them are already being watched."
-            : watching + " of " + tools.length + " already being watched."}
-        </div>
-      ) : null}
-    </div>
+    );
+  }
+  return (
+    <React.Fragment>
+      <div className="onb-list">
+        {tools.map((t) => (
+          <div key={t.id} className="onb-row">
+            <span className="onb-row-mark">
+              <ToolMark tool={t.id} size={18} />
+            </span>
+            <span className="onb-row-said">
+              <span className="onb-row-name">{t.name}</span>
+              <span className="onb-row-kind">{ONBOARDING_KIND_LABELS[t.kind] || t.kind}</span>
+            </span>
+            {t.covered ? (
+              <span className="chip good">Watching</span>
+            ) : t.pending ? (
+              <span className="chip">With the switch below</span>
+            ) : (
+              <span className="onb-row-kind">Not supported yet</span>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="onb-fact">
+        <span className={"dot" + (watching > 0 ? "" : " off")} />
+        {watching === tools.length
+          ? tools.length === 1
+            ? "The 1 AI tool found is already being watched."
+            : "All " + tools.length + " AI tools found are already being watched."
+          : watching + " of " + tools.length + " AI tools found are already being watched."}
+      </div>
+    </React.Fragment>
   );
 }
 
@@ -353,13 +339,14 @@ function OnboardingWatching({ state, pending, onSet }) {
           </p>
         </div>
       </div>
+      <OnboardingToolList state={state} />
       <div className={"onb-opt" + (shown ? " is-on" : "")}>
         <span className="onb-opt-said">
           <span className="onb-opt-name">Pause risky actions and ask me first</span>
           <span className="onb-opt-note">
             {noAgents
-              ? "No AI agent on " + thisMachine(state.platform) + " yet. Once you install one, turn this on in Settings."
-              : "Enable the guard to pause risky actions and require your approval before they run."}
+              ? "No AI agent on " + thisMachine(state.platform) + " yet. Once you install one, turn this on in Guardrails."
+              : "Turns on real-time protection: calls an Ask rule catches wait for your approval before they run."}
           </span>
         </span>
         <Switch
@@ -370,6 +357,7 @@ function OnboardingWatching({ state, pending, onSet }) {
           onChange={onSet}
         />
       </div>
+      <OnboardingNotifications state={state} />
       {/* Why the switch went back. Installing writes into files this app does
           not own, so it can fail for reasons the person can act on — and a
           switch that settles back with no explanation reads as a bug in us
@@ -383,6 +371,33 @@ function OnboardingWatching({ state, pending, onSet }) {
             : endSentence(error)}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Notifications the OS refuses (or never confirmed) — the same check the
+ * Settings row reads. A held call pings you with a banner; without one it
+ * waits unseen while the window is hidden, so this is asked during setup.
+ */
+function OnboardingNotifications({ state }) {
+  const check = state.notification_check || { status: "unknown" };
+  const blocked = check.status === "blocked" || state.notifications_blocked;
+  const undetermined = !blocked && check.status === "unknown" && !!check.error;
+  if (!blocked && !undetermined) return null;
+  return (
+    <div className="onb-opt">
+      <span className="onb-opt-said">
+        <span className="onb-opt-name">
+          {blocked ? "Notifications are blocked" : "Notifications aren’t confirmed yet"}
+        </span>
+        <span className="onb-opt-note">
+          A held call pings you with a banner so it doesn&rsquo;t sit waiting while Doorman is out of sight.
+        </span>
+      </span>
+      <button type="button" className="btn" onClick={() => window.doorman.openNotificationSettings()}>
+        Open Notification settings
+      </button>
     </div>
   );
 }
@@ -408,7 +423,7 @@ function OnboardingDone({ state }) {
       <div className="onb-fact">
         <span className={"dot" + (s.warning ? "" : " off")} />
         {s.warning
-          ? "You’ll be asked before anything risky runs."
+          ? "Risky calls on Ask rules wait for your answer; the rest are recorded on the Radar."
           : "Recording only — nothing will be paused."}
       </div>
     </div>

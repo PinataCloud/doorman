@@ -646,12 +646,17 @@ export interface RuleStat {
   daily: number[];
   sessions: number;
   worst?: SecuritySeverity;
-  /** What enforcement did, over the window's rows. */
+  /** What enforcement did, over the window's rows. `denied` and `timed_out`
+   * are the hold's ending as recorded; `stopped` is every row whose call
+   * never ran (blocked, or held and then denied — by you, by timeout, or by
+   * default) — the one figure the screens print as "stopped". Optional so an
+   * older stat fixture still types. */
   blocked: number;
   held: number;
   allowed: number;
   denied: number;
   timed_out: number;
+  stopped?: number;
   warned: number;
   /** Rows a model stood down after this rule fired (FindingAssist) — kept on
    * the Radar at medium confidence, never announced. Optional so a stat built
@@ -675,12 +680,14 @@ export interface RuleStat {
 }
 
 /** One day of the window, as exposures (not things, not rows) surfaced, by the
- * WORST outcome any of the exposure's rows had — blocked outranks held
- * outranks warned. */
+ * WORST outcome any of the exposure's rows had — blocked outranks denied
+ * outranks allowed outranks warned. Blocked + denied is "stopped"; an allowed
+ * hold ran, so it is not. */
 export interface StatsDay {
   date: string;
   blocked: number;
-  held: number;
+  denied: number;
+  allowed: number;
   warned: number;
   observed: number;
   total: number;
@@ -713,7 +720,8 @@ export interface WindowStats {
    *
    * `new_exposures` counts exposures whose FIRST sighting anywhere falls in
    * [cutoff - days, cutoff) — the same rule the current window uses, applied a
-   * window earlier. `stopped` is the subset the guard blocked or held. Both
+   * window earlier. `stopped` is the subset the guard blocked or held and
+   * denied. Both
    * read an exposure's worst outcome across its whole life, exactly as the
    * current window's day buckets do, so the two halves of a delta are the same
    * measurement. */
@@ -766,15 +774,22 @@ export function thingKey(row: Pick<FindingRow, "detector" | "key_name" | "target
   return `${row.detector}\u0000${row.key_name || row.target || row.excerpt || ""}`;
 }
 
-const OUTCOME_RANK = { blocked: 3, held: 2, warned: 1, observed: 0 } as const;
+const OUTCOME_RANK = { blocked: 4, denied: 3, allowed: 2, warned: 1, observed: 0 } as const;
 type Outcome = keyof typeof OUTCOME_RANK;
 
+/** A row's outcome. A held call's ending decides it (a denied hold's line may
+ * itself read "deny"); an ask with no ending recorded never ran
+ * (callNeverRan). Rows with no enforcement — transcript sightings, anything
+ * seen while the guard was off — are observed whatever the rule's mode. */
 function rowOutcome(row: FindingRow): Outcome {
+  if (row.resolution) return callNeverRan(row) ? "denied" : "allowed";
   if (row.enforced === "deny") return "blocked";
-  if (row.enforced === "ask" || row.resolution) return "held";
+  if (row.enforced === "ask") return "denied";
   if (row.enforced === "warn") return "warned";
   return "observed";
 }
+
+const isStopped = (outcome: Outcome): boolean => outcome === "blocked" || outcome === "denied";
 
 /** Local calendar day of an ISO instant — the bucket the charts are drawn in. */
 function dayOf(iso: string): string {
@@ -825,7 +840,7 @@ export function summarizeRuleStats(
   for (let i = days - 1; i >= 0; i -= 1) {
     const date = dayOf(new Date(now.getTime() - i * 86_400_000).toISOString());
     dayIndex.set(date, daily.length);
-    daily.push({ date, blocked: 0, held: 0, warned: 0, observed: 0, total: 0 });
+    daily.push({ date, blocked: 0, denied: 0, allowed: 0, warned: 0, observed: 0, total: 0 });
   }
   const note = (map: Map<string, Seen>, key: string, row: FindingRow, outcome: Outcome) => {
     const seen = map.get(key);
@@ -847,7 +862,7 @@ export function summarizeRuleStats(
     const at = Date.parse(seen.first);
     if (!Number.isFinite(at) || at < prevCutoffMs || at >= cutoffMs) continue;
     prev.new_exposures += 1;
-    if (seen.outcome === "blocked" || seen.outcome === "held") prev.stopped += 1;
+    if (isStopped(seen.outcome)) prev.stopped += 1;
   }
   for (const row of every) {
     if (row.status !== "false_positive" || row.last_seen_at < cutoff) continue;
@@ -883,6 +898,7 @@ export function summarizeRuleStats(
         allowed: 0,
         denied: 0,
         timed_out: 0,
+        stopped: 0,
         warned: 0,
         stood_down: 0,
         _sessions: new Set(),
@@ -916,6 +932,7 @@ export function summarizeRuleStats(
     if (row.resolution === "allowed") stat.allowed += 1;
     if (row.resolution === "denied") stat.denied += 1;
     if (row.resolution === "timeout") stat.timed_out += 1;
+    if (isStopped(outcome)) stat.stopped = (stat.stopped ?? 0) + 1;
     if (typeof row.hold_ms === "number" && Number.isFinite(row.hold_ms)) {
       stat._holds.push(row.hold_ms);
       holds.push(row.hold_ms);

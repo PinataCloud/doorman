@@ -501,11 +501,11 @@ export interface RadarState {
   summary: RadarSummary;
   /** Newest rows (all statuses); the renderer filters. */
   findings: FindingRow[];
-  /** Open findings grouped by the USE CASE of the session they fired in
-   * (lib/task-class.ts), most first — "which kind of work is risky". Computed
-   * in main because both `findings` and `sessions` are capped in the snapshot,
-   * so the renderer cannot do this join honestly itself. */
-  alerts_by_task: { task: string; alerts: number; sessions: number }[];
+  /** Distinct open exposures (Radar cards) per USE CASE of the sessions they
+   * fired in (lib/task-class.ts), most first. An exposure spanning use cases
+   * counts in each. Computed in main because both `findings` and `sessions`
+   * are capped in the snapshot, so the renderer cannot join them honestly. */
+  exposures_by_task: { task: string; exposures: number; sessions: number }[];
   guard_installed: boolean;
   /** One row per REGISTERED guard host (guard/hosts/index.ts): is the host on
    * this machine, and is the guard's entry in its document? The renderer names
@@ -1041,7 +1041,7 @@ export class Store {
           affected_sessions: 0,
         },
         findings: [],
-        alerts_by_task: [],
+        exposures_by_task: [],
         guard_installed: false,
         rule_stats: {},
       },

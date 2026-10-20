@@ -233,7 +233,7 @@ html, body {
    30px-tall action button 31px inside the 55px bottom strip, so the whole
    button was a drag handle. Keep every new fixed/floating layer on this list. */
 .notices, .notices *, .ai-drawer, .ai-drawer *, .approval-scrim, .approval-scrim *,
-.approval, .fmenu-pop, .verdict-pop, .rowmenu-pop, .charttip {
+.approval, .fmenu-pop, .rowmenu-pop, .charttip {
   -webkit-app-region: no-drag;
 }
 
@@ -533,25 +533,20 @@ td.right, th.right { text-align: right; }
 .detail-head h2 { margin: 0; font-family: var(--display); font-size: var(--t-2u); font-weight: 650; display: inline; }
 .detail-title { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
 .detail-title .railmark { width: 22px; height: 22px; }
-/* The session's footer: pinned to the bottom of the scrolling pane, on paper so
-   the turns slide under it, the chart at the left and the AI door at the right. */
+/* The session's footer: the cost-per-turn chart after the last turn, in the
+   scroll flow — pinned, it covered the last turn in a short window. */
 .detail-foot {
-  position: sticky;
-  bottom: 0;
   display: flex;
   align-items: center;
   gap: var(--s4);
   padding: var(--s4) 0 var(--s3);
   margin-top: var(--s4);
-  /* Solid, with the fade ABOVE its rule: a transparent top let the last turn's
-     text show through with the rule struck across it. */
-  background: var(--linen);
-  box-shadow: 0 -12px 14px -4px var(--linen);
   border-top: 1px solid var(--tan);
 }
 .detail-foot .sparkwrap { display: inline-flex; align-items: center; gap: var(--s3); }
 .detail-foot .sparklabel { font-family: var(--mono); font-size: var(--t-3); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4); }
 .detail-foot .spacer { flex: 1; }
+/* One line at any width: whole cells, the settlement line yields last. */
 .detail-head .meta {
   font-family: var(--mono);
   font-size: var(--t-2);
@@ -559,9 +554,38 @@ td.right, th.right { text-align: right; }
   margin: var(--s3) 0 var(--s6);
   display: flex;
   gap: var(--s5);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
 }
+.detail-head .meta > * { flex: none; }
+.detail-head .meta > .settle { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .detail-head .meta .alert { color: var(--bad); }
+.detail-head .meta button.alert {
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+/* A tool-only turn: one line, not an empty card. */
+.toolturn {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  max-width: 620px;
+  margin: 0 56px var(--s4) 0;
+  padding: 0 var(--s5);
+  font-family: var(--mono);
+  font-size: var(--t-3);
+  letter-spacing: .1em;
+  color: var(--ink-4);
+}
+.toolturn.in-run { margin-left: var(--s5); }
+.toolturn .tt-label { flex: none; white-space: nowrap; }
+.toolturn .er-chips { flex-wrap: nowrap; overflow: hidden; letter-spacing: 0; }
 
 .bubble {
   max-width: 620px;
@@ -764,6 +788,8 @@ td.right, th.right { text-align: right; }
 .modeseg button.on.mode-ask { background: var(--warn); color: var(--paper); }
 .modeseg button.on.mode-block { background: var(--bad); color: var(--on-fill); }
 .modeseg.off button { opacity: .5; cursor: default; }
+/* A family whose rules disagree: nothing lit, and the word says why. */
+.modeseg-mixed { padding: 0 8px; font-size: var(--t-3); font-style: italic; color: var(--ink-4); }
 
 /* ---- forms ----
    Every control shares ONE height (--control-h) so a button next to a select
@@ -898,12 +924,28 @@ button.btn {
     background var(--glide-ms) var(--ease);
 }
 button.btn:hover { border-color: var(--tan-3); color: var(--ink); }
-/* Keyboard parity: every clickable that has a hover state has a focus ring.
-   The switch and .seg already carried one; buttons and links did not. */
+/* Keyboard parity: every clickable that has a hover state has a focus ring. */
 button.btn:focus-visible,
 button.linkbtn:focus-visible,
-button.link:focus-visible,
-.advanced-toggle:focus-visible {
+.advanced-toggle:focus-visible,
+.nav button:focus-visible,
+.iconbtn:focus-visible,
+.copybtn:focus-visible,
+.revealbtn:focus-visible,
+.showall:focus-visible,
+.twin-toggle:focus-visible,
+.dotchip:focus-visible,
+.fmenu:focus-visible,
+.fmenu-pop button:focus-visible,
+.rowmenu-pop button:focus-visible,
+.sessrow:focus-visible,
+.eventrun:focus-visible,
+.t-row:focus-visible,
+.lvl-cat:focus-visible,
+.ovr-exp:focus-visible,
+.ovr-exposure:focus-visible,
+.statusline.updatebtn:focus-visible,
+.ranked .rk.pick:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) var(--mix-2), transparent);
   outline-offset: 1px;
 }
@@ -917,10 +959,6 @@ button.btn.danger { color: var(--bad); border-color: var(--bad); background: var
 button.btn.good { color: var(--good); border-color: var(--good); background: var(--paper); }
 button.btn.good:hover { background: var(--good-soft); border-color: var(--good); color: var(--good); }
 button.btn:disabled { opacity: .5; cursor: default; }
-button.link {
-  font: inherit; font-size: inherit; background: none; border: none; padding: 0;
-  color: var(--blue); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
-}
 
 .row { display: flex; align-items: center; gap: var(--s4); }
 .row .spacer { flex: 1; }
@@ -1155,7 +1193,9 @@ button.link {
 .approval-scrim {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /* Above every other floating layer that can be open at the same time
+     (the AI drawer, the wizard): a held call must never be covered. */
+  z-index: 70;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1204,7 +1244,10 @@ button.link {
   margin: 0 0 var(--s4);
 }
 .approval .evidence { max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
-.approval .ap-actions { display: flex; align-items: center; gap: var(--s4); margin-top: var(--s5); }
+.approval .ap-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s4); margin-top: var(--s5); }
+/* The keyboard hint gets its own line under the buttons. */
+.ap-actions .ap-keys { flex-basis: 100%; font-size: var(--t-2); }
+.ap-actions .ap-keys kbd { font-family: var(--mono); font-size: .92em; padding: 0 4px; border: 1px solid var(--ring); border-radius: 4px; }
 .approval .ap-actions .spacer { flex: 1; }
 .approval .ap-foot { margin-top: var(--s4); font-size: var(--t-2); color: var(--ink-3); }
 .approval .ellip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
@@ -1605,6 +1648,8 @@ button.btn.quiet:hover { border-color: var(--tan-2); }
   .herorow, .statgrid, .grid2 { grid-template-columns: minmax(0, 1fr); }
 }
 .cardnote { margin-top: var(--s4); font-size: var(--t-2); color: var(--ink-3); }
+/* A note that opens its card, or follows a row that already has its own air. */
+.cardnote.lead { margin-top: 0; }
 
 /* The meter (part-to-whole in one row). 2px surface gaps, not borders. */
 .meter { display: flex; width: 100%; border-radius: 3px; overflow: hidden; background: var(--linen-2); gap: 2px; }
@@ -1622,6 +1667,13 @@ button.btn.quiet:hover { border-color: var(--tan-2); }
 }
 .filterbar .spacer { flex: 1; }
 .filterbar .fb-note { font-size: var(--t-2); color: var(--ink-4); }
+/* The Ledger's strip stays one row: the count text yields (ellipsis) before
+   Export would wrap under it. */
+.filterbar.ledger-filters { flex-wrap: nowrap; }
+.filterbar.ledger-filters > * { flex: none; }
+.filterbar.ledger-filters .searchbox { flex: 1 1 160px; min-width: 140px; width: auto; max-width: 300px; }
+.filterbar.ledger-filters .spacer { flex: 1 1 0; }
+.filterbar.ledger-filters .fb-note { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 /* ---- filter strip controls (shared: radar + ledger) ---- */
 .fmenu-wrap { position: relative; display: inline-flex; }
@@ -1703,6 +1755,10 @@ button.fmenu .caret { color: var(--ink-4); }
 .fmenu-pop .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .fmenu-pop .lab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fmenu-pop .cnt { font-family: var(--mono); font-size: var(--t-3); color: rgba(255, 255, 255, .5); }
+/* MoreFilters: several lists in one popover, each under its dimension. */
+.fmenu-pop .fmenu-sec + .fmenu-sec { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid rgba(255, 255, 255, .1); }
+.fmenu-pop .fmenu-sec-k { padding: 4px var(--s3) 2px; font-size: var(--t-3); font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: rgba(255, 255, 255, .5); }
+button.fmenu .fmore-t { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 button.linkbtn {
   font: inherit; font-size: var(--t-2); background: none; border: none; padding: 0;
@@ -1882,6 +1938,13 @@ button.eventrun .er-act { font-size: var(--t-3); color: var(--blue); flex: none;
 .filterbar .searchbox input { height: var(--control-h); }
 .filterbar.radar-filters .fmenu-wrap { flex: none; }
 .filterbar.radar-filters .seg { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Below ~1240px window width the row (search, three menus, More filters, the
+   toggle) is wider than the pane, and nowrap clipped the toggle off the end.
+   There it wraps, and the toggle — last, margin-left: auto — takes the second
+   line's right edge, a fixed place rather than a flicker. */
+@media (max-width: 1240px) {
+  .filterbar.radar-filters { flex-wrap: wrap; row-gap: var(--s3); }
+}
 
 /* ---- in-window notice stack (delivery rail of last resort) ----
    Bottom-right toasts over the content pane. Above the chart tooltip layer is
@@ -1974,7 +2037,7 @@ body.doorman-panel { background: transparent; overflow: hidden; }
    The evidence strip's Copy button sits outside .ap-actions and needs the same
    exemption — inside the drag region a click on it moves the window instead. */
 .panel .ap-actions, .panel .ap-actions *, .panel button.copybtn, .panel .ap-cut button { -webkit-app-region: no-drag; }
-.panel .ap-actions { display: flex; align-items: center; gap: var(--s3); }
+.panel .ap-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); }
 .panel .ap-actions .spacer { flex: 1; }
 .panel .ap-foot { margin-top: var(--s3); font-size: var(--t-3); color: var(--ink-4); }
 
@@ -2185,7 +2248,6 @@ button.dotchip.on .n { color: var(--ink-2); }
    text the strip shows, never the underlying secret; there is no unmasked
    copy anywhere in this app, deliberately. --------------------------- */
 .evidence-wrap { position: relative; }
-.evidence-wrap .evidence { padding-right: 76px; }
 button.copybtn {
   position: absolute;
   top: 6px;
@@ -2261,20 +2323,12 @@ table.rows tfoot .lab {
    redacted ledger turns.
    ============================================================ */
 
-/* ---- Evidence strip actions: one cluster, so copybtn does not pin itself.
-   copybtn keeps its own top/right for the approval panel, which renders it
-   without the cluster. VIEW RAW joins it only where the strip was asked for
-   `raw` — the Event Ledger (see Evidence in screens/radar.jsx). */
-.evidence-actions {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: flex;
-  gap: var(--s2);
-}
+/* ---- Evidence strip actions: VIEW RAW on its own row above the box,
+   right-aligned — pinned inside the box it covered the snippet's first
+   line. Offered only where the strip was asked for `raw` (see Evidence in
+   screens/radar.jsx). */
+.evidence-actions { display: flex; justify-content: flex-end; gap: var(--s2); margin-bottom: var(--s2); }
 .evidence-actions button.copybtn { position: static; top: auto; right: auto; }
-/* Two buttons need more clearance than one. */
-.evidence-wrap:has(.evidence-actions button + button) > .evidence { padding-right: 170px; }
 
 /* The raw window: same dark surface, its note underneath saying "this is the
    live text". Shown only after an explicit click; never stored. */
@@ -2373,6 +2427,9 @@ button.revealbtn.on { color: var(--warn-ink, var(--ink)); border-color: var(--wa
    routes to Settings where the reinstall button is, and the pill drops to 0/N
    because nothing can act. */
 .sechead { gap: var(--s4); }
+/* A sub page's way up: its own row above the title, like a breadcrumb. */
+.sechead:has(.sechead-back) { flex-wrap: wrap; row-gap: var(--s2); }
+.sechead-back { flex-basis: 100%; text-align: left; font-size: var(--t-1); }
 /* `flex: none` because the pill is a sentence with a number in it: let the row
    squeeze it and "3/14 guardrails enforcing" wraps mid-phrase. The title never
    wraps either, so a narrow window shortens the gap between them instead. */
@@ -2583,15 +2640,27 @@ button.protbadge:focus-visible { outline: 2px solid #D9C2F5; outline-offset: 3px
 .rulegroup .rg-tail { margin-left: auto; font-size: var(--t-2); color: var(--ink-3); font-family: var(--mono); }
 .rulegroup .rg-tail b { color: var(--ink); font-weight: 600; }
 
+/* The whole row opens the rule on Radar, so it reads as one target: a hover
+   wash, and a chevron that is always there (muted) because a click-anywhere
+   row with no mark gives no hint that it goes somewhere. */
 .rr-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: var(--s5);
-  padding: var(--s4) 0;
+  padding: var(--s4) var(--s3);
+  margin: 0 calc(-1 * var(--s3));
+  border-radius: var(--r);
   border-bottom: 1px solid color-mix(in srgb, var(--tan) var(--mix-2), transparent);
+  cursor: pointer;
+  transition: background var(--glide-ms) var(--ease);
 }
 .rr-row:last-child { border-bottom: none; }
+.rr-row:hover { background: color-mix(in srgb, var(--paper-2) 70%, transparent); }
+.rr-row:has(.rule-name:focus-visible) { outline: 2px solid var(--tan-3); outline-offset: -2px; }
+.rr-row .rule-name:focus-visible { outline: none; }
+.rr-row .rr-go { display: flex; color: var(--ink-4); transition: color var(--glide-ms) var(--ease); }
+.rr-row:hover .rr-go, .rr-row:has(.rule-name:focus-visible) .rr-go { color: var(--ink-2); }
 .rr-row .rr-main { min-width: 0; }
 /* The meta line wraps rather than truncating: every clause on it is a number
    someone came here for, and an ellipsis would hide the last ones every time. */
@@ -2670,9 +2739,8 @@ button.protbadge:focus-visible { outline: 2px solid #D9C2F5; outline-offset: 3px
    So: a pill, not a rectangle (the app's rectangles are actions), in a quiet
    navy tint that reads as ours without competing with the severity colours a
    security screen is already spending red and amber on; the mark carries the
-   brand instead of the colour. The label is ellipsized at 30ch because it
-   varies per surface ("How to fix this?" … "Should I trust this?") and a
-   header that resizes itself per screen is worse than a truncated question. */
+   brand instead of the colour. The label is ellipsized at 30ch so a longer
+   label can never resize a header. */
 .askbtn {
   font: inherit;
   font-size: var(--t-1);
@@ -2888,7 +2956,7 @@ button.protbadge:focus-visible { outline: 2px solid #D9C2F5; outline-offset: 3px
 .ai-ctx.compact { max-width: 100%; }
 .ai-ctx-lead { color: var(--ink-4); flex: none; }
 .ai-ctx-count { margin-left: auto; flex: none; color: var(--ink-4); font-size: 10.5px; }
-/* The prompt drawer: "How to fix this?" opens a prompt for the
+/* The prompt drawer: "Ask your agent" opens a prompt for the
    person's own coding agent to take. One bordered block — head with the copy
    button, the prompt as selectable mono text. The chosen question is the
    pressed starter. */
@@ -3190,7 +3258,6 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
    input masks what is typed (the value is a secret while it is on screen);
    once traced it gives way to the value's shape — dots and the tail. */
 .trace { max-width: 860px; }
-.trace-nav { margin: calc(-1 * var(--s3)) 0 var(--s5); }
 .trace-form { margin-bottom: var(--s6); }
 .trace-lead { margin: 0 0 var(--s4); font-size: var(--t-1); color: var(--ink-2); max-width: 62ch; }
 
@@ -3286,8 +3353,18 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .trace-verdict.tone-bad .trace-headline { color: var(--bad); }
 .trace-verdict.tone-ok .trace-headline { color: var(--good); }
 .trace-sub { margin-top: var(--s2); font-size: var(--t-2); color: var(--ink-3); max-width: 78ch; }
-.trace-facts { margin: 0 0 var(--s5); }
-.trace-facts .fact { max-width: 100%; white-space: normal; text-align: left; }
+/* The consequence facts: a list of short sentences, each led by a tone dot
+   — read top to bottom, not scanned as a row of pills. */
+.trace-facts { list-style: none; margin: 0 0 var(--s5); padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.trace-fact { display: flex; align-items: baseline; gap: var(--s3); font-size: var(--t-1); line-height: 1.5; color: var(--ink-2); }
+.trace-fact .fdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--tan-3); transform: translateY(-1px); }
+.trace-fact.ok .fdot { background: var(--good); }
+.trace-fact.warn .fdot { background: var(--warn); }
+.trace-fact.bad .fdot { background: var(--bad); }
+/* The one next step when the value sits in plain text: rotate it. */
+.trace-next { margin: 0 0 var(--s4); padding: var(--s4) var(--s5); background: var(--linen); border: 1px solid var(--tan-1); border-radius: var(--r-lg); }
+.trace-next-k { font-size: var(--t-3); font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--bad); }
+.trace-next p { margin: var(--s2) 0 0; font-size: var(--t-1); line-height: 1.6; color: var(--ink-2); max-width: 78ch; }
 .trace-actions { margin-bottom: var(--s6); flex-wrap: wrap; }
 
 /* Transcript files that hold the value in plain text. */
@@ -3761,7 +3838,20 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 /* The name and its "?" sit together at the left; whatever follows (the tag,
    the segment) is pushed to the right by the tag's — or, without one, the
    segment's — auto margin. */
-.lvl-rule > .modeseg:not(.lvl-rule-tag + .modeseg) { margin-left: auto; }
+.lvl-rule > .modeseg:not(.lvl-rule-tag + .modeseg):not(.lvl-rule-act ~ .modeseg) { margin-left: auto; }
+/* The rule's 14-day activity, right-aligned before the tag/segment; it takes
+   the auto margin so the tag and segment sit at its side. */
+.lvl-rule-act { margin-left: auto; font-size: var(--t-3); color: var(--ink-3); white-space: nowrap; }
+.lvl-rule-act.quiet { color: var(--ink-4); }
+.lvl-rule-act ~ .lvl-rule-tag { margin-left: 0; }
+.lvl-rule > .lvl-rule-act ~ .modeseg { margin-left: var(--s3); }
+/* Asked before a set-all overwrites a family whose rules disagree. */
+.lvl-mixed-confirm {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--s3);
+  padding: var(--s3) var(--s4) var(--s3) calc(var(--s4) + 13px + var(--s4));
+  background: var(--linen); border-top: 1px solid var(--ring); font-size: var(--t-2);
+}
+.lvl-mixed-confirm > span { flex: 1 1 auto; min-width: 0; }
 
 /* Advanced: one disclosure over the cards that belong to no kind of risk, so
    the page reads level-then-nothing-else until you ask for more. A native
@@ -3941,6 +4031,8 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .fstory .fqa-outcome.act-held { color: var(--warn); }
 .fstory .fqa-outcome.act-warned { color: var(--gold-deep); }
 .fstory .fqa-outcome.act-excepted { color: var(--ink-3); }
+/* How a hold ended, under the outcome word: "Denied by you after 12s". */
+.fstory .fqa-hold { font-size: var(--t-1); line-height: 1.5; color: var(--ink-2); }
 
 /* The story: three sentences, then one line of facts. Replaces the
    five-row What/Means/Where/Action/Do-next form — the reader was left to
@@ -3959,10 +4051,12 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .fstep .fsplit { margin: 0; }
 /* The decisions row at the panel's foot, under both columns, with a hairline
    over it so the verbs sit apart from the prose and the record. */
-/* The decisions, at the foot's right on the facts line: pick a reason, then
-   Mark reviewed. Outside the panel — they act on the whole card. */
+/* The decisions, at the foot's right on the facts line: three verdict
+   buttons, or a decided card's verdict and Reopen. Outside the panel — they
+   act on the whole card. */
 .ffoot .fdecide { flex: none; margin-left: auto; display: flex; }
-.ffoot .fdecide > .row { gap: var(--s3) var(--s4); flex-wrap: wrap; justify-content: flex-end; padding-top: 0; }
+.ffoot .fdecide > .row { gap: var(--s3) var(--s4); flex-wrap: wrap; justify-content: flex-end; align-items: center; padding-top: 0; }
+.ffoot .fverdict { font-size: var(--t-2); font-weight: 650; color: var(--ink-2); }
 .ffoot { align-items: center; }
 .fstory { display: flex; flex-direction: column; gap: var(--s4); margin: 0; }
 .fstory .fqa-row { align-items: flex-start; }
@@ -3981,28 +4075,6 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .fstory-next p { color: var(--ink); font-weight: 500; }
 .ffacts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3) var(--s4); margin-top: var(--s3); font-size: var(--t-2); color: var(--ink-3); }
 .ffact + .ffact::before { content: "·"; margin-right: var(--s4); color: var(--tan-3); }
-
-/* The verdict menu: what you concluded, named. A selector — it writes
-   nothing; the button beside it does. Fixed + anchored so the card's own
-   scrolling cannot clip it — same shape as .fmenu-pop. */
-.verdict-wrap { position: relative; anchor-name: --verdict; anchor-scope: --verdict; }
-/* One line per verdict, so the list is as wide as its longest name rather
-   than as wide as a paragraph. */
-.verdict-pop {
-  position: fixed;
-  position-anchor: --verdict;
-  position-area: block-end span-inline-end;
-  position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
-  margin: 4px 0 0; z-index: 50; min-width: 180px;
-  display: flex; flex-direction: column; padding: var(--s2);
-  background: var(--paper); border: 1px solid var(--ring); border-radius: var(--r); box-shadow: var(--shadow);
-}
-.verdict-pop button {
-  display: block; width: 100%; font-size: var(--t-1);
-  padding: var(--s3); background: none; border: 0; border-radius: 6px; cursor: pointer; text-align: left;
-  white-space: nowrap; color: var(--ink);
-}
-.verdict-pop button:hover { background: var(--paper-2); }
 
 /* Reading a saved rule set (SavedRuleSetView): the wizard's head and foot
    around one table — rule, what the set holds, what its level holds — with a
@@ -4033,8 +4105,8 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .sset-pack-d { font-size: var(--t-3); }
 .sset .rw-foot { margin-top: var(--s5); }
 
-/* A row's "⋯" menu (ActionMenu): the same box as .verdict-pop, opening
-   toward the row's inside edge since the trigger sits in the last column.
+/* A row's "⋯" menu (ActionMenu): a light popover anchored to its trigger,
+   opening toward the row's inside edge since the trigger sits in the last column.
    Each row scopes its own anchor, so twenty rows are twenty anchors. */
 .rowmenu-wrap { position: relative; display: inline-flex; anchor-name: --rowmenu; anchor-scope: --rowmenu; }
 .iconbtn.more.on { border-color: var(--ring-strong); color: var(--ink); background: var(--paper-2); }
@@ -4149,14 +4221,6 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
   .fsplit-said, .fsplit-saw { flex: 1 1 auto; width: 100%; }
 }
 
-/* Nothing picked yet: the trigger names the menu rather than a verdict, so it
-   reads as the optional qualifier it is and not as a choice already made. */
-.verdict-wrap .btn.unset { color: var(--ink-3); }
-
-/* The selected verdict reads as selected, so the list says what the button
-   beside it will write. */
-.verdict-pop button.on { background: var(--linen); font-weight: 650; }
-
 /* ---- Exposures to review: the one summary above the Radar feed -----------
    The figure and its spark on the left, the severity meter and its key on the
    right — one card, one row, so the first real exposure stays above the fold. */
@@ -4206,6 +4270,14 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
   font-size: var(--t-0); font-weight: 600; line-height: 1.35; color: var(--ink);
   white-space: normal; text-wrap: pretty;
 }
+/* The headline's column: the sentence, and on a shut card the triage line
+   under it — place, agent, outcome, sightings — quiet, dot-separated. */
+.fhead-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fhead-ctx { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--s3); font-size: var(--t-2); color: var(--ink-3); }
+.fhead-ctx .mono { font-size: 0.94em; color: var(--ink-2); }
+.fhead-fact + .fhead-fact::before { content: "·"; margin-right: var(--s3); color: var(--tan-3); }
+.fhead-ctx .fhead-out { color: var(--ink-2); font-weight: 600; }
+.fhead-ctx .fhead-verdict { color: var(--good); font-weight: 600; }
 /* The badge, the chips and the ask sit on the headline's FIRST line, not
    centred on a sentence that may wrap to two. */
 .fhead-row .sevbadge, .fhead-row .chip { margin-top: 3px; flex: none; }
@@ -4373,32 +4445,13 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .sechead .tracebar.pronounced .tracebar-go { color: var(--ink-3); transition: transform var(--glide-ms) var(--ease); }
 .sechead .tracebar.pronounced:hover .tracebar-go { transform: translateX(2px); color: var(--ink); }
 
-/* The Overview's title-row action, the twin of the Radar's Trace a secret:
-   the count in a filled disc (red while anything is open, green at zero), the
-   words, the arrow. */
-.sechead .ovr-count {
-  height: 34px; min-height: 0; align-items: center; gap: 8px;
-  padding: 0 12px 0 4px; border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--bad) 38%, transparent);
-  background: color-mix(in srgb, var(--bad) 10%, var(--paper));
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
-  transition: background var(--glide-ms) var(--ease), border-color var(--glide-ms) var(--ease), transform var(--glide-ms) var(--ease);
+/* The Overview's posture line: one sentence above the cards, its dot the
+   protection state (the text always says it too). */
+.ovr-posture {
+  display: flex; align-items: center; gap: var(--s3);
+  margin: 0 0 var(--s5);
+  font-size: var(--t-1); color: var(--ink-2);
 }
-.sechead .ovr-count:hover {
-  background: color-mix(in srgb, var(--bad) 17%, var(--paper));
-  border-color: color-mix(in srgb, var(--bad) 60%, transparent);
-}
-.sechead .ovr-count.live { border-color: color-mix(in srgb, var(--good) 38%, transparent); background: color-mix(in srgb, var(--good) 10%, var(--paper)); }
-.sechead .ovr-count.live:hover { border-color: color-mix(in srgb, var(--good) 60%, transparent); background: color-mix(in srgb, var(--good) 17%, var(--paper)); }
-.sechead .ovr-count:active { transform: translateY(.5px); }
-.sechead .ovr-count b {
-  min-width: 26px; height: 26px; padding: 0 7px; justify-content: center;
-  border-radius: 999px; border-right: 0;
-  font-size: var(--t-1);
-}
-.sechead .ovr-count.hot b { background: var(--bad); color: var(--on-fill); }
-.sechead .ovr-count.live b { background: var(--good); color: var(--on-fill); }
-.sechead .ovr-count-lab { padding: 0; gap: 8px; font-weight: 650; color: var(--ink); }
-.sechead .ovr-count-go { transition: transform var(--glide-ms) var(--ease); }
-.sechead .ovr-count:hover .ovr-count-go { transform: translateX(2px); color: var(--ink); }
+.ovr-posture .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--good); }
+.ovr-posture.watch .dot { background: var(--gold); }
+.ovr-posture.off .dot { background: var(--bad); }

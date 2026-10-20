@@ -16,7 +16,8 @@
  * be read as an invoice the app cannot stand behind. Tokens are measured.
  */
 
-import type { LedgerTurn } from "./turns.js";
+import type { LedgerTurn, TurnSource } from "./turns.js";
+import { sourceLabel as railLabel } from "./transcript-sources-registry.js";
 
 export const WINDOW_DAYS = 7;
 export const TOP_MODELS = 5;
@@ -154,8 +155,6 @@ export interface SpendGraphs {
   days: number;
 }
 
-const SOURCE_LABELS: Record<string, string> = { "claude-code": "claude code", codex: "codex" };
-
 export function aggregateGraphs(
   turns: readonly LedgerTurn[],
   now: Date,
@@ -292,7 +291,7 @@ export function aggregateGraphs(
     if (!set || set.size === 0) return "—";
     if (set.size > 1) return "mixed";
     const only = [...set][0]!;
-    return SOURCE_LABELS[only] ?? only;
+    return railLabel(only as TurnSource);
   };
 
   const model_rows: ModelRow[] = top.map((model) => ({

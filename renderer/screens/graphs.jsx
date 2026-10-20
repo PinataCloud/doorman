@@ -46,7 +46,7 @@ const SPEND_RANGES = [
 /** The time chart's two splits: what the work WAS, or which agent did it. */
 const TIME_SPLITS = [
   { key: "task", label: "By use case" },
-  { key: "rail", label: "By rail" },
+  { key: "rail", label: "By agent" },
 ];
 
 /**
@@ -109,26 +109,20 @@ function spendHighlightTokens(g) {
       text(" tokens ran on API credits.");
     }
   } else if (g.window_tokens > 0) {
-    // Nothing observed beyond the plan: the figure is plan-covered or
-    // unattributed — and "none of it API credits" is only TRUE of the
-    // attributed part. What could not be attributed is said as such: it may
-    // be plan usage the app couldn't see the plan for, or credits it couldn't
-    // see the bill for.
+    // Nothing observed beyond the plan: say how much is known to be on the
+    // plan, and nothing about the rest — a share without billing info is not
+    // a fact the reader can act on.
     text(" ");
     num(fmtTokens(g.window_tokens));
     text(" tokens went through — ");
     num(fmtTokens(g.window_tokens / (g.window_seconds / 3600)));
     text(" per active hour");
     if (covered > 0 && unknown <= 0) {
-      text(", all of it covered by the plan.");
+      text(", all of it on your plan.");
     } else if (covered > 0) {
       text("; ");
       num(fmtTokens(covered));
-      text(" of it covered by the plan and ");
-      num(fmtTokens(unknown));
-      text(" unattributed.");
-    } else if (unknown > 0) {
-      text(", none of it attributed to a plan or to credits.");
+      text(" of it on your plan.");
     } else {
       text(".");
     }
@@ -228,13 +222,21 @@ function GraphsScreen({ state, onOpenTask }) {
      nothing here depends on color alone. */
   const railSeries = (g.time_rails || []).map((rail) => ({
     key: rail,
-    label: SOURCE_LABELS[rail] ? SOURCE_LABELS[rail].toLowerCase() : rail,
+    label: SOURCE_NAMES[rail] || rail,
     color: railColor(state, rail),
     valueOf: (d) => (d.by_rail || {})[rail] || 0,
   }));
   const timeSeries = split === "rail" && railSeries.length > 0 ? railSeries : tSeries;
   const highlight = spendHighlightTokens(g);
-  const alertsByTask = (state.radar && state.radar.alerts_by_task) || [];
+  const exposuresByTask = (state.radar && state.radar.exposures_by_task) || [];
+  const radarSummary = (state.radar && state.radar.summary) || {};
+  /* The Radar's own total (what the sidebar badge prints): the by-use-case
+     rows below can sum past it, since an exposure spanning use cases counts
+     in each. */
+  const openExposures =
+    radarSummary.open_exposures != null
+      ? radarSummary.open_exposures
+      : exposuresByTask.reduce((n, a) => n + a.exposures, 0);
   const todayIso = new Date().toISOString().slice(0, 10);
   const activeDays = g.time_days.filter((d) => d.total > 0).length;
   const perDaySeconds = activeDays > 0 ? g.window_seconds / activeDays : 0;
@@ -243,7 +245,7 @@ function GraphsScreen({ state, onOpenTask }) {
      anything folded past the top five wears the reserved "other" neutral. */
   const taskColor = (task) => {
     const i = g.time_tasks.indexOf(task);
-    return i >= 0 ? seriesColor(i, task) : "var(--c-other)";
+    return i >= 0 ? taskSeriesColor(i, task) : "var(--c-other)";
   };
 
   return (
@@ -322,7 +324,7 @@ function GraphsScreen({ state, onOpenTask }) {
                 note={<Delta current={g.window_tokens} prev={g.prev_window_tokens} suffix="vs prior" />}
               />
               <Kpi
-                num={fmtTokens(g.today_tokens)}
+                num={fmtTokens(g.today_tokens) + " tokens"}
                 label="Today"
                 tip="The machine's local calendar day, so far — evenings past the UTC boundary included, which the chart's UTC buckets leave out."
                 note={g.today_seconds > 0 ? fmtDur(g.today_seconds) + " engaged today" : "nothing yet today"}
@@ -409,7 +411,7 @@ function GraphsScreen({ state, onOpenTask }) {
                   have had to reimplement). */}
               <div className="usecases">
                 {g.by_task.map((t) => {
-                  const alerts = alertsByTask.find((a) => a.task === t.task);
+                  const exp = exposuresByTask.find((a) => a.task === t.task);
                   return (
                     <button
                       className="uc"
@@ -423,10 +425,10 @@ function GraphsScreen({ state, onOpenTask }) {
                         <span className="uc-meta">
                           {t.sessions} session{t.sessions === 1 ? "" : "s"} · {fmtTokens(t.tokens || 0)} tokens
                           {t.last_at ? " · last " + relTime(t.last_at) : ""}
-                          {alerts && alerts.alerts > 0 ? (
+                          {exp && exp.exposures > 0 ? (
                             <span className="uc-alerts">
                               {" · "}
-                              {alerts.alerts} alert{alerts.alerts === 1 ? "" : "s"}
+                              {exp.exposures} open exposure{exp.exposures === 1 ? "" : "s"}
                             </span>
                           ) : null}
                         </span>
@@ -461,15 +463,15 @@ function GraphsScreen({ state, onOpenTask }) {
             </Card>
           ) : null}
 
-          {/* Time up, exposure down — Harmonic's paired hero, and the pairing
-              is the point: adoption on its own is a vanity number, and alerts
-              on their own can't tell "more risk" from "more work". Two series
-              at two scales must NOT share an axis, so this is two panels that
-              share a window, each direct-labelled with its own delta. */}
-          {alertsByTask.length > 0 || g.window_seconds > 0 ? (
+          {/* Time up, exposure down — Harmonic's paired hero: adoption on its
+              own is a vanity number, exposures on their own can't tell "more
+              risk" from "more work". Two series at two scales must NOT share
+              an axis, so this is two panels, each with its own label. The
+              exposure side is all-time open, not windowed, and says so. */}
+          {openExposures > 0 || g.window_seconds > 0 ? (
             <Card
               title="Adoption and exposure"
-              hint={"Engaged time against what the Radar found, over the same " + g.days + " days."}
+              hint={"Engaged time in the last " + g.days + " days, beside the exposures still open on the Radar."}
             >
               <div className="grid2 pairtrend">
                 <div>
@@ -488,28 +490,30 @@ function GraphsScreen({ state, onOpenTask }) {
                 </div>
                 <div>
                   <Hero
-                    value={String(alertsByTask.reduce((n, a) => n + a.alerts, 0))}
-                    label="Exposures needing review"
-                    tone={alertsByTask.length > 0 ? "bad" : undefined}
+                    value={String(openExposures)}
+                    label={openExposures === 1 ? "Open exposure" : "Open exposures"}
+                    tone={openExposures > 0 ? "bad" : undefined}
                     note={
-                      alertsByTask.length > 0
-                        ? "most in " + taskLabel(alertsByTask[0].task).toLowerCase()
+                      exposuresByTask.length > 0
+                        ? "most in " + taskLabel(exposuresByTask[0].task).toLowerCase()
                         : "nothing needs review"
                     }
                   />
                 </div>
               </div>
-              {alertsByTask.length > 0 ? (
+              {exposuresByTask.length > 0 ? (
                 <React.Fragment>
-                  <div className="cardnote">Exposures needing review, by use case:</div>
+                  <div className="cardnote">
+                    Open exposures by use case — an exposure seen in more than one use case counts in each.
+                  </div>
                   <RankedBars
-                    rows={alertsByTask.slice(0, 6).map((a) => ({
+                    rows={exposuresByTask.slice(0, 6).map((a) => ({
                       key: a.task,
                       label: taskLabel(a.task),
-                      value: a.alerts,
+                      value: a.exposures,
                       color: taskColor(a.task),
                       title:
-                        a.alerts + " needing review · " + a.sessions + " session" + (a.sessions === 1 ? "" : "s"),
+                        plural(a.exposures, "open exposure") + " · " + plural(a.sessions, "session"),
                     }))}
                     format={(v) => String(v)}
                     onPick={onOpenTask}
@@ -519,42 +523,22 @@ function GraphsScreen({ state, onOpenTask }) {
             </Card>
           ) : null}
 
-          <div className="grid2">
-            <Card title="Where the window went">
-              <CumulativeArea
-                days={g.token_days}
-                valueOf={(d) => d.total}
-                format={fmtTokens}
-                height={168}
-              />
-              <div className="cardnote">
-                Running token total across the window — a straight climb is a steady week, a
-                late kink is the day something ran away.
-              </div>
-            </Card>
-            <Card title="Top models by tokens" hint="Top six by volume.">
-              <RankedBars
-                rows={g.model_rows.slice(0, 6).map((row, i) => ({
-                  key: row.model,
-                  label: row.model,
-                  value: row.tokens,
-                  color: seriesColor(i, row.model),
-                  title: fmtTokens(row.tokens) + " tokens · " + row.source,
-                }))}
-                format={fmtTokens}
-              />
-              {g.model_rows.length > 6 ? (
-                <div className="cardnote">
-                  {g.model_rows.length - 6} more model{g.model_rows.length - 6 === 1 ? "" : "s"} in the
-                  table below.
-                </div>
-              ) : null}
-            </Card>
-          </div>
+          <Card title="Running token total">
+            <CumulativeArea
+              days={g.token_days}
+              valueOf={(d) => d.total}
+              format={fmtTokens}
+              todayIso={todayIso}
+              height={168}
+            />
+            <div className="cardnote">
+              A straight climb is a steady stretch; a late kink is the day something ran away.
+            </div>
+          </Card>
 
           <Card
             title="Tokens per day by model"
-            hint="The same days as the chart above, split by model instead of by what paid for them."
+            hint="Each day's tokens, split by model."
             right={<Legend series={mSeries} />}
           >
             <ColumnChart

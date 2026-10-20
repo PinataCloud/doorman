@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
@@ -7,6 +7,7 @@ import {
 } from "../main/lib/security-grouping.js";
 import { SHADOW_AI_CATALOG } from "../main/lib/shadow-ai.js";
 import { TRANSCRIPT_SOURCES } from "../main/lib/transcript-sources-registry.js";
+import { findingOutcome as mainFindingOutcome } from "../main/lib/app-views.js";
 
 /**
  * Unit tests for the renderer's PURE logic — the turn-run collapse and the
@@ -135,6 +136,36 @@ describe("detectorMeta and the rule families (components.jsx)", () => {
     }
     for (const id of placed) {
       expect(detectors, `${id} is in a family but not in SEC_DETECTORS`).toHaveProperty(id);
+    }
+  });
+});
+
+describe("a held call's outcome (components.jsx findingOutcome, mirrored in main)", () => {
+  const ctx = loadRenderer(["components.jsx", "screens/radar.jsx"]);
+  // A top-level const lives in the script scope, not on the context object.
+  const rendererOutcome = runInContext("findingOutcome", ctx as object) as (row: Record<string, unknown>) => string;
+  const closedOutcome = ctx.closedOutcome as (rows: Record<string, unknown>[]) => string;
+
+  it("reads a hold the person denied as held-then-denied, never as a straight block", () => {
+    // The guard records an answered denial as enforced "deny"; the resolution
+    // is what says it was a hold.
+    const denied = { enforced: "deny", resolution: "denied" };
+    expect(rendererOutcome(denied)).toBe("held");
+    expect(mainFindingOutcome(denied as never)).toBe("held");
+    expect(closedOutcome([denied])).toBe("held, then denied");
+    // A rule on Block, with no hold, is still a block.
+    expect(rendererOutcome({ enforced: "deny" })).toBe("blocked");
+    expect(mainFindingOutcome({ enforced: "deny" } as never)).toBe("blocked");
+  });
+
+  it("keeps the renderer and main buckets identical for every enforced/resolution pair", () => {
+    const enforced = [undefined, "deny", "ask", "warn", "excepted", "observe"];
+    const resolutions = [undefined, "allowed", "denied", "timeout", "unattended", "unavailable"];
+    for (const e of enforced) {
+      for (const r of resolutions) {
+        const row = { enforced: e, resolution: r };
+        expect(rendererOutcome(row)).toBe(mainFindingOutcome(row as never));
+      }
     }
   });
 });
@@ -301,63 +332,67 @@ describe("radar feed paging and the three-screen security split", () => {
     expect(radar).toMatch(/setShown\(RADAR_PAGE\);\s*\n\s*\}, \[status, sev, rule, rail, outcome, q, session\]\)/);
   });
 
-  it("splits security into Radar (triage), Analytics (trend) and Rules (policy), with install behaviour in Settings", () => {
+  it("splits security into Radar (triage), Analytics (trend) and Guardrails (policy + install behaviour)", () => {
     // Radar is triage only: no configuration, no trend chart, no per-rule modes.
     expect(radar).not.toMatch(/function RulesAndActions/);
     expect(radar).not.toMatch(/setConfirmPolicy/);
     expect(radar).not.toMatch(/setDetectorMode/);
     expect(radar).not.toMatch(/<ColumnChart/);
     expect(radar).not.toMatch(/What fires most/);
-    // …but it still routes to the policy that decides it.
+    // …but the policy that decides it is one click away: the shared header's
+    // protection badge routes every security screen to Guardrails.
+    expect(app).toMatch(/function ProtectionBadge\(\{ state, enforcing, onGoRules \}\)/);
+    expect(app).toMatch(/onGoRules=\{screen === "rules" \? undefined : \(\) => setScreen\("rules"\)\}/);
     //
-    // EVERY guard action is install behaviour and lives in Settings alone: not
-    // on the posture line (a statement, not a control), not on Radar, and not
-    // in the shared header. A protection switch INSIDE the header's badge was
-    // tried and taken back out, so this rule still holds — the badge states, and carries `| Manage` to the
-    // one screen that acts.
-    expect(radar).toMatch(/onGoRules/);
+    // EVERY guard action is install behaviour and lives on Guardrails alone:
+    // not on the posture line (a statement, not a control), not on Radar, not
+    // in the shared header and not in Settings. A protection switch INSIDE
+    // the header's badge was tried and taken back out — the badge states, and
+    // carries `Manage` to the one screen that acts.
     expect(radar).not.toMatch(/installGuard/);
     expect(app).not.toMatch(/installGuard/);
     expect(app).toMatch(/function ProtectionBadge/);
-    expect(settings).toMatch(/window\.doorman\.installGuard/);
-    expect(settings).toMatch(/uninstallGuard/);
+    expect(settings).not.toMatch(/installGuard/);
+    expect(settings).not.toMatch(/setConfirmPolicy/);
+    expect(settings).not.toMatch(/HOLD_OPTIONS/);
+    expect(settings).not.toMatch(/setDetectorMode/);
     // Analytics owns the trend and the ranked rules, and a rule picked there
     // navigates to Radar rather than filtering in place.
     expect(analytics).toMatch(/<ColumnChart/);
     expect(analytics).toMatch(/Rule by rule/);
     expect(analytics).toMatch(/onOpenRule\(/);
     expect(analytics).toMatch(/rule_stats/);
-    expect(analytics).toMatch(/Raise to ask/);
+    expect(analytics).toMatch(/Set to Ask/);
+    expect(analytics).not.toMatch(/Raise to ask/);
     // Counted in THINGS, not rows — the hero reads new_things and the rule
     // column ellipsizes instead of wrapping the row.
     expect(analytics).toMatch(/stats\.new_things/);
     expect(analytics).toMatch(/className="rule-name"/);
     expect(analytics).not.toMatch(/radarTrend\(/);
-    // Rules owns the per-rule modes, the packs, the person's rules and the
-    // exceptions — and NOT the guard toggle or hold behaviour.
+    // Guardrails owns the per-rule modes, the packs, the person's rules and
+    // the exceptions…
     expect(rules).toMatch(/setDetectorMode/);
     // The grouping is reached through `levelCategories` now (which derives it
     // from RULE_FAMILIES, dropping the radar-only rules the level cannot set)
     // rather than by walking the family list itself.
     expect(rules).toMatch(/levelCategories\(/);
-    // …and Rules owns the level that writes those modes.
+    // …and the level that writes those modes.
     expect(rules).toMatch(/setSecurityLevel/);
     expect(rules).toMatch(/setCustomRules/);
     expect(rules).toMatch(/dryRunCustomRule/);
     expect(rules).toMatch(/setRulePack/);
     expect(rules).toMatch(/removeIgnoreRule/);
-    expect(rules).not.toMatch(/setConfirmPolicy/);
-    expect(rules).not.toMatch(/installGuard/);
-    // Settings keeps install-level behaviour: the switch, the hold window, the
-    // timeout fallback, the escalation, the integrity check — and no mode table.
-    expect(settings).toMatch(/function RulesCard/);
-    expect(settings).toMatch(/setConfirmPolicy/);
-    expect(settings).toMatch(/HOLD_OPTIONS/);
-    // The Integrity row ("Check now") is gone (2026-09-06): the tampered banner with its
-    // Reinstall is the install behaviour Settings owns, and the doctor re-checks on its own.
-    expect(settings).toMatch(/installGuard/);
+    // …and the install-level behaviour, in its Protection card: the switch,
+    // the hold window, the timeout fallback, the escalation. The Integrity row
+    // ("Check now") is gone (2026-09-06): the tampered banner with its
+    // Reinstall is the install behaviour, and the doctor re-checks on its own.
+    expect(rules).toMatch(/function ProtectionCard\(\{ state \}\)/);
+    expect(rules).toMatch(/window\.doorman\.installGuard/);
+    expect(rules).toMatch(/uninstallGuard/);
+    expect(rules).toMatch(/setConfirmPolicy/);
+    expect(rules).toMatch(/HOLD_OPTIONS/);
+    expect(rules).not.toMatch(/checkGuardIntegrity/);
     expect(settings).not.toMatch(/checkGuardIntegrity/);
-    expect(settings).not.toMatch(/setDetectorMode/);
     // The three screens share one header pill and the rule filter is lifted
     // into the root so Analytics → Radar can carry it.
     expect(app).toMatch(/function SecurityHeader/);
@@ -447,9 +482,10 @@ describe("radar feed paging and the three-screen security split", () => {
   it("says how narrow the feed is, and offers one counted clear", () => {
     // "clear" undid five controls without saying how much it would restore;
     // three cards under a filter looked identical to a machine with three
-    // findings. The tally and the counted clear appear only while narrowed.
+    // findings. The counted clear appears only while narrowed; the tally
+    // whenever it adds information ("N of M exposures").
     expect(radar).toMatch(/className="feedcount"/);
-    expect(radar).toMatch(/groups\.length \+ "\/" \+ viewTotal : String\(viewTotal\)/);
+    expect(radar).toMatch(/narrowed \? groups\.length \+ " of " \+ viewTotal : String\(viewTotal\)/);
     expect(radar).toMatch(/activeCount === 1 \? "filter" : activeCount \+ " filters"/);
     // The empty state carries the same way out, where the dead end actually is.
     expect(radar).toMatch(/Clear \{activeCount === 1 \? "the filter" : activeCount \+ " filters"\}/);
@@ -480,8 +516,20 @@ describe("chart axis maths (charts.jsx)", () => {
     expect(xLabelVisible(12, n, every)).toBe(false);
     expect(xLabelVisible(10, n, every)).toBe(true);
     expect(xLabelVisible(0, n, every)).toBe(true);
-    // With every=1 (a short window) neighbours still can't crowd the end.
-    expect(xLabelVisible(n - 2, n, 1)).toBe(false);
+    // When labels are thinned (every > 1) no labelled tick sits within two
+    // positions of the end, whatever the window.
+    for (let e = 2; e <= 7; e++) {
+      for (let len = 3; len <= 31; len++) {
+        for (let i = 0; i < len - 2; i++) {
+          if (xLabelVisible(i, len, e)) expect(len - 1 - i, `every=${e} n=${len} i=${i}`).toBeGreaterThanOrEqual(2);
+        }
+        expect(xLabelVisible(len - 2, len, e)).toBe(false);
+        expect(xLabelVisible(len - 1, len, e)).toBe(true);
+      }
+    }
+    // With every=1 (a short window) each position has room for its label, so
+    // the day before TODAY is labelled too.
+    for (let i = 0; i < 7; i++) expect(xLabelVisible(i, 7, 1)).toBe(true);
   });
 
   it("rounds only the data-end, and can't invert a sub-radius mark", () => {
@@ -938,10 +986,19 @@ describe("the record column's evidence strip (app.css)", () => {
     const rule = css.slice(at, css.indexOf("}", at));
     expect(rule).toMatch(/max-height:\s*\d+px/);
     expect(rule).toMatch(/overflow-y:\s*auto/);
-    // The actions cluster is a SIBLING of the scrolling box, positioned on
-    // the wrap — so VIEW RAW does not scroll away with the text.
+    // The actions cluster is a SIBLING of the scrolling box, on its own row
+    // ABOVE it — so VIEW RAW neither scrolls away with the text nor sits on
+    // top of the snippet's first line.
     expect(css).toMatch(/\.evidence-wrap \{ position: relative; \}/);
-    expect(css).toMatch(/\.evidence-actions \{\s*position: absolute;/);
+    const actions = css.slice(css.indexOf(".evidence-actions {"), css.indexOf("}", css.indexOf(".evidence-actions {")));
+    expect(actions).toMatch(/display: flex/);
+    expect(actions).not.toMatch(/position: absolute/);
+    const radar = readFileSync(new URL("screens/radar.jsx", rendererDir), "utf8");
+    const wrap = radar.indexOf('<div className="evidence-wrap">');
+    const row = radar.indexOf('<div className="evidence-actions">', wrap);
+    expect(wrap).toBeGreaterThanOrEqual(0);
+    expect(row).toBeGreaterThan(wrap);
+    expect(radar.indexOf('className="evidence raw"', wrap)).toBeGreaterThan(row);
   });
 });
 
@@ -989,10 +1046,19 @@ describe("floating layers stay clickable, dismissable and on screen", () => {
       .filter(Boolean);
     for (const layer of [
       ".notices", ".notices *", ".ai-drawer", ".ai-drawer *", ".approval-scrim", ".approval-scrim *",
-      ".approval", ".fmenu-pop", ".verdict-pop", ".charttip",
+      ".approval", ".fmenu-pop", ".rowmenu-pop", ".charttip",
     ]) {
       expect(optedOut, `${layer} would swallow its own clicks over a drag edge`).toContain(layer);
     }
+    // …and so does any popover the screens render, including ones added later
+    // (MoreFilters reuses .fmenu-pop; a new `*-pop` class must join the list).
+    const sources = [
+      ...readdirSync(rendererDir).filter((f) => f.endsWith(".jsx")),
+      ...readdirSync(new URL("screens/", rendererDir)).filter((f) => f.endsWith(".jsx")).map((f) => "screens/" + f),
+    ].map((f) => readFileSync(new URL(f, rendererDir), "utf8"));
+    const pops = new Set(sources.flatMap((src) => [...src.matchAll(/className="([a-z-]+-pop)\b/g)].map((m) => "." + m[1])));
+    expect(pops.size).toBeGreaterThan(0);
+    for (const pop of pops) expect(optedOut, `${pop} would swallow its own clicks over a drag edge`).toContain(pop);
   });
 
   it("dismisses a notice on click, holds its timer under the pointer, and keeps the action row's own meaning", () => {
@@ -1043,11 +1109,22 @@ describe("floating layers stay clickable, dismissable and on screen", () => {
     // Keyboard parity, and gone the moment the element may have moved.
     expect(layer).toMatch(/addEventListener\("focusin"/);
     expect(layer).toMatch(/addEventListener\("scroll", hide, true\)/);
-    const menu = css.slice(css.indexOf(".fmenu-pop {"), css.indexOf(".fmenu-pop button"));
+    // Its own block, not the first `.fmenu-pop …` mention (the shared
+    // :focus-visible list names `.fmenu-pop button` well before it).
+    const menuAt = css.indexOf(".fmenu-pop {");
+    const menu = css.slice(menuAt, css.indexOf("}", menuAt));
+    expect(menuAt).toBeGreaterThanOrEqual(0);
     expect(css).toMatch(/\.fmenu-wrap \{[^}]*anchor-name: --fmenu; anchor-scope: --fmenu/);
     expect(menu).toMatch(/position: fixed/);
     expect(menu).toMatch(/position-anchor: --fmenu/);
     expect(menu).toMatch(/position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline/);
+    // The Radar's MoreFilters popover is the same box, anchored the same way.
+    const radar = readFileSync(new URL("screens/radar.jsx", rendererDir), "utf8");
+    const more = radar.slice(radar.indexOf("function MoreFilters("), radar.indexOf("function HeldCallsLine("));
+    expect(more).toMatch(/<span className="fmenu-wrap[ "]/);
+    expect(more).toMatch(/<div className="fmenu-pop">/);
+    expect(more).toMatch(/document\.addEventListener\("scroll", onScroll, true\)/);
+    expect(more).toMatch(/if \(ref\.current && ref\.current\.contains\(e\.target\)\) return;/);
   });
 
   it("closes the filter menu on movement, but not on a scroll inside its own list", () => {

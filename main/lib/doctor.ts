@@ -296,7 +296,7 @@ function guardChecks(input: DoctorInput): DoctorCheck[] {
   const { fs } = input;
   const host: DoctorHost = "guard";
   if (!input.guardWanted) {
-    return [{ id: "guard.off", host, title: "Guardrails", status: "skip", detail: "Off in Settings → Real time protection. Rules only watch; nothing is held or blocked." }];
+    return [{ id: "guard.off", host, title: "Guardrails", status: "skip", detail: "Off in Guardrails → Protection. Rules only watch; nothing is held or blocked." }];
   }
   const out: DoctorCheck[] = [];
   // One row per REGISTERED host (guard/hosts/index.ts), not two hard-coded
@@ -528,7 +528,7 @@ function vscodeChecks(input: DoctorInput): DoctorCheck[] {
       host,
       title: "Agent hooks",
       status: "skip",
-      detail: "Off in Settings → Real time protection. Rules only watch; nothing is held or blocked.",
+      detail: "Off in Guardrails → Protection. Rules only watch; nothing is held or blocked.",
     });
   } else {
     const hooksOff = readings.filter((r) => !r.facts.hooksEnabled);

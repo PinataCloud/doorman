@@ -23,52 +23,51 @@
    page exists to avoid. */
 
 function OverviewScreen({ state, onGoRadar, onOpenSession }) {
+  const live = liveRows(state);
   return (
     <div>
-      {/* The title row is SecurityHeader's — see app.jsx — and carries the
-          active-exposure count at its right, as the Radar's carries Trace a
-          secret. It is `summary.open_exposures` — the very field the sidebar
-          badge, the menu bar and the Radar's own hero print — so a fourth
-          copy cannot disagree with the other three; it answers "is anything
-          open?" before the reader scans a row, and a click lands on the Radar. */}
+      <PostureLine state={state} noLive={live.length === 0} />
 
-      <ActiveSessions state={state} onGoRadar={onGoRadar} onOpenSession={onOpenSession} />
+      {live.length > 0 ? <ActiveSessions state={state} live={live} onGoRadar={onGoRadar} onOpenSession={onOpenSession} /> : null}
 
       <FlaggedSessions state={state} onGoRadar={onGoRadar} onOpenSession={onOpenSession} />
     </div>
   );
 }
 
+/** The live rail rows worth a line: anything not idle, or idle with a session. */
+function liveRows(state) {
+  return ((state.live && state.live.sessions) || []).filter((r) => r.state !== "idle" || r.session_id);
+}
+
+const POSTURE_DAYS = 7;
+
 /**
- * How many exposures are active — open, needing review — as one split pill:
- * the figure in a tinted block at the left, the words on paper at the right.
- *
- * Main's number, not a renderer-side count off the capped rows: the same
- * `open_exposures` the Radar's hero shows, so the landing page and the feed
- * it points at always agree. The block is red while anything is open, green
- * at zero; the figure is always printed, so the colour is the fast read and
- * never the only one. The whole pill is the route to the Radar, unfiltered —
- * the count is about everything, so the link is too.
+ * The page's answer before any card: is protection on, at what level, how
+ * many exposures are open, and how many calls the guard stopped lately. Only
+ * snapshot fields — the same ones the sidebar badge and Analytics read — so it
+ * cannot disagree with them. Stopped = Blocked + Denied, per rule, over the
+ * 7-day window main already computes. With no agent running, that fact joins
+ * the line instead of taking a whole card.
  */
-function ActiveCount({ state, onGoRadar }) {
+function PostureLine({ state, noLive }) {
+  const p = protectionState(state, enforcingCount(state));
   const summary = (state.radar && state.radar.summary) || {};
   const open =
     summary.open_exposures != null ? summary.open_exposures : summary.open_groups != null ? summary.open_groups : 0;
+  const week = state.radar && state.radar.rule_stats && state.radar.rule_stats[POSTURE_DAYS];
+  const stopped = week ? (week.rules || []).reduce((n, r) => n + (r.blocked || 0) + (r.denied || 0), 0) : null;
+  const parts = [
+    p.kind === "off" ? "Real-time protection off" : "Real-time protection on" + (p.level ? " · " + p.level.name + " level" : " · Custom rules"),
+    plural(open, "open exposure"),
+    stopped != null ? stopped + " stopped in the last " + POSTURE_DAYS + " days" : null,
+    noLive ? "No agent running right now" : null,
+  ].filter(Boolean);
   return (
-    <button
-      type="button"
-      className={"ovr-count " + (open > 0 ? "hot" : "live")}
-      onClick={() => onGoRadar()}
-      title="Open the Security Radar"
-    >
-      <b>{open}</b>
-      <span className="ovr-count-lab">
-        {open === 1 ? "exposure to review" : "exposures to review"}
-        <span className="ovr-count-go" aria-hidden="true">
-          →
-        </span>
-      </span>
-    </button>
+    <div className={"ovr-posture " + p.kind}>
+      <span className="dot" aria-hidden="true" />
+      {parts.join(" · ")}
+    </div>
   );
 }
 
@@ -84,8 +83,7 @@ function ActiveCount({ state, onGoRadar }) {
  */
 const LIVE_EXPOSURES_SHOWN = 4;
 
-function ActiveSessions({ state, onGoRadar, onOpenSession }) {
-  const live = ((state.live && state.live.sessions) || []).filter((r) => r.state !== "idle" || r.session_id);
+function ActiveSessions({ state, live, onGoRadar, onOpenSession }) {
   const counts = (state.live && state.live.counts) || null;
   // Open rows in a band the person is seeing — the Radar's own
   // rule, so a session never reads "1 open" here beside a feed showing none.
@@ -103,13 +101,7 @@ function ActiveSessions({ state, onGoRadar, onOpenSession }) {
         .join(" · ")
     : "";
   return (
-    <Card title="Active sessions" hint={live.length > 0 && line ? line : undefined}>
-      {live.length === 0 ? (
-        <div className="cardnote" style={{ marginTop: 0 }}>
-          No agent is running on this computer right now. Sessions appear here the moment one starts, with anything the
-          Radar has open against them.
-        </div>
-      ) : (
+    <Card title="Active sessions" hint={line || undefined}>
         <div className="ovr-live">
           {live.map((row) => {
             const open = row.session_id ? findings.filter((f) => f.session_id === row.session_id) : [];
@@ -181,7 +173,6 @@ function ActiveSessions({ state, onGoRadar, onOpenSession }) {
             );
           })}
         </div>
-      )}
     </Card>
   );
 }
@@ -254,7 +245,7 @@ function FlaggedSessions({ state, onGoRadar, onOpenSession }) {
            MACHINE — so "no session has anything" can be true while the badge
            reads 4. Saying only the first would read as a contradiction of the
            sidebar; this says which it is. */
-        <div className="cardnote" style={{ marginTop: 0 }}>
+        <div className="cardnote lead">
           {unsessioned > 0
             ? unsessioned +
               (unsessioned === 1 ? " open exposure isn't" : " open exposures aren't") +
@@ -277,7 +268,7 @@ function FlaggedSessions({ state, onGoRadar, onOpenSession }) {
       {flagged.length > SHOWN ? (
         <div className="row" style={{ marginTop: "var(--s4)" }}>
           <button className="btn primary" onClick={() => onGoRadar()}>
-            See the other {flagged.length - SHOWN} in the Security Radar →
+            See the other {flagged.length - SHOWN} flagged session{flagged.length - SHOWN === 1 ? "" : "s"} on the Radar →
           </button>
         </div>
       ) : null}
@@ -360,14 +351,14 @@ function FlaggedSession({ group, session, onGoRadar, onOpenSession }) {
           );
         })}
         {group.findings.length > 6 ? (
-          <div className="cardnote" style={{ marginTop: 0 }}>
+          <div className="cardnote lead">
             and {group.findings.length - 6} more in this session
           </div>
         ) : null}
         <div className="row" style={{ marginTop: "var(--s4)" }}>
           {/* THIS session's exposures, not the whole feed: the Radar arrives
               narrowed to the session, with the filter chip to widen it. */}
-          <button className="btn primary" onClick={() => onGoRadar({ session_id: group.id })}>
+          <button className="btn" onClick={() => onGoRadar({ session_id: group.id })}>
             Review these in the Radar →
           </button>
           {/* The session in the Ledger, opened AT its worst exposure's turn

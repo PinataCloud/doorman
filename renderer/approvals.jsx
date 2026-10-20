@@ -15,7 +15,8 @@
      Allow for this project — same, plus a dated ignore rule scoped to the
                             call's directory (plan A2): the false-positive escape
                             hatch that doesn't switch a rule off everywhere.
-     Allow + stop asking  — same, plus this rule drops to observe for good.
+     Allow, stop holding  — same, plus this rule drops to Observe for good
+                            (asks for a second click).
 
    Every answer records WHICH surface gave it (`via`) — the floating panel or
    this window — so Analytics can say how fast decisions arrive and from where.
@@ -36,7 +37,7 @@ function ApprovalPanel({ state }) {
   if (queue.length === 0) return null;
   const request = queue[0];
   const answer = (verdict, options) => {
-    setBusy(verdict + (options && options.silence ? "-s" : options && options.scope ? "-p" : ""));
+    setBusy(approvalBusyKey(verdict, options));
     window.doorman.resolveApproval(request.id, verdict, { ...(options || {}), via: "panel" }).then(() => setBusy(null));
   };
   return (
@@ -54,25 +55,7 @@ function ApprovalPanel({ state }) {
       {request.context_note ? <div className="ap-context">{request.context_note}</div> : null}
       {request.description ? <div className="ap-desc" title={request.description}>{request.description}</div> : null}
       <ApprovalPreview key={request.id} request={request} />
-      <div className="ap-actions">
-        <button className="btn danger primary" disabled={!!busy} onClick={() => answer("deny")}>
-          {busy === "deny" ? "Denying…" : "Deny"}
-        </button>
-        <button className="btn good" disabled={!!busy} onClick={() => answer("allow")}>
-          {busy === "allow" ? "Allowing…" : "Allow once"}
-        </button>
-        {request.cwd && request.source !== "mcp-gateway" ? (
-          <button className="btn quiet" disabled={!!busy} title={"Allow, and don't hold this again under " + request.cwd + " for 30 days"} onClick={() => answer("allow", { scope: "project" })}>
-            {busy === "allow-p" ? "Saving…" : "For this project"}
-          </button>
-        ) : null}
-        <span className="spacer" />
-        {request.source !== "mcp-gateway" ? (
-          <button className="btn quiet" disabled={!!busy} onClick={() => answer("allow", { silence: true })}>
-            {busy === "allow-s" ? "Saving…" : "Stop asking"}
-          </button>
-        ) : null}
-      </div>
+      <ApprovalActions key={"actions-" + request.id} request={request} state={state} busy={busy} answer={answer} />
       <div className="ap-foot">
         {approvalFootnote(request, state)}
       </div>
@@ -88,22 +71,24 @@ function ApprovalOverlay({ state }) {
   const request = queue[0];
 
   const answer = (verdict, options) => {
-    setBusy(verdict + (options && options.silence ? "-silence" : options && options.scope ? "-project" : ""));
+    setBusy(approvalBusyKey(verdict, options));
     window.doorman.resolveApproval(request.id, verdict, { ...(options || {}), via: "window" }).then(() => setBusy(null));
   };
+  const why = approvalWhy(request);
+  const titleId = "ap-title-" + request.id;
 
   return (
     <div className="approval-scrim">
-      <div className="approval" role="alertdialog" aria-modal="true">
+      <div className="approval" role="alertdialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="ap-head">
           <SeverityBadge severity={request.max_severity || "high"} outcome="held" />
-          <span className="ap-title">{approvalTitle(request, state)}</span>
+          <span className="ap-title" id={titleId}>{approvalTitle(request, state)}</span>
           <span className="spacer" />
           {queue.length > 1 ? <span className="chip">1 of {queue.length}</span> : null}
           <ApprovalCountdown request={request} state={state} />
         </div>
 
-        <div className="ap-why">{request.reason}</div>
+        {why ? <div className="ap-why">{why}</div> : null}
         {request.call_name ? <div className="ap-where mono">{request.call_name}</div> : null}
 
         <div className="fcols">
@@ -118,8 +103,8 @@ function ApprovalOverlay({ state }) {
             </div>
           ) : null}
           <div className="fc">
-            <div className="k">Rules</div>
-            <div className="v mono">{(request.detectors || []).join(", ") || "—"}</div>
+            <div className="k">{(request.detectors || []).length === 1 ? "Rule" : "Rules"}</div>
+            <div className="v">{approvalRuleNames(request, state).join(", ") || "—"}</div>
           </div>
           {request.cwd ? (
             <div className="fc">
@@ -143,34 +128,7 @@ function ApprovalOverlay({ state }) {
         {request.description ? <div className="ap-desc">{request.description}</div> : null}
         <ApprovalPreview key={request.id} request={request} />
 
-        <div className="ap-actions">
-          <button
-            className="btn danger primary"
-            disabled={!!busy}
-            onClick={() => answer("deny")}
-          >
-            {busy === "deny" ? "Denying…" : "Deny"}
-          </button>
-          <button className="btn good" disabled={!!busy} onClick={() => answer("allow")}>
-            {busy === "allow" ? "Allowing…" : "Allow once"}
-          </button>
-          {request.cwd && request.source !== "mcp-gateway" ? (
-            <button
-              className="btn quiet"
-              disabled={!!busy}
-              title={"Allow, and don't hold this rule for this exposure again under " + request.cwd + " for 30 days. Listed under Rules → Exceptions."}
-              onClick={() => answer("allow", { scope: "project" })}
-            >
-              {busy === "allow-project" ? "Saving…" : "Allow for this project"}
-            </button>
-          ) : null}
-          <span className="spacer" />
-          {request.source !== "mcp-gateway" ? (
-            <button className="btn quiet" disabled={!!busy} onClick={() => answer("allow", { silence: true })}>
-              {busy === "allow-silence" ? "Saving…" : "Allow and stop asking"}
-            </button>
-          ) : null}
-        </div>
+        <ApprovalActions key={"actions-" + request.id} request={request} state={state} busy={busy} answer={answer} autoFocus />
 
         <div className="ap-foot">{approvalFootnote(request, state)}</div>
       </div>
@@ -205,14 +163,113 @@ function ApprovalPreview({ request }) {
   );
 }
 
-/** "Destructive command" / "2 rules" — the detector labels, never the values.
-    A custom rule's label travels on the request itself. */
-function approvalTitle(request, state) {
+function approvalBusyKey(verdict, options) {
+  return verdict + (options && options.silence ? "-silence" : options && options.scope ? "-project" : "");
+}
+
+const AP_MOD_KEY = /Mac/i.test(navigator.platform || "") ? "⌘" : "Ctrl+";
+
+/**
+ * The decision buttons, shared by the overlay and the floating panel so both
+ * say exactly the same thing. Keyed by request id by the callers, so the
+ * silence confirm never carries over to the next held call.
+ *
+ * "Stop holding" sets the rule to Observe for good — not a per-call answer —
+ * so it takes a second click: the first turns the button into a danger
+ * confirm for a few seconds, the second commits.
+ *
+ * Keys while it is shown: Esc denies, Cmd/Ctrl+Enter allows once.
+ */
+function ApprovalActions({ request, state, busy, answer, autoFocus }) {
+  const [confirmSilence, setConfirmSilence] = useState(false);
+  const denyRef = useRef(null);
+  const rule = approvalTitle(request, state);
+
+  useEffect(() => {
+    if (autoFocus && denyRef.current) denyRef.current.focus();
+  }, [autoFocus]);
+
+  useEffect(() => {
+    if (!confirmSilence) return undefined;
+    const t = setTimeout(() => setConfirmSilence(false), 4000);
+    return () => clearTimeout(t);
+  }, [confirmSilence]);
+
+  useEffect(() => {
+    if (busy) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        answer("deny");
+      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        answer("allow");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, answer]);
+
+  return (
+    <div className="ap-actions">
+      <button ref={denyRef} className="btn danger primary" disabled={!!busy} title="Deny (Esc)" onClick={() => answer("deny")}>
+        {busy === "deny" ? "Denying…" : "Deny"}
+      </button>
+      <button className="btn good" disabled={!!busy} title={"Allow once (" + AP_MOD_KEY + "Enter)"} onClick={() => answer("allow")}>
+        {busy === "allow" ? "Allowing…" : "Allow once"}
+      </button>
+      {request.cwd && request.source !== "mcp-gateway" ? (
+        <button
+          className="btn quiet"
+          disabled={!!busy}
+          title={"Allow, and don't hold this rule for this exposure again under " + request.cwd + " for 30 days. Listed under Guardrails → Exceptions."}
+          onClick={() => answer("allow", { scope: "project" })}
+        >
+          {busy === "allow-project" ? "Saving…" : "Allow for this project"}
+        </button>
+      ) : null}
+      <span className="spacer" />
+      {request.source !== "mcp-gateway" ? (
+        <button
+          className={"btn " + (confirmSilence ? "danger" : "quiet")}
+          disabled={!!busy}
+          title={"Allow this call and set " + rule + " to Observe: it stops holding calls everywhere until you change it in Guardrails."}
+          onClick={() => (confirmSilence ? answer("allow", { silence: true }) : setConfirmSilence(true))}
+        >
+          {busy === "allow-silence" ? "Saving…" : confirmSilence ? "Confirm: stop holding " + rule : "Allow, stop holding " + rule}
+        </button>
+      ) : null}
+      <span className="ap-keys muted" aria-hidden="true">
+        <kbd>Esc</kbd> Deny · <kbd>{AP_MOD_KEY}↵</kbd> Allow once
+      </span>
+    </div>
+  );
+}
+
+/** The request's reason minus the boilerplate that restates the title: the
+    policy's "Doorman flagged this tool call: <rule names>." says nothing the
+    head doesn't, but the armed rules' "…: earlier in this session …" does. */
+function approvalWhy(request) {
+  const reason = (request.reason || "").trim();
+  const prefix = "Doorman flagged this tool call:";
+  if (!reason.startsWith(prefix)) return reason;
+  const rest = reason.slice(prefix.length).trim();
+  if (!/^earlier\b/i.test(rest)) return "";
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+/** Each rule's human name — the detector label, never its id. A custom rule's
+    label travels on the request itself. */
+function approvalRuleNames(request, state) {
   const policy = state && state.prefs ? state.prefs.policy : undefined;
   const labels = request.detector_labels || {};
-  const rules = (request.detectors || []).map((d) => labels[d] || detectorMeta(d, policy).label || d);
+  return (request.detectors || []).map((d) => labels[d] || detectorMeta(d, policy).label || d);
+}
+
+/** "Destructive command" / "Secret egress + Destructive command". */
+function approvalTitle(request, state) {
+  const rules = approvalRuleNames(request, state);
   if (rules.length === 0) return "Tool call held for review";
-  if (rules.length === 1) return rules[0];
   return rules.join(" + ");
 }
 

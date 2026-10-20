@@ -11,7 +11,7 @@ import type { GuardPolicy } from "../guard/policy.js";
 import { customDetectorLabels } from "../guard/custom-rules.js";
 import { accountForRow, familyNoun } from "./account.js";
 import { buildDetectionsExport, validateDetectionsExport, type DetectionsExport, type SchemaProblem } from "./detection-schema.js";
-import { annotateExposure, createPlaceResolver, type PlaceKind } from "./exposures.js";
+import { annotateExposure, createPlaceResolver, exposureKey, type PlaceKind } from "./exposures.js";
 import {
   SEVERITY_RANK,
   confidenceOf,
@@ -73,8 +73,11 @@ export function radarFeedRows<T extends FindingRow>(
 
 export type FindingOutcome = "blocked" | "held" | "warned" | "excepted" | "observed";
 
-/** What the guard DID with a row. MIRRORS renderer/components.jsx findingOutcome. */
-export function findingOutcome(row: Pick<FindingRow, "enforced">): FindingOutcome {
+/** What the guard DID with a row. MIRRORS renderer/components.jsx findingOutcome.
+ * A row with a hold resolution was held, whatever the guard wrote once it was
+ * answered (a denied hold is recorded as `deny`). */
+export function findingOutcome(row: Pick<FindingRow, "enforced" | "resolution">): FindingOutcome {
+  if (row.resolution) return "held";
   if (row.enforced === "deny") return "blocked";
   if (row.enforced === "ask") return "held";
   if (row.enforced === "warn") return "warned";
@@ -191,6 +194,57 @@ export function alertsByTask(
   return [...alerts.entries()]
     .map(([task, count]) => ({ task, alerts: count, sessions: sessions.get(task)?.size ?? 0 }))
     .sort((a, b) => b.alerts - a.alerts || a.task.localeCompare(b.task));
+}
+
+/** Open exposure keys per finding, resolved over EVERY finding passed in so
+ * the keys match the Radar's cards (`radarRows`). */
+function openExposureKeys(findings: Iterable<FindingRow>, home: string | undefined): { row: FindingRow; key: string }[] {
+  const all = [...findings];
+  const places = createPlaceResolver(all, { home });
+  return all
+    .filter((row) => row.status === "open")
+    .map((row) => ({ row, key: exposureKey(row.detector, places.placeOf(row)) }));
+}
+
+/** Distinct open exposures (Radar cards) touching each session. */
+export function exposuresBySession(findings: Iterable<FindingRow>, home: string | undefined): Map<string, number> {
+  const keys = new Map<string, Set<string>>();
+  for (const { row, key } of openExposureKeys(findings, home)) {
+    if (!row.session_id) continue;
+    let set = keys.get(row.session_id);
+    if (!set) keys.set(row.session_id, (set = new Set()));
+    set.add(key);
+  }
+  return new Map([...keys].map(([id, set]) => [id, set.size]));
+}
+
+/**
+ * Distinct open exposures per use-case, most first. An exposure seen in
+ * sessions of several use-cases counts once in EACH, so the rows can sum past
+ * the Radar total. Unattributable findings fold into "other", as in
+ * `alertsByTask`.
+ */
+export function exposuresByTask(
+  findings: Iterable<FindingRow>,
+  taskOf: (sessionId: string) => string | undefined,
+  home: string | undefined,
+): { task: string; exposures: number; sessions: number }[] {
+  const keys = new Map<string, Set<string>>();
+  const sessions = new Map<string, Set<string>>();
+  for (const { row, key } of openExposureKeys(findings, home)) {
+    const task = (row.session_id ? taskOf(row.session_id) : undefined) ?? "other";
+    let k = keys.get(task);
+    if (!k) keys.set(task, (k = new Set()));
+    k.add(key);
+    if (row.session_id) {
+      let s = sessions.get(task);
+      if (!s) sessions.set(task, (s = new Set()));
+      s.add(row.session_id);
+    }
+  }
+  return [...keys.entries()]
+    .map(([task, set]) => ({ task, exposures: set.size, sessions: sessions.get(task)?.size ?? 0 }))
+    .sort((a, b) => b.exposures - a.exposures || a.task.localeCompare(b.task));
 }
 
 /**

@@ -185,6 +185,9 @@ export interface SessionSummary {
   /** Open radar findings anchored to this session — filled at snapshot time
    * (the fold itself doesn't know about findings). */
   alerts?: number;
+  /** Distinct open exposures (Radar cards) touching this session — filled at
+   * snapshot time like `alerts`. */
+  exposures?: number;
   /** The newest turn's role and whether it invoked tools — what the live
    * sessions rail reads to say "waiting for you" (the assistant answered in
    * text and stopped) rather than "working" (a tool run is in flight). */

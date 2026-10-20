@@ -9,9 +9,10 @@
         posture is not news.
      2. one hero (exposures needing review) split by what the guard did about
         each, the severity mix, and how far it spread.
-     3. ONE filter row — search, severity, rule, rail, outcome, plus a triaged
-        toggle that ADDS rows and therefore sits last. While anything narrows,
-        the row says how much ("N of M") and offers one counted clear.
+     3. ONE filter row — search, severity, rule, outcome, a "More filters"
+        menu (rail, confidence), plus a triage toggle that ADDS rows and
+        therefore sits last. While anything narrows, the row says how much
+        ("N of M") and offers one counted clear.
      4. the feed, capped at RADAR_PAGE groups behind a "show more": triage is
         read-decide-next over the worst few, not a scroll through everything —
         and the cap is what makes the cut honest, because the count above it
@@ -138,17 +139,12 @@ function sortFindings(rows) {
 function RadarScreen({
   state,
   onOpenSession,
-  onGoRules,
-  onGoIntegrations,
-  onGoSettings,
   ruleFilter,
   ruleNonce,
   sessionFilter,
   focusFindingId,
   focusNonce,
   trace,
-  onTraceClose,
-  onTrace,
 }) {
   const [status, setStatus] = useState("open"); // open | all
   /* False positives are hidden from the whole feed unless the person asked to
@@ -368,8 +364,8 @@ function RadarScreen({
     ...railsPresent
       .map((s) => ({
         key: s,
-        label: SOURCE_LABELS[s] ? SOURCE_LABELS[s].toLowerCase() : s,
-        short: SOURCE_LABELS[s] ? SOURCE_LABELS[s].toLowerCase() : s,
+        label: SOURCE_NAMES[s] || s,
+        short: SOURCE_NAMES[s] || s,
         count: countBy("rail", (f) => f.source === s),
       }))
       .filter((o) => o.count > 0 || o.key === rail),
@@ -393,9 +389,9 @@ function RadarScreen({
     count: bandCount(b),
   }));
   const bandsApplies = hiddenBands.length > 0 || anyBand.some((f) => confidenceBandOf(f) !== "high");
-  // The button names the DIMENSION as well as the set — "High only" on its
-  // own says nothing about what is high; every reading here ends in the
-  // word "confidence".
+  // The confidence section's reading names the DIMENSION as well as the set
+  // — "High only" on its own says nothing about what is high; every reading
+  // here ends in the word "confidence".
   const bandsSummary =
     shownBands.length === CONFIDENCE_BANDS.length
       ? "Any confidence"
@@ -441,6 +437,51 @@ function RadarScreen({
   const viewTotal = groupFindings(
     sortFindings(all.filter((f) => status === "all" || (status === "open") === (f.status === "open"))),
   ).length;
+  // The triage toggle earns its place only when its two views differ — or
+  // when "All" is the way to the false-positive box (the hidden ones are not
+  // in either count).
+  const reviewCount = countBy("status", (f) => f.status === "open");
+  const everyCount = countBy("status", () => true);
+  const triageToggle = reviewCount !== everyCount || hiddenFp > 0;
+  // The feed's own count says something only when it differs from the
+  // headline above it: under a filter ("N of M"), in "All", or when the
+  // snapshot's 200-row cap leaves fewer cards than main counted.
+  const summary = (state.radar && state.radar.summary) || {};
+  const headlineOpen = summary.open_exposures != null ? summary.open_exposures : summary.open_groups;
+  const showFeedCount = narrowed || status !== "open" || viewTotal !== headlineOpen;
+
+  /* The decided card leaves the list only when main's next snapshot lands —
+     after the next card has already scrolled itself to the top — so the
+     feed re-anchors on that card once the list has actually shrunk. */
+  const anchorAfter = useRef(null);
+  const groupKeys = groups.map((g) => g.key).join("\n");
+  useEffect(() => {
+    const pending = anchorAfter.current;
+    if (!pending || groupKeys.split("\n").includes(pending.left)) return;
+    anchorAfter.current = null;
+    const el = [...document.querySelectorAll(".finding[data-key]")].find((n) => n.dataset.key === pending.next);
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "start" });
+  }, [groupKeys]);
+  /* After a verdict the card's key moves bucket (" open" ↔ " triaged"). A
+     card that stays in view stays open under its new key; one that leaves it
+     (the queue, or a false positive the feed hides) hands the open slot to
+     the card that followed it, so triage reads straight on. Reopening puts
+     the card back in the queue, the first tab, and the view follows it. */
+  const afterDecision = (g, at, next) => {
+    const base = g.key.replace(/ (open|triaged)$/, "");
+    if (next === "open") {
+      setStatus("open");
+      setExpanded(base + " open");
+      return;
+    }
+    if (status === "open" || (next === "false_positive" && !showFp)) {
+      const after = groups[at + 1];
+      setExpanded(after ? after.key : null);
+      anchorAfter.current = after ? { left: g.key, next: after.key } : null;
+    } else {
+      setExpanded(base + " triaged");
+    }
+  };
 
   // The severity mix and the affected-session count come off the SUMMARY, which
   // main computes over every stored finding and over the OPEN rows only — the
@@ -459,7 +500,6 @@ function RadarScreen({
         state={state}
         seed={trace.seed}
         seedNonce={trace.nonce}
-        onBack={onTraceClose}
         onOpenSession={onOpenSession}
       />
     );
@@ -522,9 +562,6 @@ function RadarScreen({
         ) : null}
         <FilterMenu label="Severity" value={sev} options={sevOptions} onPick={setSev} />
         <FilterMenu label="Rule" value={rule} options={ruleOptions} onPick={setRule} />
-        {railOptions.length > 2 ? (
-          <FilterMenu label="Rail" value={rail} options={railOptions} onPick={setRail} />
-        ) : null}
         {/* Outcome was a chip row, on the argument that the distribution IS
             the filter — as "Any outcome ⌄" you had to open a menu to learn
             that of 185 findings only three were ever blocked. The hero card
@@ -534,21 +571,39 @@ function RadarScreen({
             per-outcome and overlap on a mixed card) sitting in a row of
             dropdowns and looking like none of them. */}
         <FilterMenu label="Outcome" value={outcome} options={outcomeOptions} onPick={setOutcome} />
-        {/* The confidence BANDS: tick boxes in one menu — the one
-            control here that mostly ADDS rows, and a PREFERENCE, not a
-            filter: it survives a relaunch, clear-filters leaves it alone, it
-            does not count toward "N filters". At rest it reads "High only";
-            any other set wears its bands the way a picked menu wears its
-            value. Absent while every row is high-confidence. */}
-        {bandsApplies ? (
-          <FilterMenu
-            label="Confidence"
-            multi
-            value={shownBands}
-            summary={bandsSummary}
-            narrowed={shownBands.length !== CONFIDENCE_BANDS.length}
-            options={bandOptions}
-            onPick={pickBand}
+        {/* Rail and confidence, the two dimensions picked least, behind one
+            "More filters" menu: at the 960px window minimum a row of six
+            dropdowns pushed the triage toggle off the end. Confidence is a
+            PREFERENCE, not a filter — it survives a relaunch, clear-filters
+            leaves it alone, it does not count toward "N filters". Each
+            section is absent while it could change nothing. */}
+        {railOptions.length > 2 || bandsApplies ? (
+          <MoreFilters
+            sections={[
+              railOptions.length > 2
+                ? {
+                    key: "rail",
+                    title: "Rail",
+                    value: rail,
+                    options: railOptions,
+                    onPick: setRail,
+                    narrowed: rail !== "all",
+                    summary: (railOptions.find((o) => o.key === rail) || {}).short,
+                  }
+                : null,
+              bandsApplies
+                ? {
+                    key: "confidence",
+                    title: "Confidence",
+                    multi: true,
+                    value: shownBands,
+                    options: bandOptions,
+                    onPick: pickBand,
+                    narrowed: shownBands.length !== CONFIDENCE_BANDS.length,
+                    summary: bandsSummary,
+                  }
+                : null,
+            ].filter(Boolean)}
           />
         ) : null}
         <span className="spacer" />
@@ -562,24 +617,23 @@ function RadarScreen({
             verdict says there was nothing to see. Both views also leave out
             the rows in a CONFIDENCE band that is not ticked (the
             Confidence menu): a lead is not a thing to review. */}
-        <Segmented
-          ariaLabel="Triage"
-          value={status}
-          options={[
-            { key: "open", label: "Needs review", count: countBy("status", (f) => f.status === "open") },
-            { key: "all", label: "All", count: countBy("status", () => true) },
-          ]}
-          onPick={setStatus}
-        />
+        {triageToggle ? (
+          <Segmented
+            ariaLabel="Triage"
+            value={status}
+            options={[
+              { key: "open", label: "Needs review", count: reviewCount },
+              { key: "all", label: "All", count: everyCount },
+            ]}
+            onPick={setStatus}
+          />
+        ) : null}
       </div>
 
-      {/* How much is in the feed, top-right above it: the total at rest, and
-          "shown/total" the moment anything narrows — one number that answers
-          both "how much is there" and "how much am I looking at". The reset
-          rides on its left, appearing only while there is something to reset.
-          It replaces a sentence ("30 exposures · 87 things · 153 sightings")
-          that was three counts of three different units in the place the eye
-          lands before the first card. */}
+      {/* The reset, the Show boxes and the feed's count. The count says
+          "N of M exposures" under a filter and the total only where it is
+          not the headline's number again (see showFeedCount). */}
+      {narrowed || showOptions.length > 0 || showFeedCount ? (
       <div className="feedcount-row">
         {narrowed ? (
           <button className="linkbtn" onClick={clearAll}>
@@ -608,22 +662,21 @@ function RadarScreen({
           </span>
         ) : null}
         <span className="spacer" />
-        <span className="feedcount" aria-live="polite" title={
-          (narrowed ? groups.length + " of " + viewTotal + " exposures shown · " : viewTotal + " exposures · ") +
-          rows.length + " sighting" + (rows.length === 1 ? "" : "s") +
-          (all.length >= 200 ? " · newest 200 only, older ones stay in the local store" : "")
-        }>
-          {narrowed ? groups.length + "/" + viewTotal : String(viewTotal)}
-          {/* The unit, once, in words — the digits alone left the reader to
-              infer whether they counted cards, rules or sightings. Mono digits
-              and a proportional word, so the number stays the thing that
-              reads first. */}
-          <span className="feedcount-unit">
-            {" "}
-            exposure{(narrowed ? groups.length : viewTotal) === 1 ? "" : "s"}
+        {showFeedCount ? (
+          <span className="feedcount" aria-live="polite" title={
+            (narrowed ? groups.length + " of " + viewTotal + " exposures shown · " : viewTotal + " exposures · ") +
+            rows.length + " sighting" + (rows.length === 1 ? "" : "s") +
+            (all.length >= 200 ? " · newest 200 only, older ones stay in the local store" : "")
+          }>
+            {narrowed ? groups.length + " of " + viewTotal : String(viewTotal)}
+            <span className="feedcount-unit">
+              {" "}
+              exposure{viewTotal === 1 ? "" : "s"}
+            </span>
           </span>
-        </span>
+        ) : null}
       </div>
+      ) : null}
 
       {rows.length === 0 ? (
         <Card>
@@ -644,7 +697,7 @@ function RadarScreen({
         </Card>
       ) : (
         <div className="findings">
-          {groups.slice(0, shown).map((g) => (
+          {groups.slice(0, shown).map((g, at) => (
             <FindingGroup
               key={g.key}
               group={g}
@@ -653,14 +706,8 @@ function RadarScreen({
               focused={!!focused && g.rows.some((r) => r.finding_id === focused)}
               expanded={g.key === openKey}
               onToggle={() => setExpanded(g.key === openKey ? null : g.key)}
-              onGoSettings={onGoSettings}
               onOpenSession={onOpenSession}
-              onTrace={onTrace}
-              /* Reopening puts a card back into the queue, and the queue is
-                 the first tab — so the scope follows it there, instead of the
-                 card vanishing out from under the person who just pressed the
-                 button on the tab they are on. */
-              onReopened={() => setStatus("open")}
+              onDecided={(next) => afterDecision(g, at, next)}
             />
           ))}
           {/* Worst-first ordering makes this an honest cut: everything behind
@@ -674,6 +721,87 @@ function RadarScreen({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The filter row's overflow: several FilterMenu lists in one popover, each
+ * under its dimension's name. `sections` are FilterMenu's own props plus
+ * `key`, `title`, `narrowed` and `summary` (the section's reading while
+ * narrowed). The button wears every narrowed section's reading — the row's
+ * rule that a picked control states what it is doing — and "More filters"
+ * at rest. A `multi` section stays open across picks, as in FilterMenu.
+ */
+function MoreFilters({ sections }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => (e.key === "Escape" ? setOpen(false) : null);
+    // Fixed + anchored like .fmenu-pop, so movement closes it rather than
+    // letting it drift from its button.
+    const onScroll = (e) => {
+      if (ref.current && ref.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open]);
+  const active = sections.filter((s) => s.narrowed);
+  const reading = active.map((s) => s.summary || s.title).join(" · ");
+  return (
+    <span className="fmenu-wrap fmore" ref={ref}>
+      <button
+        className={"fmenu" + (active.length > 0 ? " on" : "")}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title={active.length > 0 ? reading : undefined}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="fmore-t">{reading || "More filters"}</span>
+        <span className="caret">⌄</span>
+      </button>
+      {open ? (
+        <div className="fmenu-pop">
+          {sections.map((s) => {
+            const picked = (key) => (s.multi ? (s.value || []).indexOf(key) !== -1 : key === s.value);
+            return (
+              <div key={s.key} className="fmenu-sec" role="listbox" aria-label={s.title} aria-multiselectable={s.multi ? true : undefined}>
+                <div className="fmenu-sec-k">{s.title}</div>
+                {s.options.map((o) => (
+                  <button
+                    key={o.key}
+                    role="option"
+                    aria-selected={picked(o.key)}
+                    className={picked(o.key) ? "on" : ""}
+                    onClick={() => {
+                      if (!s.multi) setOpen(false);
+                      s.onPick(o.key);
+                    }}
+                  >
+                    <span className="tick">{picked(o.key) ? "✓" : ""}</span>
+                    {o.dot ? <span className="dot" style={{ background: o.dot }} /> : null}
+                    <span className="lab">{o.label}</span>
+                    {o.count !== undefined ? <span className="cnt">{o.count}</span> : null}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </span>
   );
 }
 
@@ -864,7 +992,7 @@ function ThingRecord({ thing: t, open, onToggle, onOpenSession, platform }) {
    assistant on demand through `ai:ask`; the summary channel it used to call
    on mount was removed with the rows. */
 
-function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoSettings, onOpenSession, onTrace, onReopened }) {
+function FindingGroup({ group, policy, state, focused, expanded, onToggle, onOpenSession, onDecided }) {
   /* Rendered on its own (no `expanded`), the card is the whole card — a
      caller that does not manage the feed's open state gets everything. The
      feed passes a boolean and the toggle. */
@@ -923,7 +1051,7 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
       contextRef={{ kind: "exposure", finding_id: face.finding_id }}
       question={
       manyThings
-      ? "What is this exposure as a whole, which of these things actually matter, and how do I fix it?"
+      ? "What is this exposure as a whole, which of these items actually matter, and how do I fix it?"
       : "How do I fix this, and is it a false positive?"
       }
       title={(meta.label || face.detector) + (group.place ? " · " + group.place : "")}
@@ -944,11 +1072,16 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
   const onSwipe = useSwipeStep(step);
   const setAll = (status) =>
     window.doorman.setFindingStatusBulk(group.rows.map((r) => r.finding_id), status);
-  /* The reason the menu is showing, which is NOT yet the card's status:
-     choosing one only fills this in, and "Mark reviewed" is what writes it —
-     and stays disabled until there is one. Null means undecided, not
-     "reviewed without a reason": that is not a state this card can write. */
-  const [verdict, setVerdict] = useState(null);
+  /* One click is the decision, for every sighting on the card; the feed is
+     told so it can open the next card when this one leaves the view. */
+  const decide = (status) => {
+    setAll(status);
+    if (onDecided) onDecided(status);
+  };
+  const decideTitle = many ? "Applies to all " + group.rows.length + " sightings on this card" : undefined;
+  const place = exposurePlace(face, group);
+  const agents = [...new Set(group.rows.map((r) => SOURCE_NAMES[r.source] || r.source))].filter(Boolean);
+  const shutOutcome = closedOutcome(group.rows);
 
   return (
     <div
@@ -960,6 +1093,7 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
       }
       id={focused ? "exposure-focus" : undefined}
       ref={cardRef}
+      data-key={group.key}
     >
       {/* The card is the LIST ITEM. Shut, it is its header alone: the same
           badge and written sentence it has open — never a second, smaller
@@ -987,15 +1121,26 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
             have not read yet, and at the head of the line it makes the feed
             scannable down its left edge the way the old row was. */}
         <SeverityBadge severity={face.severity} />
-        <span className="fhead">{codeSpans(headline)}</span>
-        {/* How many things the card holds, on the header — while the card is
-            SHUT. Open, the count hands over to the pager ("1 / 7") on the step
-            header, so the number is said once, where it can be walked. */}
-        {manyThings && !open ? (
-          <span className="chip fhead-count" title={things.length + " things to review in this exposure"}>
-            {things.length}
-          </span>
-        ) : null}
+        {/* The headline, and — while SHUT — the line a triage pass reads
+            before opening anything: where, which agent, what the guard did
+            when that was more than observing, and how many sightings (the
+            same count the open card's Where row gives). */}
+        <span className="fhead-main">
+          <span className="fhead">{codeSpans(headline)}</span>
+          {!open ? (
+            <span className="fhead-ctx">
+              {place ? (
+                <span className="fhead-fact">
+                  in <span className="mono">{place}</span>
+                </span>
+              ) : null}
+              {agents.length > 0 ? <span className="fhead-fact">{agents.join(" · ")}</span> : null}
+              {shutOutcome ? <span className="fhead-fact fhead-out">{shutOutcome}</span> : null}
+              <span className="fhead-fact">{group.rows.length + " sighting" + (group.rows.length === 1 ? "" : "s")}</span>
+              {face.status !== "open" ? <span className="fhead-fact fhead-verdict">{VERDICT_LABELS[face.status] || "Reviewed"}</span> : null}
+            </span>
+          ) : null}
+        </span>
         {/* No PLACEHOLDER chip (2026-09-21): when the value looks like a
             fixture the card's What and Do next say so in words, which is
             where the reader is looking. */}
@@ -1049,7 +1194,7 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
           {manyThings ? (
             <div className="freview">
               <span className="freview-title">
-                <span className="freview-k">Reviewing</span> <span className="mono">{(selectedThing && selectedThing.name) || "one thing"}</span>
+                <span className="freview-k">Reviewing</span> <span className="mono">{(selectedThing && selectedThing.name) || "one item"}</span>
               </span>
             </div>
           ) : null}
@@ -1116,14 +1261,19 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
               a room away from the columns it changed. Wraps from the last
               thing to the first. */}
           {manyThings && scope ? (
-            <div className="fstep-nav" role="group" aria-label="Step through the things in this exposure">
-              <span className="fstep-count">
+            <div className="fstep-nav" role="group" aria-label="Step through the items in this exposure">
+              {/* The pager walks distinct exposed names, which is not the
+                  sighting count on the shut row — the hover says which. */}
+              <span
+                className="fstep-count"
+                title={"Item " + scope.index + " of " + scope.total + " — each a distinct exposed name, across " + group.rows.length + " sightings"}
+              >
                 {scope.index} <span className="fstep-of">of</span> {scope.total}
               </span>
-              <button type="button" className="fstep-btn" aria-label="Previous thing" title="Previous (or swipe)" onClick={() => step(-1)}>
+              <button type="button" className="fstep-btn" aria-label="Previous item" title="Previous (or swipe)" onClick={() => step(-1)}>
                 <Icon name="chevron" size={14} className="fstep-prev" />
               </button>
-              <button type="button" className="fstep-btn" aria-label="Next thing" title="Next (or swipe)" onClick={() => step(1)}>
+              <button type="button" className="fstep-btn" aria-label="Next item" title="Next (or swipe)" onClick={() => step(1)}>
                 <Icon name="chevron" size={14} className="fstep-next" />
               </button>
             </div>
@@ -1137,53 +1287,29 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
               setting. */}
           <div className="ffoot">
             <FactsLine face={face} group={group} />
-            {/* THE DECISIONS, at the foot's right, inline with the facts:
-                pick a reason, then Mark reviewed — one decision for every
-                sighting the card holds. */}
+            {/* THE DECISIONS, at the foot's right, inline with the facts: one
+                click commits the verdict for every sighting the card holds. */}
           <div className="fdecide">
             <div className="row">
               {face.status === "open" ? (
                 <React.Fragment>
-                  {/* Pick the verdict, THEN commit it. The menu used to WRITE
-                      on click, so a card left the queue the instant a menu item
-                      was touched — a misclick with no moment in between, and
-                      no way to see what you had chosen before it happened.
-                      Now the left control only says what your conclusion was;
-                      nothing is written until the button beside it. */}
-                  <VerdictMenu value={verdict} onPick={setVerdict} />
-                  {/* Disabled until a reason is picked: a review IS its reason
-                      — "false positive" or "accepted risk" — and a bare
-                      "reviewed" with neither is a card marked read, not a
-                      decision anyone could act on later. The button never
-                      counts the sightings either ("Mark all 5 reviewed"): the
-                      card says "5 sightings in 3 sessions" two rows up, and
-                      one decision covers the exposure either way. */}
-                  <button
-                    className="btn primary"
-                    disabled={!verdict}
-                    title={verdict ? undefined : "Pick a reason first"}
-                    onClick={() => verdict && setAll(verdict)}
-                  >
-                    {manyThings ? "Mark all reviewed" : "Mark reviewed"}
+                  <button className="btn primary" title={decideTitle} onClick={() => decide("resolved")}>
+                    Resolved
+                  </button>
+                  <button className="btn" title={decideTitle} onClick={() => decide("false_positive")}>
+                    False positive
+                  </button>
+                  <button className="btn" title={decideTitle} onClick={() => decide("accepted_risk")}>
+                    Accept risk
                   </button>
                 </React.Fragment>
               ) : (
                 <React.Fragment>
-                  {/* Decided. The SAME control, disabled, holding the choice
-                      the person made — so the verdict reads back in the place
-                      it was chosen rather than as a chip somewhere else on the
-                      card that someone has to decode. A plain "Mark reviewed"
-                      with no reason picked reads "Reviewed". */}
-                  <VerdictMenu value={face.status} disabled />
-                  <button
-                    className="btn"
-                    onClick={() => {
-                      setAll("open");
-                      setVerdict(null);
-                      if (onReopened) onReopened();
-                    }}
-                  >
-                    Reopen{many ? " all" : ""}
+                  {/* Decided: the verdict, read back where it was chosen, and
+                      the way back to the queue. */}
+                  <span className={"fverdict v-" + face.status}>{VERDICT_LABELS[face.status] || face.status}</span>
+                  <button className="btn" onClick={() => decide("open")}>
+                    Reopen
                   </button>
                 </React.Fragment>
               )}
@@ -1358,6 +1484,69 @@ function valueFromRaw(raw, parts, markIndex) {
 }
 
 /**
+ * What the masked excerpt SHOWS, part for part (null = not shown), without
+ * touching `parts` itself — the marks resolve against the raw text by the
+ * stored excerpt's surroundings, so only the display may differ. Pure.
+ *
+ *  · A shell call's excerpt is its tool input, `{"command":"curl -H \"…`:
+ *    when the window opens on a `command` string, show the command text,
+ *    unescaped, and drop the JSON around it — unless a mark sits outside the
+ *    string, which the rewrite would hide.
+ *  · Redaction can mask one value twice (`[redacted] [redacted:github]`):
+ *    an anonymous mark beside a named one shows as the named one alone.
+ */
+function evidenceDisplayParts(parts) {
+  const isMark = (p) => /^\[redacted/.test(p);
+  const out = parts.slice();
+  for (let i = 0; i + 2 < parts.length; i += 2) {
+    if (!isMark(parts[i + 1]) || !isMark(parts[i + 3] || "") || !/^\s*$/.test(parts[i + 2])) continue;
+    const a = parts[i + 1] === "[redacted]";
+    const b = parts[i + 3] === "[redacted]";
+    if (a && !b) {
+      out[i + 1] = null;
+      out[i + 2] = null;
+    } else if (b && !a) {
+      out[i + 2] = null;
+      out[i + 3] = null;
+    }
+  }
+  const head = /^(?:…|\.\.\.)?\s*\{\s*"command"\s*:\s*"/.exec(parts[0] || "");
+  if (!head) return out;
+  const cmd = out.slice();
+  let escaped = false;
+  for (let i = 0; i < parts.length; i++) {
+    if (isMark(parts[i])) continue;
+    const seg = i === 0 ? parts[0].slice(head[0].length) : parts[i];
+    let text = "";
+    let closed = false;
+    for (let k = 0; k < seg.length; k++) {
+      const c = seg[k];
+      if (escaped) {
+        escaped = false;
+        if (c === "n") text += "\n";
+        else if (c === "t") text += "\t";
+        else if (c === "r") text += "";
+        else if (c === "u" && /^[0-9a-fA-F]{4}$/.test(seg.slice(k + 1, k + 5))) {
+          text += String.fromCharCode(parseInt(seg.slice(k + 1, k + 5), 16));
+          k += 4;
+        } else text += c;
+      } else if (c === "\\") escaped = true;
+      else if (c === '"') {
+        closed = true;
+        break;
+      } else text += c;
+    }
+    if (cmd[i] != null) cmd[i] = text;
+    if (closed) {
+      if (parts.slice(i + 1).some(isMark)) return out;
+      for (let j = i + 1; j < parts.length; j++) cmd[j] = null;
+      break;
+    }
+  }
+  return cmd;
+}
+
+/**
  * The masked evidence strip.
  *
  * `raw` opts the whole window in, and only the EVENT LEDGER asks for it. The
@@ -1377,6 +1566,7 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform 
   // under the box says why.
   const stopped = !!row && callNeverRan(row);
   const parts = text.split(/(\[redacted(?::[a-z0-9_]+)?\])/g);
+  const display = evidenceDisplayParts(parts);
   // null | {loading} | {text, truncated} | {error} — the VISIBLE raw window,
   // only ever reachable where `raw` was asked for.
   const [raw, setRaw] = useState(null);
@@ -1467,6 +1657,19 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform 
   }, [showingRaw, raw && raw.text]);
   return (
     <div className="evidence-wrap">
+      {/* VIEW RAW on its own row above the box: pinned inside it, the button
+          sat on top of the first line of the snippet. */}
+      {rawAllowed && !stopped && findingId && text ? (
+        <div className="evidence-actions">
+          <button
+            className={"copybtn" + (raw && !raw.loading && !raw.error ? " done" : "")}
+            onClick={toggleRaw}
+            title="Show the original, unmasked text this finding was raised on — read on this computer only, never synced, exported or sent."
+          >
+            {raw ? (raw.loading ? "READING…" : "HIDE RAW") : "VIEW RAW"}
+          </button>
+        </div>
+      ) : null}
       {/* One box, two contents. VIEW RAW swaps the masked line for the raw
           window IN PLACE — HIDE RAW swaps it back — rather than stacking the
           two, so the card never grows a second block of the same evidence. */}
@@ -1504,9 +1707,13 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform 
           {keyName ? <span className="faint">{keyName}: </span> : null}
         {/* The placeholder itself is the natural click target for "so what WAS
             it?" — in place, one value at a time. Marks without a findingId
-            (the approval panel) stay inert text. */}
+            (the approval panel) stay inert text. Indexes are the stored
+            excerpt's, so a mark resolves against the raw text whatever the
+            display rewrote around it. */}
         {parts.map((part, i) => {
-          if (!/^\[redacted/.test(part)) return <span key={i}>{part}</span>;
+          const shownPart = display[i];
+          if (shownPart == null) return null;
+          if (!/^\[redacted/.test(part)) return <span key={i}>{shownPart}</span>;
           if (!findingId || stopped) return <mark key={i}>{part}</mark>;
           const shown = shownMarks[i] || null;
           return (
@@ -1531,17 +1738,6 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform 
         })}
         </div>
       )}
-      <span className="evidence-actions">
-        {rawAllowed && !stopped && findingId && text ? (
-          <button
-            className={"copybtn" + (raw && !raw.loading && !raw.error ? " done" : "")}
-            onClick={toggleRaw}
-            title="Show the original, unmasked text this finding was raised on — read on this computer only, never synced, exported or sent."
-          >
-            {raw ? (raw.loading ? "READING…" : "HIDE RAW") : "VIEW RAW"}
-          </button>
-        ) : null}
-      </span>
       {stopped && rawAllowed ? <div className="evidence-note plain">{NEVER_RAN_NOTE}</div> : null}
       {note ? <div className="evidence-note err">{note}</div> : null}
       {raw && raw.error ? <div className="evidence-note err">{raw.error}</div> : null}
@@ -1563,9 +1759,82 @@ const DECIDED_VIA_LABELS = {
   panel: "the floating panel",
   window: "the app window",
   notification: "a notification",
+  editor: "the editor",
+  terminal: "the terminal",
   timeout: "nobody — it timed out",
   "app-absent": "nobody — the app was closed",
 };
+
+/**
+ * How a held call ENDED, in the glossary's words: Allowed by you, Denied by
+ * you, or Denied without anyone answering (a timeout, or nobody to ask).
+ * `key` is the bucket — "denied" covers both kinds of refusal. Null for a row
+ * that was never held.
+ */
+function holdEnding(f) {
+  if (findingOutcome(f) !== "held") return null;
+  switch (f.resolution) {
+    case "allowed":
+      return { key: "allowed", label: "Allowed by you" };
+    case "denied":
+      return { key: "denied", label: "Denied by you" };
+    case "timeout":
+      return { key: "denied", label: "Denied — no answer" };
+    case "unavailable":
+      return { key: "denied", label: "Denied — nobody could be asked" };
+    case "unattended":
+      return { key: "passed", label: "Passed to the agent's own prompt" };
+    default:
+      return { key: "pending", label: "No answer recorded" };
+  }
+}
+
+/**
+ * The held rows' endings as one line beside the Action pill: "Denied by you
+ * after 12s" for one hold, "2 allowed by you · 1 denied — no answer" for
+ * several. `title` names the surface that answered a single hold. Null when
+ * nothing in `rows` was held. Pure.
+ */
+function holdSummary(rows) {
+  const held = (rows || []).filter((r) => findingOutcome(r) === "held");
+  if (held.length === 0) return null;
+  const buckets = new Map();
+  for (const r of held) {
+    const e = holdEnding(r);
+    const b = buckets.get(e.label) || { ...e, n: 0 };
+    b.n += 1;
+    buckets.set(e.label, b);
+  }
+  const parts = [...buckets.values()];
+  if (held.length === 1) {
+    const r = held[0];
+    const e = parts[0];
+    const after = e.key !== "pending" && Number.isFinite(r.hold_ms) ? " after " + fmtHold(r.hold_ms) : "";
+    const via = r.decided_via && DECIDED_VIA_LABELS[r.decided_via] && r.decided_via !== "timeout" && r.decided_via !== "app-absent"
+      ? "Answered from " + DECIDED_VIA_LABELS[r.decided_via]
+      : undefined;
+    return { text: e.label + after, title: via };
+  }
+  return {
+    text: parts.map((p) => p.n + " " + p.label.charAt(0).toLowerCase() + p.label.slice(1)).join(" · "),
+    title: undefined,
+  };
+}
+
+/**
+ * The closed row's outcome word, or null when the sightings were only
+ * observed (the rest state, not news). A hold says how it ended when every
+ * hold on the card ended the same way.
+ */
+function closedOutcome(rows) {
+  const outcomes = [...new Set(rows.map(findingOutcome))];
+  if (outcomes.length > 1) return "mixed outcomes";
+  const o = outcomes[0];
+  if (o === "observed") return null;
+  if (o !== "held") return (OUTCOME_WORDS[o] || o).toLowerCase();
+  const ends = [...new Set(rows.map((r) => holdEnding(r).key))];
+  return ends.length === 1 && (ends[0] === "allowed" || ends[0] === "denied") ? "held, then " + ends[0] : "held";
+}
 
 /* The guard toggle and hold behaviour live in settings.jsx (RulesCard); the
    per-rule modes live in rules.jsx (RulesScreen). This screen only reports
@@ -1574,29 +1843,24 @@ const DECIDED_VIA_LABELS = {
 /* ---- the exposure card's five questions ---------------------- */
 
 /** What a judged card's verdict is CALLED. The store keeps four statuses and
- *  this is presentation over them — "resolved" is a thing you did, not a thing
- *  that happened, and "false_positive" is not a sentence. */
+ *  this is presentation over them; the buttons that write them say "Accept
+ *  risk" (a verb) where the decided card reads "Accepted risk". */
 const VERDICT_LABELS = {
-  resolved: "Reviewed",
-  false_positive: "False Positive",
-  accepted_risk: "Accept Risk",
+  resolved: "Resolved",
+  false_positive: "False positive",
+  accepted_risk: "Accepted risk",
   open: "Open",
 };
 
 /**
  * Whether the flagged call actually RAN, which is the hinge the whole card
- * turns on: a blocked call never happened, so there is nothing to rotate and
- * nothing to un-send, and the instruction under it has to change to match.
- *
- * Read from what the guard DID (`enforced`) and, for a held call, what was
- * decided (`resolution`) — never from severity, which says how bad it would
- * be, not whether it occurred.
+ * turns on: a blocked or denied call never happened, so there is nothing to
+ * rotate and nothing to un-send, and the instruction under it has to change
+ * to match. The same rule as the evidence box (components.jsx callNeverRan),
+ * so the card never says "ran" over a record that says it didn't.
  */
 function exposureRan(f) {
-  if (f.enforced === "deny") return false;
-  if (f.enforced === "ask") return f.resolution === "allowed" || f.resolution === "continue";
-  // warn, excepted, observed and anything unrecorded: the call went through.
-  return true;
+  return !callNeverRan(f);
 }
 
 /**
@@ -1627,14 +1891,15 @@ function ExposureStory({ face, group, state, account, stepRows, ask }) {
      where their fields differ, so a card holding three credentials never
      claims to be about one of them) or, while one thing is being reviewed,
      that thing's own — `scope` says which, and the caption names it. */
-  /* Both read the whole GROUP, not its face. A card standing for five
-     sightings whose guard outcomes disagree used to print the first row's
-     outcome as if it were the exposure's — so three blocked calls and two
-     that went through read "Blocked", and the instruction under it said
-     there was nothing to do. If ANY of them ran, there is work. */
-  const ran = group.rows.some(exposureRan);
-  const outcomes = [...new Set(group.rows.map(findingOutcome))];
+  /* Both read the step's rows — the whole card on a one-item card — never
+     the face alone: a card whose sightings disagree printed the first row's
+     outcome as if it were the exposure's, so three blocked calls and two that
+     went through read "Blocked" over "nothing to do". If ANY of them ran,
+     there is work. */
+  const ran = rows.some(exposureRan);
+  const outcomes = [...new Set(rows.map(findingOutcome))];
   const outcome = outcomes.length === 1 ? outcomes[0] : "mixed";
+  const hold = holdSummary(rows);
   /* Three lines, rule-specific, from the ACCOUNT (main/lib/account.ts) when the row has one — the story (what the transcript shows),
      the consequence, the next step — else the rule's own two sentences from
      lib/ai-guidance.ts. When the call was STOPPED the last two are
@@ -1646,8 +1911,13 @@ function ExposureStory({ face, group, state, account, stepRows, ask }) {
     : account
       ? account.so
       : "";
+  /* Resolved closes every sighting on the card, so "nothing to clean up"
+     must hold for the whole card, not just the item under review. */
+  const cardRan = rows === group.rows ? ran : group.rows.some(exposureRan);
   const next = !ran
-    ? "Nothing to clean up. Mark it reviewed — or loosen the rule in Guardrails if this should have been allowed."
+    ? cardRan
+      ? "This call never ran, but other items on this card did — step through them before marking the card Resolved."
+      : "Nothing to clean up. Mark it Resolved — or loosen the rule in Guardrails if this should have been allowed."
     : account
       ? account.next
       : guidance.fix || "";
@@ -1685,14 +1955,19 @@ function ExposureStory({ face, group, state, account, stepRows, ask }) {
           </span>
         </div>
       ) : null}
-      {/* ACTION: what the guard DID — one capitalized word on a pill, nothing
-          after it. Read off the whole GROUP; if the rows disagree it says so.
-          Sits under What, where the outcome bears on the story just told, and
-          ahead of Do next, whose verbs it decides. */}
+      {/* ACTION: what the guard DID — one capitalized word on a pill, and for
+          a hold, how it ended and after how long. Sits under What, where the
+          outcome bears on the story just told, and ahead of Do next, whose
+          verbs it decides. */}
       <div className="fqa-row">
         <span className="fqa-k">Action</span>
         <span className="fqa-v">
           <span className={"fqa-outcome act-" + outcome}>{OUTCOME_WORDS[outcome] || outcome}</span>
+          {hold ? (
+            <span className="fqa-hold" title={hold.title}>
+              {hold.text}
+            </span>
+          ) : null}
         </span>
       </div>
       <div className="fqa-row">
@@ -1813,9 +2088,15 @@ function groupAccount(face, rows, thingCount) {
     famPhrase = joined.phrase;
     famRe = new RegExp("(\\b(?:An|A|an|a|The|the) )?" + lead.family_noun.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
   }
-  if (files.length > 1 && lead.source_ref) subs.push(["`" + lead.source_ref + "`", files.length + " files"]);
+  // Files and names are what a card's items are keyed on, but the account
+  // parses its file out of the command text, so `.env` and `./.env` read as
+  // two files under one item. Capped at the item count, the title never
+  // promises more than the pager walks ("5 files" over "1 of 4").
+  const nFiles = thingCount ? Math.min(files.length, thingCount) : files.length;
+  const nNames = thingCount ? Math.min(names.length, thingCount) : names.length;
+  if (nFiles > 1 && lead.source_ref) subs.push(["`" + lead.source_ref + "`", nFiles + " files"]);
   if (hosts.length > 1 && lead.destination_host) subs.push(["`" + lead.destination_host + "`", hosts.length + " hosts"]);
-  if (names.length > 1 && lead.name) subs.push(["`" + lead.name + "`", names.length + " names"]);
+  if (nNames > 1 && lead.name) subs.push(["`" + lead.name + "`", nNames + " names"]);
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const generalise = (text) => {
     let out = String(text || "");
@@ -1844,9 +2125,8 @@ function groupAccount(face, rows, thingCount) {
     return out;
   };
   // The story ends by pointing at the record. When the family phrase already
-  // carries the count ("3 credentials"), saying "3 things in all" again is
-  // the same number twice.
-  const pointer = pluralFamily ? " See What we saw for each." : " " + n + " things in all — see What we saw.";
+  // carries the count ("3 credentials"), repeating it is the same number twice.
+  const pointer = pluralFamily ? " See What we saw for each." : " See What we saw for all " + n + ".";
   return {
     ...lead,
     title: generalise(lead.title),
@@ -1917,103 +2197,6 @@ const OUTCOME_WORDS = {
   observed: "Observed",
   mixed: "Mixed",
 };
-
-/** The two QUALIFIERS on a review. Reviewed is not among them: reviewing is
- *  what the button does, and these are the two reasons that change what the
- *  review meant. */
-const VERDICT_CHOICES = [
-  { id: "false_positive", label: VERDICT_LABELS.false_positive },
-  { id: "accepted_risk", label: VERDICT_LABELS.accepted_risk },
-];
-
-/** What the trigger says when nothing has been picked. A VERB phrase, and
- *  deliberately: a bare noun ("Reason") sitting directly above a list of two
- *  nouns reads as the first item in that list — as if it were a third thing
- *  you could pick. It is not; it is the empty state of the control, and while
- *  it shows, "Mark reviewed" beside it is disabled. */
-const VERDICT_PLACEHOLDER = "Add reason";
-const verdictLabel = (id) => VERDICT_LABELS[id] || VERDICT_PLACEHOLDER;
-
-/**
- * WHY you reviewed it — a selector, not an action, and optional.
- *
- * Its trigger used to read "Dismiss", and picking an item WROTE that verdict
- * on the spot. Two problems in one control: "Dismiss" is a verb, so the thing
- * that was only supposed to qualify a decision looked like a second way to
- * make one; and a card could be triaged by a misclick in a menu, with no
- * moment between choosing and committing. Now the trigger shows what is
- * picked, the list marks it, and nothing is written until "Mark reviewed".
- *
- * `disabled` is the same control after the decision: no menu, no chevron
- * behaviour, just the choice the person made, which is why a judged card
- * shows its verdict in the place the verdict was chosen rather than as a chip
- * somewhere else on the card.
- */
-function VerdictMenu({ value, onPick, disabled }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    const onKey = (e) => (e.key === "Escape" ? setOpen(false) : null);
-    const onScroll = (e) => {
-      if (ref.current && ref.current.contains(e.target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("scroll", onScroll, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("scroll", onScroll, true);
-    };
-  }, [open]);
-  if (disabled) {
-    return (
-      <span className="verdict-wrap">
-        <button className="btn" disabled>
-          {verdictLabel(value)}
-          <Icon name="chevron" size={12} />
-        </button>
-      </span>
-    );
-  }
-  return (
-    <span className="verdict-wrap" ref={ref}>
-      <button
-        className={"btn" + (value ? "" : " unset")}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        {verdictLabel(value)}
-        <Icon name="chevron" size={12} />
-      </button>
-      {open ? (
-        <div className="verdict-pop" role="menu">
-          {VERDICT_CHOICES.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={c.id === value}
-              className={c.id === value ? "on" : undefined}
-              onClick={() => {
-                setOpen(false);
-                onPick(c.id);
-              }}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </span>
-  );
-}
 
 /** What the names under an exposure ARE, in the words of the fix: you rotate
  *  keys, you empty files, you review servers. Naming them "things" made the

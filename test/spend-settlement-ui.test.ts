@@ -73,14 +73,18 @@ describe("the lead sentence", () => {
       "7.0k of the 12.0k tokens ran beyond the plan — 3.0k on API credits and 4.0k billed to an API key.",
     );
   });
-  it("says all covered only when nothing is unattributed", () => {
-    expect(spendHighlight({ ...base, covered_tokens: 12_000 })).toContain("4.0k per active hour, all of it covered by the plan.");
+  it("says all on the plan only when nothing is unattributed", () => {
+    expect(spendHighlight({ ...base, covered_tokens: 12_000 })).toContain("4.0k per active hour, all of it on your plan.");
   });
-  it("names the unattributed part instead of claiming none was credits", () => {
+  it("says only the part known to be on the plan, never claiming the unattributed rest", () => {
     const s = spendHighlight({ ...base, covered_tokens: 8000, unknown_tokens: 4000 }) || "";
-    expect(s).toContain("8.0k of it covered by the plan and 4.0k unattributed.");
+    expect(s).toContain("4.0k per active hour; 8.0k of it on your plan.");
+    expect(s).not.toContain("all of it");
     expect(s).not.toContain("none of it API credits");
-    expect(spendHighlight({ ...base, unknown_tokens: 12_000 })).toContain("none of it attributed to a plan or to credits.");
+    const none = spendHighlight({ ...base, unknown_tokens: 12_000 }) || "";
+    expect(none).toContain("4.0k per active hour.");
+    expect(none).not.toContain("plan");
+    expect(none).not.toContain("credits");
   });
   it("never prints a dollar", () => {
     for (const g of [base, { ...base, overage_tokens: 3000, billed_tokens: 4000, covered_tokens: 5000 }]) {
@@ -116,7 +120,7 @@ describe("the token tiles", () => {
     expect(read("../renderer/screens/ledger.jsx")).toContain('{ key: "a", label: "API key", value: summary.billed_tokens || 0, color: "var(--ink-3)" }');
     expect(tray).toContain("billed to an API key");
     // Today is its own tile, with its unit named, and the hero note keeps the rate.
-    expect(graphs).toContain('num={fmtTokens(g.today_tokens)}');
+    expect(graphs).toContain('num={fmtTokens(g.today_tokens) + " tokens"}');
     expect(graphs).toContain('" tokens per active hour"');
   });
 

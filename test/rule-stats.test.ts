@@ -95,10 +95,12 @@ describe("summarizeRuleStats", () => {
     expect(stats.new_exposures).toBe(3);
     expect(dc.exposures).toBe(1);
     // The day chart is drawn in things by worst outcome: the destructive thing
-    // had a blocked row, so it counts as blocked, not three times.
+    // had a blocked row, so it counts as blocked, not three times; the custom
+    // rule's hold ran out with no answer, so it counts as denied.
     const lit = stats.daily.filter((d) => d.total > 0);
     expect(lit).toHaveLength(1);
-    expect(lit[0]).toMatchObject({ blocked: 2, held: 0, warned: 1, observed: 0, total: 3 });
+    expect(lit[0]).toMatchObject({ blocked: 1, denied: 1, allowed: 0, warned: 1, observed: 0, total: 3 });
+    expect(lit[0]).not.toHaveProperty("held");
     // A custom rule reads its recorded label, even with no policy in hand.
     expect(stats.rules[2]!.label).toBe("Production deploy");
     // Decisions: three held rows carried a duration; the median is the middle one.

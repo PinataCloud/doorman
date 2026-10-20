@@ -62,14 +62,14 @@ const tool = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("onboardingSteps", () => {
-  it("is the four-step happy path on a machine with nothing to fix", () => {
-    expect(ctx.onboardingSteps(snapshot())).toEqual(["welcome", "tools", "watching", "done"]);
+  it("is the three-step happy path on a machine with nothing to fix", () => {
+    expect(ctx.onboardingSteps(snapshot())).toEqual(["welcome", "watching", "done"]);
   });
 
   it("prepends the location step when main says this copy is translocated", () => {
     const state = snapshot({ translocated: true });
     expect(ctx.onboardingSteps(state)[0]).toBe("place");
-    expect(ctx.onboardingSteps(state)).toHaveLength(5);
+    expect(ctx.onboardingSteps(state)).toEqual(["place", "welcome", "watching", "done"]);
   });
 
   it("does not gate on a translocated flag that is false", () => {

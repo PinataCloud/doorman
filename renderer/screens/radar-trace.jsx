@@ -217,7 +217,7 @@ function TraceSecretBar({ onOpen, compact, pronounced }) {
   );
 }
 
-function TraceSecretView({ state, seed, seedNonce, onBack, onOpenSession }) {
+function TraceSecretView({ state, seed, seedNonce, onOpenSession }) {
   const [input, setInput] = useState("");
   // null | { done, total } while a trace runs.
   const [progress, setProgress] = useState(null);
@@ -301,12 +301,6 @@ function TraceSecretView({ state, seed, seedNonce, onBack, onOpenSession }) {
 
   return (
     <div className="trace">
-      <div className="trace-nav">
-        <button className="linkbtn" onClick={onBack}>
-          ← Security Radar
-        </button>
-      </div>
-
       {/* The ask. Once an answer is on screen the field gives way to the
           value's shape — the last characters and the family — and a way to
           trace another; the value itself is gone. */}
@@ -320,7 +314,7 @@ function TraceSecretView({ state, seed, seedNonce, onBack, onOpenSession }) {
             {report.shape.label[0].toUpperCase() + report.shape.label.slice(1)} · {report.shape.length} characters
           </span>
           <span className="spacer" />
-          <button className="linkbtn" onClick={reset}>
+          <button className="btn" onClick={reset}>
             Trace another
           </button>
         </div>
@@ -393,14 +387,30 @@ function TraceReportView({ report, state, onOpenSession, onCopy, copied }) {
         ) : null}
       </div>
 
-      <div className="facts trace-facts">
+      {/* The consequences as a list of facts, worst first — each a tone dot
+          and one short sentence. */}
+      <ul className="trace-facts">
         {facts.map((f, i) => (
-          <span className={"fact " + f.tone} key={i}>
-            <span className="fdot" />
-            {f.text}
-          </span>
+          <li className={"trace-fact " + f.tone} key={i}>
+            <span className="fdot" aria-hidden="true" />
+            <span>{f.text}</span>
+          </li>
         ))}
-      </div>
+      </ul>
+
+      {/* The value sits in plain text on this computer: the one step that
+          ends the exposure is a new value, so it leads. */}
+      {report.files.length > 0 ? (
+        <div className="trace-next">
+          <span className="trace-next-k">Do next</span>
+          <p>
+            Rotate this {report.shape.label}
+            {report.rotate ? " at " + report.rotate.provider : " wherever it was issued"}, then update the places that use it.
+            Anyone who can read {report.files.length === 1 ? "that transcript file" : "those transcript files"} has the current value;
+            once it is rotated, the copy there is dead text.
+          </p>
+        </div>
+      ) : null}
 
       {/* Act on it: rotate where the key lives, keep a copy. */}
       <div className="row trace-actions">
@@ -427,12 +437,12 @@ function TraceReportView({ report, state, onOpenSession, onCopy, copied }) {
               {/* A transcript is a document someone READS; Finder only points
                   at it. Offered only where there is an editor to open it in. */}
               {hasEditor ? (
-                <button className="link" onClick={() => window.doorman.openTraceFileInEditor(f.path)}>
-                  open in VS Code →
+                <button className="linkbtn" onClick={() => window.doorman.openTraceFileInEditor(f.path)}>
+                  Open in VS Code →
                 </button>
               ) : null}
-              <button className="link" onClick={() => window.doorman.showTraceFile(f.path)}>
-                {REVEAL_LINKS[state && state.platform] || "show in folder"} →
+              <button className="linkbtn" onClick={() => window.doorman.showTraceFile(f.path)}>
+                {REVEAL_LABELS[state && state.platform] || "Open folder"} →
               </button>
             </div>
           ))}

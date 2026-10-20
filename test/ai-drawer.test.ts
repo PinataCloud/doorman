@@ -151,7 +151,7 @@ describe("the prompt for the person's own agent", () => {
 
 describe("the door", () => {
   it("is one button, always labelled for the fix, never dimmed", () => {
-    expect(drawer).toContain('const AI_ASK_LABEL = "How to fix this?";');
+    expect(drawer).toContain('const AI_ASK_LABEL = "Ask your agent";');
     expect(drawer).toContain("function AiAskButton({ contextRef, question, title, compact }) {");
     expect(drawer).toContain('<span className="askbtn-label">{AI_ASK_LABEL}</span>');
     expect(drawer).not.toContain("is-unready");
