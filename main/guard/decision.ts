@@ -19,7 +19,8 @@
 import { redact } from "./redact.js";
 import { detectSecurityFindings, globToRegExp, invocationHeads, isWriteTool, shellUnescaped } from "./security-detect.js";
 import { commandSegments } from "./segments.js";
-import { isAbsolute, join, normalize, resolve } from "node:path";
+import { Buffer } from "node:buffer";
+import { posix, win32 } from "node:path";
 import { homedir } from "node:os";
 import { matchCustomRules } from "./custom-rules.js";
 import {
@@ -202,6 +203,15 @@ export { parsePolicy };
 // (`$(printf …)`, a variable) escapes it. The hold is the common-case fix; the
 // handshake cannot tell the app's reply from the agent's (both are this user),
 // which is why the write itself has to be stopped.
+//
+// On Windows the same checks run with Windows path rules (PathRules): either
+// separator, a drive letter or none (`\Users\…`, Git Bash `/c/…`, WSL
+// `/mnt/c/…`, `\\?\C:\…` and `\\localhost\c$\…` all reach the same file, so a
+// directory is matched wherever its drive-less path appears), `%APPDATA%` /
+// `$env:APPDATA` expansion, trailing dots and alternate data streams folded,
+// and every command read three ways — as bash (backslash escapes), as
+// PowerShell (backslash literal, backtick escapes) and as cmd (caret escapes,
+// `'` not a quote). 8.3 short names (`DOORMA~1`) are not resolved.
 
 /** Programs that only READ their path arguments. Anything else naming a path
  * inside the guard directory is treated as changing it. */
@@ -210,6 +220,26 @@ const READ_ONLY_PROGRAMS: ReadonlySet<string> = new Set([
   "jq", "diff", "cmp", "md5", "md5sum", "shasum", "sha256sum", "du", "find", "tree", "realpath", "readlink",
   "basename", "dirname", "echo", "printf", "test", "[", "open", "code", "bat", "xxd", "hexdump", "od", "strings",
 ]);
+
+/** Windows programs and cmdlets that only read their path arguments — on
+ * Windows only: some of these names mean something else elsewhere. Looked up
+ * with Object.hasOwn: the key is the agent's program word. */
+const WINDOWS_READ_ONLY_PROGRAMS: Readonly<Record<string, true>> = {
+  "get-content": true, gc: true, type: true, "get-childitem": true, gci: true, dir: true, "get-item": true,
+  gi: true, "get-itemproperty": true, gp: true, "test-path": true, "select-string": true, sls: true,
+  findstr: true, "resolve-path": true, rvpa: true, "get-filehash": true, "join-path": true, "split-path": true,
+  "get-acl": true, "format-hex": true, fhx: true, "write-output": true, "write-host": true,
+  "measure-object": true, "convertfrom-json": true, "select-object": true, "sort-object": true,
+  "format-list": true, "format-table": true, "out-string": true, "out-host": true,
+};
+
+/** A program word's name: its last path component, lowercased — on Windows
+ * after either separator and without the `.exe`/`.cmd`/`.bat`/`.com`/`.ps1`
+ * that `cmd.exe` and `powershell.exe` are usually spelled with. */
+function programName(word: string, win: boolean): string {
+  const base = (word.split(win ? /[\\/]/ : "/").pop() ?? word).toLowerCase();
+  return win ? base.replace(/\.(?:exe|com|cmd|bat|ps1)$/, "") : base;
+}
 
 /**
  * Does this invocation of a READ_ONLY_PROGRAMS entry write after all? Each of
@@ -260,7 +290,7 @@ function writesDespiteReadOnly(program: string, words: readonly string[]): boole
  * guard path any head names — even `echo`'s or `find`'s — is a write. An
  * xargs/parallel that runs a read-only program is not one.
  */
-function feedsAWriter(command: string): boolean {
+function feedsAWriter(command: string, win: boolean): boolean {
   for (const raw of commandSegments(command)) {
     const segment = raw
       .trim()
@@ -277,12 +307,56 @@ function feedsAWriter(command: string): boolean {
         ? (invocationHeads(segment)[0] ?? "")
         : segment.replace(/^(?:\S*\/)?parallel\s*(?:(?:-[jN]\s*\S+|--jobs[=\s]\S+|-\S+)\s+)*/, "");
     const words = shellWords(inner);
-    const program = (words[0] ?? "").split("/").pop()?.toLowerCase() ?? "";
+    const program = programName(words[0] ?? "", win);
     if (program === "" || program === "xargs" || program === "parallel") continue;
-    if (READ_ONLY_PROGRAMS.has(program) && !writesDespiteReadOnly(program, words)) continue;
+    const readOnly = READ_ONLY_PROGRAMS.has(program) || (win && Object.hasOwn(WINDOWS_READ_ONLY_PROGRAMS, program));
+    if (readOnly && !writesDespiteReadOnly(program, words)) continue;
     return true;
   }
-  return false;
+  // PowerShell binds piped objects to a cmdlet's -Path (`Get-ChildItem $G |
+  // Remove-Item`) and runs a piped script block on each (`| % { … }`).
+  return (
+    win &&
+    pipedSegments(command).some((segment) => {
+      const program = programName(shellWords(invocationHeads(segment)[0] ?? "")[0] ?? "", true);
+      return PIPE_WRITER_RE.test(program) || segment.replace(/'[^']*'|"[^"]*"/g, "").includes("{");
+    })
+  );
+}
+
+/** Cmdlets (and their aliases) that act on what is piped into them. */
+const PIPE_WRITER_RE =
+  /^(?:(?:remove|set|add|clear|copy|move|rename|new)-(?:item|content|itemproperty)|(?:invoke|start)-\w+|set-acl|tee-object|foreach-object|where-object|ri|rm|rmdir|rd|del|erase|sc|ac|clc|cpi|copy|cp|mi|move|mv|rni|ren|ni|si|cli|sp|rp|clp|cpp|mp|rnp|tee|foreach|where|%|\?|ii|saps|start|iex|icm)$/;
+
+/** Every segment that a lone `|` feeds — quote-aware, `||` and `>|` excluded. */
+function pipedSegments(command: string): string[] {
+  const out: string[] = [];
+  let quote: string | undefined;
+  let current: string | undefined;
+  const end = (next: string | undefined): void => {
+    if (current !== undefined) out.push(current);
+    current = next;
+  };
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]!;
+    if (quote) {
+      if (ch === quote) quote = undefined;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    } else if (ch === "|" && command[i - 1] !== ">") {
+      if (command[i + 1] === "|") {
+        i += 1;
+        end(undefined);
+      } else end("");
+      continue;
+    } else if (ch === "\n" || ch === ";" || (ch === "&" && command[i - 1] !== ">" && command[i + 1] !== ">")) {
+      end(undefined);
+      continue;
+    }
+    if (current !== undefined) current += ch;
+  }
+  end(undefined);
+  return out;
 }
 
 /**
@@ -296,13 +370,28 @@ function feedsAWriter(command: string): boolean {
 const INTERPRETER_RE =
   /^(?:python[\d.]*|pypy[\d.]*|node|nodejs|deno|bun|perl[\d.]*|ruby|irb|php[\d.]*|lua[\d.]*|luajit|tclsh[\d.]*|wish|expect|r|rscript|julia|pwsh|powershell|swift|osascript|jxa|(?:ba|z|da|k|fi|c|tc|a)?sh|eval|source|\.|exec|[gmn]?awk|busybox|sed|gsed|ex|vim?|nvim|emacs|xargs|parallel|watch|script)$/;
 
+/** Windows programs that run a command TEXT: cmd, WSL, the script hosts,
+ * PowerShell's script-block and process-starting cmdlets. */
+const WINDOWS_INTERPRETER_RE =
+  /^(?:cmd|wsl|wscript|cscript|mshta|forfiles|runas|schtasks|wmic|start|start-process|saps|start-job|sajb|start-threadjob|invoke-expression|iex|invoke-command|icm|foreach-object|foreach|where-object|where|%|\?)$/;
+
 /** Does some invocation in this command run an interpreter? A program word
- * the guard cannot read statically (a glob, a variable) counts. */
-function runsInterpreter(command: string): boolean {
-  return invocationHeads(command).some((head) => {
-    const word = shellUnescaped(head.trim().split(/\s+/, 1)[0] ?? "");
-    const program = (word.split("/").pop() ?? word).toLowerCase();
-    return INTERPRETER_RE.test(program) || /[?*[$`]/.test(word);
+ * the guard cannot read statically (a glob, a variable) counts — on Windows
+ * also a command whose program word is not a plain name: `(Get-Item
+ * …).Delete()`, `[IO.File]::WriteAllText(…)`. Not a bracket group's
+ * (windowsHeads): there that is mostly data, `'{a: .x}'` read by cmd. */
+function runsInterpreter(command: string, heads: readonly string[], win: boolean): boolean {
+  const top = win ? new Set(invocationHeads(command)) : undefined;
+  return heads.some((head) => {
+    if (!win) {
+      const word = shellUnescaped(head.trim().split(/\s+/, 1)[0] ?? "");
+      const program = (word.split("/").pop() ?? word).toLowerCase();
+      return INTERPRETER_RE.test(program) || /[?*[$`]/.test(word);
+    }
+    const word = shellWords(head)[0] ?? "";
+    const program = programName(word, true);
+    if (INTERPRETER_RE.test(program) || WINDOWS_INTERPRETER_RE.test(program) || /[?*[$`]/.test(word)) return true;
+    return top!.has(head) && !/^[\w.+-]*$/.test(program);
   });
 }
 
@@ -328,8 +417,8 @@ function canonicalText(text: string, home: string): string {
  * to a shell — or undefined. Absolute and home paths by substring; a relative
  * token by resolving it against `cwd`.
  */
-function guardPathInText(text: string, cwd: string | undefined, dirs: readonly string[], home: string): string | undefined {
-  const flat = canonicalText(text, home);
+function guardPathInText(text: string, cwd: string | undefined, dirs: readonly string[], rules: PathRules): string | undefined {
+  const flat = rules.win ? canonicalTextWindows(text, rules) : canonicalText(text, rules.home);
   for (const dir of dirs) {
     let at = flat.indexOf(dir);
     while (at !== -1) {
@@ -342,22 +431,55 @@ function guardPathInText(text: string, cwd: string | undefined, dirs: readonly s
   // inside the directory: relative tokens, resolved.
   if (cwd !== undefined) {
     for (const token of shellUnescaped(text).split(/[\s'"`(),;:=|&<>{}\[\]]+/)) {
-      if (token === "" || token.startsWith("-") || isAbsolute(token) || token.startsWith("~") || token.startsWith("$")) continue;
-      if (insideDir(token, cwd, dirs, home)) return token;
+      if (token === "" || token.startsWith("-") || (rules.win ? win32.isAbsolute(token) : posix.isAbsolute(token)) || token.startsWith("~") || token.startsWith("$")) continue;
+      if (rules.win && token.startsWith("%")) continue;
+      if (insideDir(token, cwd, dirs, rules)) return token;
     }
-    if (dirs.some((dir) => canonical(cwd) === dir || canonical(cwd).startsWith(`${dir}/`))) return cwd;
+    if (within(rules.win ? canonicalWindows(cwd) : canonical(cwd), dirs, rules.win)) return cwd;
   }
   return undefined;
 }
 
+/** canonicalText with Windows rules: variables expanded, either separator
+ * (and a literal backslash, as PowerShell and cmd read it), trailing dots
+ * dropped the way Win32 drops them. */
+function canonicalTextWindows(text: string, rules: PathRules): string {
+  return expandWindowsVars(`${shellUnescaped(text)}\n${text.replace(/\\(.)/g, "$1")}\n${text}`, rules.vars)
+    .replace(/(^|[^\w$])~(?=[\\/]|$|[\s'"),;])/gm, `$1${rules.home}`)
+    .replace(/[\\/]+/g, "/")
+    .replace(/\/(?:\.\/)+/g, "/")
+    .replace(/(?<=[^/.\s])\.+(?=[/\s'"`),;]|$)/gm, "")
+    .toUpperCase()
+    .toLowerCase();
+}
+
+/**
+ * Does this text name the tail of a guard directory below a known root
+ * (`doorman/doorman/guard` below `%APPDATA%`) as whole components? PowerShell
+ * builds paths at runtime (`Join-Path $env:APPDATA 'Doorman\doorman\guard'`,
+ * `$env:APPDATA + '\Doorman\…'`), which no single word spells out.
+ */
+function namesRootedTail(text: string, rules: PathRules): boolean {
+  if (rules.tails.length === 0) return false;
+  const flat = canonicalTextWindows(text, rules);
+  return rules.tails.some((tail) => {
+    for (let at = flat.indexOf(tail); at !== -1; at = flat.indexOf(tail, at + 1)) {
+      const before = flat[at - 1];
+      const after = flat[at + tail.length];
+      if ((before === undefined || !/[\w.-]/.test(before)) && (after === undefined || !/[\w.-]/.test(after))) return true;
+    }
+    return false;
+  });
+}
+
 /** `env -C DIR …`, `sudo -D DIR …` and their long spellings: the program runs
  * IN that directory, which invocationHeads strips along with the wrapper. */
-function chdirWrapperTargets(command: string): string[] {
+function chdirWrapperTargets(command: string, win: boolean): string[] {
   const out: string[] = [];
   for (const segment of commandSegments(command)) {
     const words = shellWords(segment);
     for (let i = 0; i < words.length; i += 1) {
-      const program = (words[i]!.split("/").pop() ?? "").toLowerCase();
+      const program = programName(words[i]!, win);
       const short = program === "env" ? "C" : program === "sudo" ? "D" : undefined;
       if (short === undefined) continue;
       for (let j = i + 1; j < words.length; j += 1) {
@@ -471,30 +593,60 @@ function shellWords(text: string): string[] {
 }
 
 function expandHome(path: string, home: string): string {
-  if (path === "~" || path.startsWith("~/")) return join(home, path.slice(1));
+  if (path === "~" || path.startsWith("~/")) return posix.join(home, path.slice(1));
   return path.replace(/^\$\{?HOME\}?(?=\/|$)/, home);
 }
 
-/** Does `path` (relative to `cwd`) resolve inside `dir`? Case-folded: APFS is
- * case-insensitive, so `…/Guard/policy.json` is the same file. */
-function insideDir(path: string, cwd: string | undefined, dirs: readonly string[], home: string): boolean {
+/** Does `path` (relative to `cwd`) resolve inside `dir`? Case-folded: APFS and
+ * NTFS are case-insensitive, so `…/Guard/policy.json` is the same file. */
+function insideDir(path: string, cwd: string | undefined, dirs: readonly string[], rules: PathRules): boolean {
   let cleaned = path.replace(/^[a-z]+=/i, "").replace(/^--?[a-z-]+=/i, "");
+  // PowerShell binds a parameter with a colon (`-Path:C:\…`), robocopy and
+  // its kin take `/LOG:C:\…`.
+  if (rules.win) cleaned = cleaned.replace(/^[-/][a-z][\w-]*\+?:(?=.)/i, "");
   // A short flag with its value glued on (`-o/…/policy.json`, `-C~/…`): the
   // value is the path. Only an absolute or home value is read this way — a
   // relative one is indistinguishable from a cluster of flags (`-rf`).
   if (cleaned.startsWith("-")) {
-    const glued = /^-[A-Za-z0-9]+?([/~].*|\$\{?HOME\b.*)$/.exec(cleaned);
+    const glued = (rules.win ? /^-[A-Za-z0-9]+?([/~\\%$].*|[A-Za-z]:[\\/].*)$/ : /^-[A-Za-z0-9]+?([/~].*|\$\{?HOME\b.*)$/).exec(cleaned);
     if (!glued) return false;
     cleaned = glued[1]!;
   }
   if (cleaned === "") return false;
-  const expanded = expandHome(cleaned, home);
-  if (!isAbsolute(expanded) && cwd === undefined) return false;
-  const full = canonical(isAbsolute(expanded) ? expanded : resolve(cwd!, expanded));
-  if (dirs.some((dir) => full === dir || full.startsWith(`${dir}/`))) return true;
+  let full: string;
+  if (rules.win) {
+    const resolved = resolveWindows(cwd, expandWindowsPath(cleaned, rules));
+    if (resolved === undefined) return false;
+    full = canonicalWindows(resolved);
+  } else {
+    const expanded = expandHome(cleaned, rules.home);
+    if (!posix.isAbsolute(expanded) && cwd === undefined) return false;
+    full = canonical(posix.isAbsolute(expanded) ? expanded : posix.resolve(cwd!, expanded));
+  }
+  if (within(full, dirs, rules.win)) return true;
   // An unexpanded glob or brace (`…/gu?rd/policy.json`, `…/{guard,x}/…`) is
   // judged by what it COULD expand to — fail-closed, quoted or not.
-  return /[?*[{]/.test(full) && braceExpansions(full).some((candidate) => globCouldEnter(candidate, dirs));
+  if (!/[?*[{]/.test(full)) return false;
+  return braceExpansions(full).some((candidate) =>
+    rules.win ? componentSuffixes(candidate).some((suffix) => globCouldEnter(suffix, dirs)) : globCouldEnter(candidate, dirs),
+  );
+}
+
+/** Is this canonical path one of the directories or inside one? On Windows
+ * the directories are drive-less (windowsDirKey) and match wherever they
+ * start a component run: `/c:/…`, `/c/…` (Git Bash), `/mnt/c/…` (WSL),
+ * `//?/c:/…`, `//localhost/c$/…` and a root-relative `/users/…` alike. */
+function within(full: string, dirs: readonly string[], win: boolean): boolean {
+  if (!win) return dirs.some((dir) => full === dir || full.startsWith(`${dir}/`));
+  const padded = `${full}/`;
+  return dirs.some((dir) => padded.includes(`${dir}/`));
+}
+
+/** `/a/b/c` → `/a/b/c`, `/b/c`, `/c`: a glob tested from every component. */
+function componentSuffixes(path: string): string[] {
+  const out: string[] = [];
+  for (let i = path.indexOf("/"); i !== -1; i = path.indexOf("/", i + 1)) out.push(path.slice(i));
+  return out;
 }
 
 /** Brace alternatives of a word (`a/{b,c}/d` → `a/b/d`, `a/c/d`), bounded. A
@@ -564,10 +716,207 @@ function globCouldEnter(path: string, dirs: readonly string[]): boolean {
  * back (`/private/var/…` IS `/var/…`): the guard's own path arrives as a
  * realpath while an agent's cwd usually does not. */
 function canonical(path: string): string {
-  return normalize(path)
+  return posix
+    .normalize(path)
     .replace(/\/+$/, "")
     .replace(/^\/private(?=\/(?:var|tmp|etc)(?:\/|$))/, "")
     .toLowerCase();
+}
+
+/** How paths read where the guard runs. POSIX rules unless Windows. */
+interface PathRules {
+  win: boolean;
+  home: string;
+  /** Windows: environment variables by lowercased name, profile defaults
+   * filled in — for `%APPDATA%`, `$env:APPDATA`, `${env:APPDATA}`, `$APPDATA`. */
+  vars: ReadonlyMap<string, string>;
+  /** Windows: each guard directory below a known root (namesRootedTail). */
+  tails: readonly string[];
+}
+
+/** Where guardSelfWrite runs — injectable so Windows rules are testable on
+ * any OS. A Windows-style guard directory (`C:\…`, `\\…`) selects Windows
+ * rules when no platform is given. */
+export interface SelfWriteHost {
+  platform?: NodeJS.Platform;
+  env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** A Windows path, canonical: `/`-separated, lowercased, rooted at `/`, with
+ * what Win32 ignores dropped — a component's alternate data stream
+ * (`guard::$INDEX_ALLOCATION`, `policy.json:x`) and its trailing dots and
+ * spaces (`guard.`). A drive stays as the first component (`/c:/…`). */
+function canonicalWindows(path: string): string {
+  const parts = win32
+    .normalize(path)
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part, i) => {
+      if (part === "" || part === "." || part === "..") return part;
+      const bare = i === 0 && /^[a-z]:$/i.test(part) ? part : part.replace(/:.*$/, "");
+      const trimmed = bare.replace(/[. ]+$/, "");
+      return trimmed === "" ? bare : trimmed;
+    });
+  // NTFS compares names upcased (its $UpCase table), so fold through upper
+  // case: `ı` and `ſ` upcase to `I` and `S`, which lowercasing leaves apart.
+  const out = parts.join("/").replace(/\/+$/, "").toUpperCase().toLowerCase();
+  return out.startsWith("/") ? out : `/${out}`;
+}
+
+/** A guard directory as within() matches it on Windows: canonical, without
+ * its drive or `\\?\` prefix. */
+function windowsDirKey(dir: string): string {
+  const key = canonicalWindows(dir)
+    .replace(/^\/\/[?.]\/(?:unc\/)?/, "/")
+    .replace(/^\/[a-z]:(?=\/|$)/, "");
+  return key === "" ? "/" : key;
+}
+
+/** `path` against `cwd` with Windows rules; a drive-relative `D:x` on another
+ * drive than the cwd's is read from that drive's root. */
+function resolveWindows(cwd: string | undefined, path: string): string | undefined {
+  if (win32.isAbsolute(path)) return path;
+  const drive = /^([a-z]):(?![\\/])([\s\S]*)$/i.exec(path);
+  if (drive) {
+    const sameDrive = cwd !== undefined && cwd.slice(0, 2).toLowerCase() === `${drive[1]!.toLowerCase()}:`;
+    return sameDrive ? win32.join(cwd!, drive[2]!) : `${drive[1]}:\\${drive[2]}`;
+  }
+  return cwd === undefined ? undefined : win32.join(cwd, path);
+}
+
+function windowsVars(env: Readonly<Record<string, string | undefined>>, home: string): Map<string, string> {
+  const vars = new Map<string, string>();
+  for (const [name, value] of Object.entries(env)) if (typeof value === "string" && value !== "") vars.set(name.toLowerCase(), value);
+  const profile = vars.get("userprofile") ?? home;
+  if (!vars.has("userprofile")) vars.set("userprofile", home);
+  if (!vars.has("appdata")) vars.set("appdata", win32.join(profile, "AppData", "Roaming"));
+  if (!vars.has("localappdata")) vars.set("localappdata", win32.join(profile, "AppData", "Local"));
+  // PowerShell's `$HOME` and `~` are the profile whatever HOME says.
+  vars.set("home", home);
+  return vars;
+}
+
+/** cmd's `%NAME%` (and its `%NAME:~0,9%` / `%NAME:a=b%` edits, read as the
+ * whole value), delayed `!NAME!`, PowerShell's `$env:NAME`, `${env:NAME}` and
+ * `$($env:NAME)`, and bash's `$NAME` / `${NAME}`, case-insensitively. An
+ * unknown variable stays as written. */
+function expandWindowsVars(text: string, vars: ReadonlyMap<string, string>): string {
+  const value = (match: string, name: string | undefined, other?: string): string => vars.get((name ?? other ?? "").toLowerCase()) ?? match;
+  return text
+    .replace(/\$\(\s*(\$(?:\{env:[^}]+\}|env:\w+|\w+))\s*\)/gi, "$1")
+    .replace(/%([A-Za-z_][\w()]*)(?::[^%]*)?%/g, value)
+    .replace(/!([A-Za-z_][\w()]*)!/g, value)
+    .replace(/\$\{env:([^}]+)\}/gi, value)
+    .replace(/\$env:([A-Za-z_]\w*)/gi, value)
+    .replace(/\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)/g, value);
+}
+
+function expandWindowsPath(path: string, rules: PathRules): string {
+  const expanded = expandWindowsVars(path, rules.vars);
+  return /^~(?=$|[\\/])/.test(expanded) ? `${rules.home}${expanded.slice(1)}` : expanded;
+}
+
+/** Each guard directory's tail below every variable that names one of its
+ * ancestors, when that tail is at least two components long. */
+function rootedTails(dirs: readonly string[], vars: ReadonlyMap<string, string>): string[] {
+  const tails = new Set<string>();
+  for (const value of vars.values()) {
+    if (!/^(?:[a-z]:)?[\\/]/i.test(value)) continue;
+    const root = windowsDirKey(value);
+    if (root.length <= 1) continue;
+    for (const dir of dirs) {
+      const tail = dir.startsWith(`${root}/`) ? dir.slice(root.length + 1) : "";
+      if (tail.includes("/")) tails.add(tail);
+    }
+  }
+  return [...tails];
+}
+
+/** The command as each Windows shell reads it: PowerShell (backslash literal,
+ * backtick escapes and continuations), bash (as written) and cmd (caret
+ * escapes, `'` not a quote, braces nothing special — dropped so text a quote
+ * no longer hides is not read as a PowerShell script block). Backslashes
+ * become `/`, which every Windows path API takes, so neither literal reading
+ * has an escape character left. */
+function windowsReadings(command: string): string[] {
+  const literal = command.replace(/[`^]\r?\n/g, " ").replace(/[`^]/g, "").replace(/\\/g, "/");
+  return [...new Set([literal, command, literal.replace(/['{}]/g, "")])];
+}
+
+/** invocationHeads plus what PowerShell runs inside a head: a `( … )`
+ * subexpression, a `{ … }` script block, a `$( … )` in a double-quoted
+ * string — `Get-Content (Remove-Item $G\policy.json)` hides a writer behind
+ * a reader otherwise. */
+function windowsHeads(command: string): string[] {
+  const out: string[] = [];
+  const visit = (text: string, depth: number): void => {
+    for (const head of invocationHeads(text)) {
+      out.push(head);
+      if (depth < 3) for (const group of bracketGroups(head)) visit(group, depth + 1);
+    }
+  };
+  visit(command, 0);
+  return out;
+}
+
+/** Top-level `( … )` / `{ … }` bodies outside single quotes, and `$( … )`
+ * inside double ones; an unclosed one runs to the end. */
+function bracketGroups(text: string): string[] {
+  const out: string[] = [];
+  let quote: string | undefined;
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (depth > 0) {
+      if (ch === "(" || ch === "{") depth += 1;
+      else if ((ch === ")" || ch === "}") && (depth -= 1) === 0) out.push(text.slice(start, i));
+    } else if (quote === "'") {
+      if (ch === "'") quote = undefined;
+    } else if (quote === '"') {
+      if (ch === '"') quote = undefined;
+      else if (ch === "$" && text[i + 1] === "(") {
+        depth = 1;
+        start = i + 2;
+        i += 1;
+      }
+    } else if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === "(" || ch === "{") {
+      depth = 1;
+      start = i + 1;
+    }
+  }
+  if (depth > 0) out.push(text.slice(start));
+  return out;
+}
+
+/** The directory a Windows `cd`/`chdir`/`Set-Location`/`Push-Location` goes
+ * to: `-Path:DIR` bound, cmd's `/d` skipped, and the operands joined — cmd
+ * reads an unquoted `cd C:\Users\A B\…` whole. */
+function windowsCdTarget(words: readonly string[]): string | undefined {
+  const operands: string[] = [];
+  for (let i = 1; i < words.length; i += 1) {
+    const w = words[i]!;
+    if (w === ">" || w === ">>") break;
+    const bound = /^-(?:path|literalpath|lp|pspath):(.+)$/i.exec(w);
+    if (bound) return bound[1];
+    if (w === "-" && operands.length === 0) return w;
+    if (w.startsWith("-")) continue;
+    if (/^\/[a-z]$/i.test(w) && i < words.length - 1) continue;
+    operands.push(w);
+  }
+  return operands.length === 0 ? undefined : operands.join(" ");
+}
+
+/** `powershell -EncodedCommand <base64>` (and `-enc`, `-ec`, `-e`): the
+ * UTF-16LE script it runs, appended so its text is searched like `-Command`'s. */
+function encodedCommands(words: readonly string[], program: string): string {
+  if (program !== "powershell" && program !== "pwsh") return "";
+  let out = "";
+  for (let i = 1; i < words.length - 1; i += 1) {
+    if (/^[-/](?:e|ec|en\w*)$/i.test(words[i]!)) out += `\n${Buffer.from(words[i + 1]!, "base64").toString("utf16le")}`;
+  }
+  return out;
 }
 
 /**
@@ -581,63 +930,93 @@ export function guardSelfWrite(
   cwd: string | undefined,
   guardDirs: readonly string[],
   home: string = homedir(),
+  host: SelfWriteHost = {},
 ): string | undefined {
-  const dirs = [...new Set(guardDirs.map(canonical))];
+  const win =
+    host.platform === undefined
+      ? process.platform === "win32" || guardDirs.some((dir) => /^[A-Za-z]:[\\/]|^\\\\/.test(dir))
+      : host.platform === "win32";
+  const vars = win ? windowsVars(host.env ?? process.env, home) : new Map<string, string>();
+  const base: PathRules = { win, home, vars, tails: [] };
+  const dirs = [...new Set(guardDirs.map((dir) => (win ? windowsDirKey(expandWindowsPath(dir, base)) : canonical(dir))))];
   if (dirs.length === 0) return undefined;
+  const rules: PathRules = win ? { ...base, tails: rootedTails(dirs, vars) } : base;
   const command = commandOfInput(toolName, toolInput);
   if (command === undefined) {
     if (!isWriteTool(toolName)) return undefined;
-    return writePaths(toolInput).find((path) => insideDir(path, cwd, dirs, home));
+    return writePaths(toolInput).find((path) => insideDir(path, cwd, dirs, rules));
   }
-  const fed = feedsAWriter(command);
+  if (!win) return selfWriteIn(command, cwd, dirs, rules);
+  for (const reading of windowsReadings(command)) {
+    const hit = selfWriteIn(reading, cwd, dirs, rules);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+/** guardSelfWrite for one reading of a shell command. */
+function selfWriteIn(command: string, cwd: string | undefined, dirs: readonly string[], rules: PathRules): string | undefined {
+  const { win } = rules;
+  const heads = win ? windowsHeads(command) : invocationHeads(command);
+  const fed = feedsAWriter(command, win);
   // A command that runs an interpreter: any guard path in the whole text.
   // `cd` targets are resolved first so a relative path after `cd` counts.
-  const interpreted = runsInterpreter(command);
-  for (const to of chdirWrapperTargets(command)) if (insideDir(to, cwd, dirs, home)) return to;
+  const interpreted = runsInterpreter(command, heads, win);
+  for (const to of chdirWrapperTargets(command, win)) if (insideDir(to, cwd, dirs, rules)) return to;
   let here = cwd;
-  for (const head of invocationHeads(command)) {
+  for (const head of heads) {
     const words = shellWords(head);
-    const program = (words[0] ?? "").split("/").pop()?.toLowerCase() ?? "";
-    if (program === "cd" || program === "pushd") {
+    const program = programName(words[0] ?? "", win);
+    if (program === "cd" || program === "pushd" || (win && /^(?:chdir|set-location|sl|push-location)$/.test(program))) {
       // `cd -P DIR`, `cd -L -- DIR`: the first operand after the flags.
-      const to = words.slice(1).find((w) => w === "-" || !w.startsWith("-"));
+      const to = win ? windowsCdTarget(words) : words.slice(1).find((w) => w === "-" || !w.startsWith("-"));
       if (to !== undefined && to !== "-") {
-        const expanded = expandHome(to, home);
-        here = isAbsolute(expanded) ? expanded : here === undefined ? undefined : resolve(here, expanded);
+        if (win) here = resolveWindows(here, expandWindowsPath(to, rules));
+        else {
+          const expanded = expandHome(to, rules.home);
+          here = posix.isAbsolute(expanded) ? expanded : here === undefined ? undefined : posix.resolve(here, expanded);
+        }
       }
       continue;
     }
     if (interpreted) {
-      const hit = guardPathInText(head, here, dirs, home);
+      const hit = guardPathInText(win ? `${head}${encodedCommands(words, program)}` : head, here, dirs, rules);
       if (hit !== undefined) return hit;
     }
     const copyTarget = program === "cp" ? copyTargetDirectory(words) : undefined;
-    if (copyTarget !== undefined && insideDir(copyTarget, here, dirs, home)) return copyTarget;
-    const readOnly = !fed && READ_ONLY_PROGRAMS.has(program) && !writesDespiteReadOnly(program, words);
+    if (copyTarget !== undefined && insideDir(copyTarget, here, dirs, rules)) return copyTarget;
+    const readOnly =
+      !fed &&
+      (READ_ONLY_PROGRAMS.has(program) || (win && Object.hasOwn(WINDOWS_READ_ONLY_PROGRAMS, program))) &&
+      !writesDespiteReadOnly(program, words);
     for (let i = 1; i < words.length; i += 1) {
       const word = words[i]!;
       if (word === ">" || word === ">>") {
         const to = words[i + 1];
-        if (to !== undefined && insideDir(to, here, dirs, home)) return to;
+        if (to !== undefined && (insideDir(to, here, dirs, rules) || (win && namesRootedTail(to, rules)))) return to;
         i += 1;
         continue;
       }
       if (readOnly) continue;
       // A copy reads its sources: only the destination (the last operand) is
       // changed. `mv` is not in this list — moving a file OUT removes it.
-      // With `-t DIR` every operand is a source.
-      if (COPY_PROGRAMS.has(program) && (copyTarget !== undefined || i !== lastOperand(words))) continue;
-      if (insideDir(word, here, dirs, home)) return word;
+      // With `-t DIR` every operand is a source. Not on Windows, where
+      // `cp`/`copy` is Copy-Item and its `-Destination` can come first.
+      if (!win && COPY_PROGRAMS.has(program) && (copyTarget !== undefined || i !== lastOperand(words))) continue;
+      if (insideDir(word, here, dirs, rules)) return word;
       // Fed to a shell, one quoted word can be a whole command line: any
       // absolute or home path starting inside it counts.
       if (fed) {
         const unquoted = word.replace(/["']/g, "");
-        for (const match of unquoted.matchAll(/(?<=^|[\s=])[/~]/g)) {
+        for (const match of unquoted.matchAll(win ? /(?<=^|[\s=])(?:[/~\\%$]|[a-z]:)/gi : /(?<=^|[\s=])[/~]/g)) {
           const rest = unquoted.slice(match.index);
-          if (insideDir(rest, here, dirs, home)) return rest;
+          if (insideDir(rest, here, dirs, rules)) return rest;
         }
       }
     }
+    // A path assembled at runtime from a variable and the rest of the guard
+    // directory: the head itself is what touches it.
+    if (win && !readOnly && namesRootedTail(head, rules)) return head;
   }
   return undefined;
 }
