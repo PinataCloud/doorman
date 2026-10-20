@@ -85,13 +85,17 @@ export const HELP_GROUPS: readonly HelpGroup[] = [
   },
   {
     title: "Integrations",
-    about: "MCP servers, the gateway, editors",
+    about: "MCP servers, the gateway, editors, Docker Sandboxes",
     families: [
       ["mcp", "MCP servers here: config, use, findings, recognition"],
       ["gateway", "Route local MCP servers through Doorman's gateway"],
       ["editor", "The Doorman VS Code companion in each editor"],
+      ["sbx", "Docker Sandboxes: list, answer held calls, pull findings"],
     ],
-    examples: [["doorman mcp", "every MCP server on this machine"]],
+    examples: [
+      ["doorman mcp", "every MCP server on this machine"],
+      ["doorman sbx watch", "answer every sandbox's held calls here"],
+    ],
   },
   {
     title: "Setup",

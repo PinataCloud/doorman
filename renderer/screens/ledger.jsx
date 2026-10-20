@@ -416,6 +416,7 @@ function LedgerScreen({
                           second. The mark says which agent without a word. */}
                       <span className="top">
                         <RailMark source={s.source} />
+                        <SandboxTag name={s.sandbox} />
                         <span className="title">
                           {s.title || <span className="mono muted">{s.id.slice(0, 12)}…</span>}
                         </span>
@@ -695,6 +696,7 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
             "CLAUDE CODE" chip used to trail it. */}
         <div className="detail-title">
           {summary ? <RailMark source={summary.source} size={18} /> : null}
+          {summary ? <SandboxTag name={summary.sandbox} /> : null}
           <h2>{(summary && summary.title) || sessionId.slice(0, 12) + "…"}</h2>
         </div>
         <div className="meta">

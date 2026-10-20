@@ -99,6 +99,7 @@ const FULL_ROW: Required<Omit<FindingRow, "place" | "place_kind" | "exposure_key
   rule_mode: "radar",
   app_version: "0.70.0",
   secrets: [{ label: "aws", length: 40, fingerprint: "0123456789abcdef", primary: true }],
+  sandbox: "dev-box",
 };
 
 /** A reversible stand-in for safeStorage: never plaintext on disk, so a test
@@ -568,6 +569,7 @@ describe("ledger export", () => {
     last_role: "assistant",
     last_turn_tools: 1,
     resume_command: "claude --resume s1",
+    sandbox: "dev-box",
   };
   const TOKEN = "ghp_" + "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2";
   const TURNS: Required<LedgerTurn>[] = [
@@ -588,6 +590,7 @@ describe("ledger export", () => {
       tools: ["Bash"],
       cwd: "/Users/dev/repo",
       git_branch: "main",
+      sandbox: "dev-box",
     },
   ];
 

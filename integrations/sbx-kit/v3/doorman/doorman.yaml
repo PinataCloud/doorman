@@ -1,0 +1,77 @@
+# syntax=docker/sandbox-kit:3
+#
+# The Doorman kit in the v3 format (sbx 0.45 or later). Same behaviour as the
+# v2 kit in ../../spec.yaml; the README beside that file covers both.
+#
+# A v3 sandbox takes v3 kits only: pair this mixin with a v3 workload such as
+# docker.io/docker/sbx-kit-claude, not a built-in agent name (`claude`, …),
+# which selects v2. See https://docs.docker.com/ai/sandboxes/customize/.
+#
+# Declaration-only (no Dockerfile): the CLI is installed from npm when the
+# sandbox is created, as the v2 kit does, rather than baked into the kit's
+# image. Read off sbx 0.46.0, a build-phase `version` arg can't be set on a
+# local or git kit (`--kit-arg` reaches the build, then sbx rejects it as
+# undeclared), and the builder's cache would keep serving whichever version
+# `latest` meant at the first build. A create-phase arg has neither problem.
+schemaVersion: "3"
+kind: mixin
+displayName: Doorman
+description: Doorman watches what your coding agent reads and runs, flags exposed secrets, and guards risky tool calls.
+sourceUrl: https://github.com/PinataCloud/doorman
+licenses: [Apache-2.0]
+# No `requires`: the kit works with any agent, and `doorman guard install`
+# finds the agent itself. The CLI needs Node.js 22 or later and npm from the
+# workload; every Docker-published workload ships them (Node 22 or 24).
+
+args:
+  version:
+    default: latest
+    description: The @pinata/doorman version to install, such as 0.4.1
+    pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
+
+capabilities:
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      # Open only while the install hooks run: the npm registry for the CLI.
+      install:
+        allow:
+          - registry.npmjs.org
+      # The on-device injection classifier. Model files redirect to CDN hosts
+      # such as us.aws.cdn.hf.co, so one wildcard label (*.hf.co) is not
+      # enough.
+      runtime:
+        allow:
+          - huggingface.co
+          - "**.hf.co"
+
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      # Install hooks run once, when the sandbox is created, before the agent
+      # starts. Their environment is reduced to PATH, HOME, proxy and
+      # certificate settings, so the workload's NPM_CONFIG_PREFIX (a folder the
+      # agent user owns) isn't there: install as root into /usr/local, whose
+      # bin is on every workload's PATH.
+      install:
+        - description: Install the Doorman CLI
+          user: "0"
+          command: npm install --global --no-audit --no-fund --prefix /usr/local "@pinata/doorman@${{ kit.args.version }}"
+        - description: Add the Doorman guard to the agent's hooks
+          user: "1000"
+          command: doorman guard install
+      # Startup hooks run at every start, alongside the agent. The agent's
+      # settings file is sandbox-managed (the workload's own install hooks
+      # write it, and sbx can rewrite it, dropping the hook), so each start
+      # puts the guard back where it was lost. `doctor --repair auto` only
+      # repairs what is on: a guard turned off with `doorman guard uninstall`
+      # stays off. The model download is the background one, run here because
+      # a command without a terminal never starts it; it does nothing once the
+      # model is on disk. Neither may fail: a failing startup hook can keep the
+      # sandbox from starting.
+      startup:
+        - description: Re-assert the Doorman guard hook
+          user: "1000"
+          command: ["sh", "-c", "doorman doctor --repair auto > /dev/null || true"]
+        - description: Download Doorman's injection classifier if it is missing
+          user: "1000"
+          command: ["sh", "-c", "doorman model download --auto > /dev/null || true"]
+          background: true

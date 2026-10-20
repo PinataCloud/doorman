@@ -234,6 +234,7 @@ export const DETECTION_SCHEMA: JsonSchema = {
     },
     hold_ms: { type: "number", minimum: 0, description: "Milliseconds from hold to decision." },
     allow_scope: { type: "string", enum: ["project"], description: "The person allowed it for this project." },
+    sandbox: str("The Docker Sandbox (`sbx`) it was recorded in, for a detection pulled to this computer with `doorman sbx pull`; its ids then end in `@<sandbox>`."),
   },
 };
 

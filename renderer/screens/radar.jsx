@@ -1565,6 +1565,9 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform 
   // opened, so VIEW RAW is not offered, the marks stay marks, and a line
   // under the box says why.
   const stopped = !!row && callNeverRan(row);
+  // Pulled from a Docker Sandbox (`doorman sbx pull`): the transcript is in
+  // the sandbox, so the raw window is read there, not here.
+  const sandbox = row && row.sandbox ? row.sandbox : null;
   const parts = text.split(/(\[redacted(?::[a-z0-9_]+)?\])/g);
   const display = evidenceDisplayParts(parts);
   // null | {loading} | {text, truncated} | {error} — the VISIBLE raw window,
@@ -1659,7 +1662,7 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform 
     <div className="evidence-wrap">
       {/* VIEW RAW on its own row above the box: pinned inside it, the button
           sat on top of the first line of the snippet. */}
-      {rawAllowed && !stopped && findingId && text ? (
+      {rawAllowed && !stopped && findingId && text && !sandbox ? (
         <div className="evidence-actions">
           <button
             className={"copybtn" + (raw && !raw.loading && !raw.error ? " done" : "")}
@@ -1738,7 +1741,14 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform 
         })}
         </div>
       )}
+
       {stopped && rawAllowed ? <div className="evidence-note plain">{NEVER_RAN_NOTE}</div> : null}
+      {sandbox && rawAllowed && !stopped ? (
+        <div className="evidence-note plain">
+          Pulled from sandbox {sandbox}: its raw evidence stays there —{" "}
+          <span className="mono">sbx exec {sandbox} doorman findings show {String(findingId || "").replace("@" + sandbox, "")} --evidence</span>
+        </div>
+      ) : null}
       {note ? <div className="evidence-note err">{note}</div> : null}
       {raw && raw.error ? <div className="evidence-note err">{raw.error}</div> : null}
     </div>

@@ -67,7 +67,11 @@ export const statusCommand: CliCommand = {
     };
 
     const sev = summary.by_severity_exposures;
-    const answerer = running ? `${running.version?.startsWith("cli-") ? "doorman watch running" : "running"}${processLabel(ctx.io.env, running.pid)}` : undefined;
+    const answerer = running
+      ? running.stdio && sandbox
+        ? "doorman sbx watch on your computer"
+        : `${running.version?.startsWith("cli-") ? "doorman watch running" : "running"}${processLabel(ctx.io.env, running.pid)}`
+      : undefined;
     const agents = [...guarded, ...unguarded];
     const guardWord =
       guarded.length === 0

@@ -61,6 +61,7 @@ import { accountForFlow, accountForUnit, accountable } from "./lib/account.js";
 import { alignRedactedValues, extractRedactedSecrets } from "./lib/reveal.js";
 import { validateDetection } from "./lib/detection-schema.js";
 import { CUT_LABEL, maskText, maskTurnText } from "./lib/masking.js";
+import { sandboxLocalId, sandboxRecords, type SandboxBundle, type SandboxImportResult } from "./lib/sandbox-import.js";
 import type { EvidenceVault } from "./lib/evidence-vault.js";
 import type { FlowOptions } from "./lib/flow-rules.js";
 import { applicableIgnoreRules, defaultInjectionClassifierConfig, selectedInjectionModel, type GuardPolicy, type InjectionModelId } from "./guard/policy.js";
@@ -397,6 +398,12 @@ export class CaptureEngine {
    * volume must hide nothing.
    */
   private readonly railsListed = new Set<string>();
+  /**
+   * Sessions pulled from a Docker Sandbox (LedgerTurn.sandbox,
+   * lib/sandbox-import.ts). Their transcripts are in the sandbox, never on
+   * this disk, so the on-disk rule (`sessionOnDisk`) does not judge them.
+   */
+  private readonly sandboxSessions = new Set<string>();
 
   status: "starting" | "scanning" | "watching" = "starting";
   filesSeen = 0;
@@ -443,6 +450,7 @@ export class CaptureEngine {
           const turn = JSON.parse(line) as LedgerTurn;
           if (turn && typeof turn.id === "string" && typeof turn.at === "string") {
             this.turns.set(turn.id, turn);
+            if (turn.sandbox !== undefined) this.sandboxSessions.add(turn.session_id);
           }
         } catch {
           // one bad line must not lose the store
@@ -1363,6 +1371,62 @@ export class CaptureEngine {
   }
 
   /**
+   * What a Docker Sandbox recorded, from a `doorman sbx pull` drop file
+   * (lib/sandbox-import.ts): its turns, titles and detections, masked and
+   * scoped `@<sandbox>`. Idempotent — the ids are stable across pulls, a turn
+   * is never rewritten, and a detection is merged like any re-observation
+   * (`mergeFinding`: triage made here is kept), and only a row that changed is
+   * appended — so ingesting the same bundle twice writes nothing the second
+   * time. Nothing is announced: these are a sandbox's history, not news.
+   */
+  importSandboxBundle(bundle: SandboxBundle): SandboxImportResult {
+    const records = sandboxRecords(bundle);
+    const fresh: LedgerTurn[] = [];
+    const sessions = new Set<string>();
+    for (const turn of records.turns) {
+      sessions.add(turn.session_id);
+      this.sandboxSessions.add(turn.session_id);
+      if (this.turns.has(turn.id)) continue;
+      this.turns.set(turn.id, turn);
+      this.indexTurn(turn);
+      fresh.push(turn);
+    }
+    this.appendTurns(fresh);
+    let titled = false;
+    for (const [sessionId, title] of records.titles) {
+      const current = this.titles.get(sessionId);
+      if (current?.text === title.text && current.origin === title.origin) continue;
+      this.titles.set(sessionId, title);
+      titled = true;
+    }
+    if (titled) this.persistTitles();
+    const changed: FindingRow[] = [];
+    let added = 0;
+    for (const row of records.findings) {
+      const existing = this.ledger.get(row.finding_id);
+      if (existing === undefined) {
+        this.ledger.set(row.finding_id, row);
+        changed.push(row);
+        added += 1;
+        continue;
+      }
+      const merged = mergeFinding(existing, row);
+      if (JSON.stringify(merged) === JSON.stringify(existing)) continue;
+      this.ledger.set(row.finding_id, merged);
+      changed.push(merged);
+    }
+    this.appendFindings(changed);
+    if (fresh.length > 0 || titled || changed.length > 0) this.deps.onUpdate();
+    return {
+      sandbox: records.sandbox,
+      sessions: sessions.size,
+      turns_added: fresh.length,
+      findings_added: added,
+      findings_updated: changed.length - added,
+    };
+  }
+
+  /**
    * The findings the app SHOWS — every ledger row whose rule is in scope
    * (guard/rule-scope.ts) and whose evidence the app can still put
    * on screen: the transcript on disk and inside the retention window
@@ -1390,6 +1454,9 @@ export class CaptureEngine {
   private rowShown(row: FindingRow, retentionCutoff: string | undefined, nowMs: number): boolean {
     if (!ruleShown(row.detector)) return false;
     if (row.origin === "transcript" && retentionCutoff !== undefined && row.last_seen_at < retentionCutoff) return false;
+    // Pulled from a Docker Sandbox: shown there, so shown here. Its documents
+    // are in the sandbox — there is nothing on this disk to judge it by.
+    if (row.sandbox !== undefined) return true;
     // A row with no document behind it: a call the guard refused
     // or held without a recorded allow never ran, so no transcript holds it
     // — shown, since the guard stopping something is worth seeing; the card
@@ -1470,7 +1537,7 @@ export class CaptureEngine {
    * (lib/findings.ts `evidenceReadable` — the same line the screens draw when
    * deciding whether to offer VIEW RAW at all). */
   private judgedByEvidence(row: FindingRow): boolean {
-    return ruleShown(row.detector) && evidenceReadable(row);
+    return row.sandbox === undefined && ruleShown(row.detector) && evidenceReadable(row);
   }
 
   /** The documents a row's evidence is read from — its config file, or its
@@ -1629,6 +1696,7 @@ export class CaptureEngine {
    * shown.json saved).
    */
   private sessionOnDisk(source: string, sessionId: string): boolean {
+    if (this.sandboxSessions.has(sessionId)) return true;
     const onDisk = this.sessionsOnDisk.get(source);
     return onDisk === undefined || onDisk.has(sessionId);
   }
@@ -2406,6 +2474,10 @@ export class CaptureEngine {
   revealFinding(findingId: string): RevealResult {
     const row = this.ledger.get(findingId);
     if (!row) return { ok: false, error: "Finding not found." };
+    if (row.sandbox !== undefined) {
+      const local = sandboxLocalId(row.finding_id, row.sandbox);
+      return { ok: false, error: `The evidence stays in sandbox ${row.sandbox}: \`sbx exec ${row.sandbox} doorman findings show ${local} --evidence\` reads it there.` };
+    }
     const result = this.reveal(row);
     // What the click found is a verdict too: a card whose raw
     // window could not be produced does not stay up to fail again.

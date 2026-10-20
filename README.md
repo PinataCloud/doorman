@@ -139,24 +139,31 @@ sbx settings set kit.allowedSources '["docker.io/","git+https://github.com/Pinat
 sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doorman.git#dir=integrations/sbx-kit"
 ```
 
-- To answer held calls, run `sbx exec -it my-project doorman watch` in a
-  second terminal on your computer. `sbx` agents run without their own
-  permission prompts, so allowing a call there runs it at once. With nobody
-  watching, Claude Code, Copilot CLI, Cursor and Factory Droid ask in their
-  own prompt; the others deny the call. A closed terminal leaves the watch
-  running in the sandbox; `sbx exec -it my-project doorman watch --replace`
-  takes over from it. A watch stops by itself when a held call runs out and
-  no key was pressed since that call arrived nor for at least 60 seconds.
+- To answer held calls, run `doorman sbx watch --all` in a terminal on your
+  computer (with the CLI installed there): one queue for every running
+  sandbox, each card named after its sandbox. Without the CLI on your
+  computer, `sbx exec -it my-project doorman watch` answers one sandbox (a
+  closed terminal leaves that watch running; `--replace` takes over from it).
+  `sbx` agents run without their own permission prompts, so allowing a call
+  there runs it at once. With nobody watching, Claude Code, Copilot CLI,
+  Cursor and Factory Droid ask in their own prompt; the others deny the call.
+  `doorman sbx ls` shows each sandbox's Doorman, guard and open exposures.
 - Add it to a sandbox you already have: `sbx kit add my-project <kit>`. Don't
   install Doorman in a sandbox by hand: the next `sbx kit add` or template
   resets the agent's configuration and drops the hook without a word.
 - Pin the CLI version with `--kit-arg doorman.version=0.4.1` (default: latest).
-- Doorman's findings live inside the sandbox and `sbx rm` deletes them. Export
-  them first: `sbx exec my-project doorman export detections --scan > detections.json`.
-  The [kit's README](integrations/sbx-kit/README.md#keep-the-findings-before-removing-a-sandbox)
-  has an `sbxenv.yaml` that does it on `sbx env rm`.
-- Only local sandboxes are supported; cloud sandboxes (`sbx --cloud`) are
-  untested.
+- For v3 workloads (`sbx run docker.io/docker/sbx-kit-claude:…`), use the v3
+  kit: `--kit "git+https://github.com/PinataCloud/doorman.git#dir=integrations/sbx-kit/v3/doorman"`.
+  A v3 sandbox takes no `sbx kit add`, so give `--kit` when you create it.
+- Doorman's findings live inside the sandbox and `sbx rm` deletes them.
+  `doorman sbx pull my-project` brings its sightings and sessions to the
+  Doorman on your computer, where the app and `doorman findings` show them as
+  "sandbox my-project"; `--remove-after` then removes the sandbox. The
+  [kit's README](integrations/sbx-kit/README.md#keep-the-findings-before-removing-a-sandbox)
+  has an `sbxenv.yaml` that pulls on `sbx env rm`.
+- Only local sandboxes are supported. In a cloud sandbox (`sbx --cloud`) the
+  `doorman sbx` commands see nothing, and answering held calls with
+  `sbx --cloud exec -it <name> doorman watch` is untested.
 
 ## What it does
 
@@ -322,7 +329,8 @@ files.
 - `vscode-extension/`: the editor companion.
 - `integrations/sbx-kit/`: the Docker Sandboxes kit that adds the Doorman CLI
   and its guard to a sandbox running any of the agents it supports (`sbx run
-  <agent> --kit …`).
+  <agent> --kit …`), with its v3 variant in `v3/doorman/`; published by
+  `.github/workflows/sbx-kit.yml` on `kit-v*` tags.
 - `schemas/`: committed JSON Schemas for the detection and ledger exports,
   generated from `main/lib/schema-files.ts` by
   `npx vite-node scripts/make-detection-schema.ts`. A test fails when they

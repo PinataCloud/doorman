@@ -20,10 +20,11 @@ doorman status
 | `doorman findings` | Open exposures, grouped like the app's Security Radar; `show`, `review`, `reopen`, `false-positive`, `accept-risk` |
 | `doorman sessions`, `session <id>`, `search <query>` | The Event Ledger: sessions, turns and search, always masked |
 | `doorman usage`, `doorman analytics` | Tokens and time spent with AI; what each rule found |
-| `doorman report`, `doorman export detections\|ledger` | The security report (Markdown) and schema-valid JSON exports |
+| `doorman report`, `doorman export detections\|ledger\|bundle` | The security report (Markdown) and schema-valid JSON exports (`bundle`: both, for `doorman sbx pull`) |
 | `doorman trace` | Trace a secret: where a value went, read from stdin and never echoed |
 | `doorman guard install\|uninstall\|status` | The PreToolUse hook that watches, holds or blocks each agent's tool calls |
 | `doorman watch` | Answer held tool calls in this terminal while the desktop app is closed |
+| `doorman sbx ls\|watch\|pull` | From your computer, Docker Sandboxes running Doorman: list them, answer all their held calls in one terminal, bring their findings here |
 | `doorman policy`, `rules`, `packs`, `exceptions`, `custom-rules` | The policy the guard enforces, rule by rule |
 | `doorman mcp`, `doorman gateway` | MCP servers on this machine, Doorman's own MCP server, and the MCP gateway |
 | `doorman editor` | The VS Code companion |
@@ -105,28 +106,51 @@ The kit installs the CLI (`--kit-arg doorman.version=<version>` pins it), runs
 sandbox download the classifier from Hugging Face. For a sandbox you already
 have, add it with `sbx kit add my-project <kit>`. Don't install the CLI in a
 sandbox by hand: `sbx kit add` and sandboxes created from templates reset the
-agent's configuration, and a hand-installed hook is gone without a word.
+agent's configuration, and a hand-installed hook is gone without a word. For
+v3 workloads (`sbx run docker.io/docker/sbx-kit-claude:…`) use the v3 kit,
+`#dir=integrations/sbx-kit/v3/doorman`, when you create the sandbox: a v3
+sandbox takes no `sbx kit add`.
 
-The desktop app can't run inside a sandbox. Answer held calls from the host
-with `sbx exec -it my-project doorman watch`. `sbx` agents run without their
-own permission prompts, so allowing a call there runs it at once. With nobody
-watching, Claude Code, Copilot CLI, Cursor and Factory Droid ask in their own
-prompt; the others deny the call. Closing the host terminal doesn't stop the
-watch inside the sandbox: a new one takes over once the old one has seen no key
-for 10 minutes, or at once with `doorman watch --replace`. A watch stops by
-itself when a held call runs out and no key was pressed since that call
-arrived nor for at least 60 seconds, so the agents go back to their own prompt.
+The desktop app can't run inside a sandbox, so the CLI on your computer works
+with the sandboxes through `sbx`:
+
+| Command (on your computer) | What it does |
+| --- | --- |
+| `doorman sbx ls` | Your sandboxes, and in each running one: Doorman's version (or not installed), guard on or off, who answers held calls, open exposures |
+| `doorman sbx watch [--all \| <name>...] [--replace]` | Answer held calls from every sandbox in one terminal, each card headed with its sandbox's name; with no name (or `--all`), every running sandbox and each one that starts later |
+| `doorman sbx pull [--all \| <name>...] [--remove-after] [--yes]` | Bring sandboxes' sightings and sessions to this computer's Doorman, where they read as "sandbox <name>"; `--remove-after` then removes each one (`sbx rm`), after asking |
+
+`doorman sbx watch` runs `doorman watch --stdio` in each sandbox over
+`sbx exec -i` (no terminal inside: when the host side goes, so does each
+watch). A sandbox without Doorman, or with one too old for it, is named once
+with what to do; so is one where a `doorman watch` already answers, unless
+`--replace`. Without the CLI on your computer, answer one
+sandbox with `sbx exec -it my-project doorman watch`. `sbx` agents run
+without their own permission prompts, so allowing a call there runs it at
+once. With nobody watching, Claude Code, Copilot CLI, Cursor and Factory Droid
+ask in their own prompt; the others deny the call. Closing the host terminal
+of an `sbx exec -it` watch doesn't stop it inside the sandbox: a new one takes
+over once the old one has seen no key for 10 minutes, or at once with
+`doorman watch --replace`. A watch stops by itself when a held call runs out
+and no key was pressed since that call arrived nor for at least 60 seconds, so
+the agents go back to their own prompt.
 
 A download the sandbox's network policy blocks shows in `doorman model` and
 `doorman status` as blocked, with the `sbx policy allow network` command to run
 on your computer (approving the request in `sbx` lets only `huggingface.co`
 through, not the CDN). Then run `doorman model download` in the sandbox.
 
-Doorman's data stays inside the sandbox, and `sbx rm` deletes it. Export it
-first with `sbx exec my-project doorman export detections --scan > detections.json`
-(or `doorman report`). The kit's README has an `sbxenv.yaml` that does this on
-`sbx env rm`. Only local sandboxes are supported; cloud sandboxes
-(`sbx --cloud`) are untested.
+Doorman's data stays inside the sandbox, and `sbx rm` deletes it.
+`doorman sbx pull` runs `doorman export bundle --scan` in each sandbox and
+drops the result in the `imports` folder of this computer's Doorman data;
+whoever owns the data takes it in (the command itself, else the desktop app
+at once, or the next `doorman` command once the app quits). Pulling again
+adds only what is new. Without the CLI on your computer, export with
+`sbx exec my-project doorman export detections --scan > detections.json` (or
+`doorman report`). The kit's README has an `sbxenv.yaml` that pulls on
+`sbx env rm`. Only local sandboxes are supported: the `doorman sbx` commands
+don't see cloud sandboxes (`sbx --cloud`), and answering their held calls with
+`sbx --cloud exec -it <name> doorman watch` is untested.
 
 ## Updates
 

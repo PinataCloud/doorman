@@ -78,6 +78,7 @@ const TURN: JsonSchema = {
     tools: { type: "array", items: { type: "string" } },
     cwd: str("Working directory."),
     git_branch: str("Git branch."),
+    sandbox: str("The Docker Sandbox (`sbx`) it was recorded in, for a turn pulled with `doorman sbx pull`."),
   },
 };
 
@@ -117,6 +118,7 @@ const SESSION: JsonSchema = {
     last_role: { type: "string", enum: ["user", "assistant"] },
     last_turn_tools: count("Tool calls in the newest turn."),
     resume_command: str("The host's resume command."),
+    sandbox: str("The Docker Sandbox (`sbx`) it ran in, for a session pulled with `doorman sbx pull`; its ids then end in `@<sandbox>`."),
     detection_ids: {
       type: "array",
       items: { type: "string" },

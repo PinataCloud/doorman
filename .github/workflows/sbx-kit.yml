@@ -1,0 +1,145 @@
+# Publish the Doorman kit for Docker Sandboxes (integrations/sbx-kit/) to
+# Docker Hub — separate from the app's `v*` and the CLI's `cli-v*` releases.
+#
+#   docker.io/pinata/doorman-kit:<x.y.z>     the v2 kit (spec.yaml), for sandboxes
+#                                            started with a built-in agent name
+#                                            (`sbx run claude …`)
+#   docker.io/pinata/doorman-kit:<x.y.z>-v3  the v3 kit (v3/doorman/doorman.yaml),
+#                                            for v3 workloads (docker.io/docker/sbx-kit-*)
+#
+# Both install the CLI from npm when a sandbox is created (`latest` unless the
+# sandbox pins one with --kit-arg), so a kit release is only needed when the
+# kit itself changes, not for every CLI release.
+#
+# Cutting a release: push a tag `kit-v<x.y.z>` (`git tag kit-v1.0.0 && git push
+# origin kit-v1.0.0`). Run workflow (workflow_dispatch) re-runs an existing tag;
+# a tag already on Docker Hub is left as it is, so a re-run only pushes what is
+# missing.
+#
+# How (read off https://docs.docker.com/ai/sandboxes/customize/author/distribute/
+# and `sbx kit push --help`, sbx 0.46–0.49): v1/v2 kits are pushed with
+# `sbx kit push`; v3 kits are images built by the docker/sandbox-kit:3 Buildx
+# frontend ("The `sbx kit pack`, `push`, and `pull` commands are for v1 and v2
+# kits"). Both are signed keyless with Sigstore, using this workflow's GitHub
+# OIDC token; verify with
+#   sbx kit verify docker.io/pinata/doorman-kit:<x.y.z> \
+#     --certificate-identity "https://github.com/PinataCloud/doorman/.github/workflows/sbx-kit.yml@refs/tags/kit-v<x.y.z>" \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#
+# sbx comes from Docker's apt repository, the documented Ubuntu install
+# (https://github.com/docker/sbx-releases#apt-ubuntu). Its kit commands need a
+# Docker sign-in (`sbx kit validate` says "not signed in to Docker" without
+# one); `sbx login --password-stdin` is its non-interactive CI form. Running
+# sandboxes (KVM) isn't needed to validate or push.
+#
+# Secrets:
+#   DOCKERHUB_USERNAME — a Docker Hub user with push rights on pinata/doorman-kit.
+#   DOCKERHUB_TOKEN    — a personal access token for that user (Read & Write).
+
+name: sbx-kit
+
+on:
+  push:
+    tags: ["kit-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to re-run, e.g. kit-v1.0.0"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sbx-kit-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  REPOSITORY: docker.io/pinata/doorman-kit
+  # The sbx release this was written against; kits are experimental in sbx, so
+  # move it on purpose. `apt-cache madison docker-sbx` lists the versions.
+  SBX_APT_VERSION: 0.49.1-1~ubuntu.24.04~noble
+  KIT_V2: integrations/sbx-kit
+  KIT_V3: integrations/sbx-kit/v3/doorman
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # keyless Sigstore signing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Version from the tag
+        run: |
+          version=${TAG#kit-v}
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::tag $TAG is not kit-v<x.y.z>"; exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Install sbx
+        run: |
+          set -euo pipefail
+          curl -fsSL https://get.docker.com | sudo REPO_ONLY=1 sh
+          sudo apt-get install -y "docker-sbx=$SBX_APT_VERSION"
+          sbx version
+
+      - name: Sign in to Docker Hub (sbx)
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::DOCKERHUB_USERNAME and DOCKERHUB_TOKEN must be set to validate and publish the kit"; exit 1
+          fi
+          printf '%s' "$DOCKERHUB_TOKEN" | sbx login --username "$DOCKERHUB_USERNAME" --password-stdin
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Validate the v2 kit
+        run: sbx kit validate "$KIT_V2"
+
+      # The sandbox-kit frontend validates the descriptor while it builds. The
+      # kit is declaration-only (no Dockerfile), so the multi-platform build
+      # needs no emulation.
+      - name: Validate the v3 kit
+        run: docker buildx build "$KIT_V3" -f "$KIT_V3/doorman.yaml" --platform linux/amd64,linux/arm64 --output type=cacheonly
+
+      - name: Push and sign the v2 kit
+        run: |
+          set -euo pipefail
+          ref="$REPOSITORY:$VERSION"
+          if docker buildx imagetools inspect --raw "$ref" > /dev/null 2>&1; then
+            echo "$ref is already on Docker Hub; leaving it"; exit 0
+          fi
+          # spec.yaml alone: the kit folder also holds its README and the v3
+          # kit, which `sbx kit push` would otherwise pack into the artifact.
+          stage=$(mktemp -d)
+          cp "$KIT_V2/spec.yaml" "$stage/"
+          sbx kit push --sign "$stage" "$ref"
+
+      - name: Push and sign the v3 kit
+        run: |
+          set -euo pipefail
+          ref="$REPOSITORY:$VERSION-v3"
+          if docker buildx imagetools inspect --raw "$ref" > /dev/null 2>&1; then
+            echo "$ref is already on Docker Hub; leaving it"; exit 0
+          fi
+          docker buildx build "$KIT_V3" -f "$KIT_V3/doorman.yaml" --platform linux/amd64,linux/arm64 --push -t "$ref"
+          sbx kit sign "$ref"
+
+      - name: Read the published kits back
+        run: |
+          sbx kit inspect "$REPOSITORY:$VERSION"
+          sbx kit inspect "$REPOSITORY:$VERSION-v3"

@@ -8,6 +8,7 @@ import { heartbeatFresh, heartbeatPath, pidAlive } from "../guard/handshake.js";
 import type { GuardPolicy } from "../guard/policy.js";
 import { codexHomeDir } from "../lib/codex-rollout.js";
 import { appOwner, liveLock, releaseLock, takeLock } from "../lib/data-owner.js";
+import { drainImports, type ImportOutcome } from "../lib/sandbox-import.js";
 import { doormanDataDir } from "../lib/data-dir.js";
 import type { FindingRow } from "../lib/findings.js";
 import type { InjectionClassifier } from "../lib/injection-classifier.js";
@@ -47,10 +48,12 @@ export interface CliEnvironment {
   runNpm?: NpmRunner;
 }
 
-/** Whoever answers held calls right now: the desktop app, or `doorman watch`. */
+/** Whoever answers held calls right now: the desktop app, or `doorman watch`
+ * (`stdio`: a `doorman watch --stdio`, answering for `doorman sbx watch` on the host). */
 export interface RunningDoorman {
   pid?: number;
   version?: string;
+  stdio?: true;
 }
 
 /** The engine opened for one command, and how to put it away. */
@@ -61,6 +64,10 @@ export interface EngineHandle {
   snapshot: boolean;
   /** Rows minted by this command's scan (empty with `scan: false`). */
   newFindings: FindingRow[];
+  /** What this open took in from the sandbox drop folder (`doorman sbx
+   * pull`, lib/sandbox-import.ts): ingested into the store, or — on a copy —
+   * into the copy only, the files left for the owner. */
+  imported: ImportOutcome[];
   close(): void;
 }
 
@@ -148,7 +155,8 @@ export class CliContext {
       // Our own, or one a crashed app left behind (fresh for up to 45s more).
       if (pid === process.pid || (pid !== undefined && !pidAlive(pid))) return undefined;
       const version = "version" in raw && typeof raw.version === "string" ? raw.version : undefined;
-      return { ...(pid !== undefined ? { pid } : {}), ...(version !== undefined ? { version } : {}) };
+      const stdio = "stdio" in raw && raw.stdio === true;
+      return { ...(pid !== undefined ? { pid } : {}), ...(version !== undefined ? { version } : {}), ...(stdio ? { stdio: true as const } : {}) };
     } catch {
       return {};
     }
@@ -273,11 +281,17 @@ export class CliContext {
       ...(snapshot ? {} : { shouldStop: () => this.running() !== undefined }),
     });
     engine.open();
+    // Sandboxes pulled to the drop folder (`doorman sbx pull`): taken in by
+    // whoever owns the store — this command, or else the owner (the app
+    // drains it itself); a copy takes them in too, so what this command
+    // shows already includes them, and leaves the files for the owner.
+    const imported = drainImports(this.dataDir, (bundle) => engine.importSandboxBundle(bundle), { consume: !snapshot, log: (m) => this.log(m) });
     if (options.scan) await this.scan(engine);
     return {
       engine,
       snapshot,
       newFindings,
+      imported,
       close: () => {
         engine.stop();
         if (temp) rmSync(temp, { recursive: true, force: true });

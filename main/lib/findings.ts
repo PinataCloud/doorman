@@ -282,6 +282,11 @@ export interface FindingRow {
   /** The values redacted from the evidence, as fingerprints. The
    * value itself sits in the Keychain-encrypted evidence vault, if at all. */
   secrets?: SecretFingerprint[];
+  /** The Docker Sandbox (`sbx`) this row was recorded in, for one pulled to
+   * the host with `doorman sbx pull` (lib/sandbox-import.ts). Its ids carry
+   * `@<sandbox>`; its evidence stays in the sandbox, so the row is shown
+   * without a transcript on this disk and offers no VIEW RAW here. */
+  sandbox?: string;
   /** SNAPSHOT-ONLY (lib/exposures.ts): the place this row's exposure is about
    * and the key the renderer groups on. Stamped by main when it builds the
    * snapshot; never written to the ledger, never present on stored rows. */

@@ -6,6 +6,7 @@
 
 import { DETECTION_SCHEMA, DETECTIONS_EXPORT_SCHEMA, type JsonSchema } from "./detection-schema.js";
 import { LEDGER_EXPORT_SCHEMA } from "./ledger-export.js";
+import { SANDBOX_BUNDLE_SCHEMA } from "./sandbox-import.js";
 
 export function renderSchemaFiles(): Record<string, string> {
   const render = (schema: JsonSchema) => `${JSON.stringify(schema, null, 2)}\n`;
@@ -13,5 +14,6 @@ export function renderSchemaFiles(): Record<string, string> {
     "detection.v1.schema.json": render(DETECTION_SCHEMA),
     "detections-export.v1.schema.json": render(DETECTIONS_EXPORT_SCHEMA),
     "ledger-export.v1.schema.json": render(LEDGER_EXPORT_SCHEMA),
+    "sandbox-bundle.v1.schema.json": render(SANDBOX_BUNDLE_SCHEMA),
   };
 }

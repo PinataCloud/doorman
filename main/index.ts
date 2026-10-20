@@ -141,6 +141,7 @@ import { buildSecurityReport, renderSecurityReportMarkdown } from "./lib/report.
 import { buildDetectionsExport, validateDetectionsExport } from "./lib/detection-schema.js";
 import { buildLedgerExport, validateLedgerExport } from "./lib/ledger-export.js";
 import { EvidenceVault, sandboxVaultCrypto } from "./lib/evidence-vault.js";
+import { ImportsWatcher } from "./lib/sandbox-import.js";
 import { surfaceShown } from "./lib/surface-scope.js";
 import { maskTurnText } from "./lib/masking.js";
 import { homeIsRedirected } from "./lib/sandbox.js";
@@ -245,6 +246,9 @@ let store: Store;
 let engine: CaptureEngine;
 let tray: TrayController;
 let spool: SpoolWatcher;
+/** The `doorman sbx pull` drop folder (lib/sandbox-import.ts): the app owns
+ * the store while it runs, so it is the one that takes sandboxes in. */
+let sandboxImports: ImportsWatcher | undefined;
 let mcpWatch: McpConfigWatcher;
 let observed: ObservedWatcher;
 let approvals: ApprovalWatcher;
@@ -1665,7 +1669,8 @@ function recompute(): void {
     if (!stat.last_at || s.ended_at > stat.last_at) stat.last_at = s.ended_at;
   }
   const snapshotSessions = sessions.slice(0, SNAPSHOT_SESSIONS).map((s) => {
-    const resume = resumeCommand(s.source, s.id);
+    // A sandbox's session can't be continued here: its agent lives in the sandbox.
+    const resume = s.sandbox === undefined ? resumeCommand(s.source, s.id) : undefined;
     return {
       ...s,
       alerts: alertCounts.get(s.id) ?? 0,
@@ -3081,6 +3086,12 @@ if (!app.requestSingleInstanceLock()) {
     const shadowTimer = setInterval(refreshShadowAi, 60 * 60_000);
     shadowTimer.unref?.();
     spool.start();
+    sandboxImports = new ImportsWatcher({
+      dataDir: app.getPath("userData"),
+      ingest: (bundle) => engine.importSandboxBundle(bundle),
+      log: (message) => console.warn(`[doorman] ${message}`),
+    });
+    sandboxImports.start();
     mcpWatch.start();
     // Keep the copied gateway bundle current with this build (it may be
     // referenced by a config a previous version routed), then watch its spool.
@@ -3157,6 +3168,7 @@ if (!app.requestSingleInstanceLock()) {
     releaseLock(app.getPath("userData"), "app", process.pid);
     engine?.stop();
     spool?.stop();
+    sandboxImports?.stop();
     mcpWatch?.stop();
     observed?.stop();
     approvals?.stop();

@@ -1,11 +1,16 @@
-import { checkGuardIntegrity, isGuardInstalled } from "../../enforcement.js";
+import { join } from "node:path";
+import { SpoolWatcher, checkGuardIntegrity, isGuardInstalled } from "../../enforcement.js";
 import { detectionsExportFor, ledgerExportFor } from "../../lib/app-views.js";
+import { buildLedgerExport } from "../../lib/ledger-export.js";
+import { maskTurnText } from "../../lib/masking.js";
+import { buildSandboxBundle, validateSandboxBundle } from "../../lib/sandbox-import.js";
 import { buildSecurityReport, renderSecurityReportMarkdown } from "../../lib/report.js";
 import { mcpInventoryNow } from "../../mcp-inventory-now.js";
 import { shadowAiNow } from "../../shadow-ai-now.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError } from "../output.js";
+import { dockerSandbox } from "../docker-sandbox.js";
 import { plural } from "../ui.js";
 import { byIdOrPrefix, withEngine, writeOut } from "./data-shared.js";
 
@@ -121,6 +126,66 @@ export const exportLedgerCommand: CliCommand = {
         return { data: { path, count, valid: problems.length === 0 }, text: [ctx.ui.mark("ok", `Wrote ${plural(count, "session")} to ${path}`)] };
       }
       return { data: bundle, text: JSON.stringify(bundle, null, 2).split("\n"), raw: true };
+    });
+  },
+};
+
+export const exportBundleCommand: CliCommand = {
+  name: "export bundle",
+  summary: "Sightings and sessions in one JSON bundle, for `doorman sbx pull`",
+  usage: "[--out <file>] [--scan]",
+  options: { out: { type: "string" }, scan: { type: "boolean", default: false } },
+  flags: [
+    ["--out <file>", "write it to a file instead of stdout"],
+    ["--scan", "read new transcripts and the guard's sightings first"],
+  ],
+  notes: [
+    "Schema urn:doorman:schemas:sandbox-bundle.v1: the detections export and the ledger export in one file, naming the Docker Sandbox it was written in. `doorman sbx pull` runs it inside a sandbox from the host and imports the result there. Masked like both: fingerprints stand in for values.",
+  ],
+  examples: [["sbx exec my-sandbox doorman export bundle --scan", "what `doorman sbx pull my-sandbox` reads"]],
+  async run(ctx, args) {
+    const policy = ctx.policy();
+    const scan = args.values.scan === true;
+    return withEngine(ctx, scan, ({ engine, snapshot }) => {
+      // Held and refused calls reach the store through the guard's spool,
+      // which only the app or `doorman watch` drains. Whoever owns the store
+      // has drained it; when that is this command, it does — start() reads the
+      // saved offset and drains once, stop() ends the watching it began.
+      if (scan && !snapshot) {
+        const spool = new SpoolWatcher({
+          userDataDir: ctx.dataDir,
+          storeDir: join(ctx.dataDir, "store"),
+          onLines: (lines) => engine.ingestSpoolLines(lines),
+          log: (message) => ctx.log(message),
+        });
+        spool.start();
+        spool.stop();
+      }
+      const at = new Date(ctx.io.now());
+      const detections = detectionsExportFor(engine, policy, ctx.io.version, at).bundle;
+      const ledger =
+        ledgerExportFor(engine, undefined, ctx.io.version, at)?.bundle ??
+        buildLedgerExport({ sessions: [], turnsOf: () => [], detectionIdsOf: () => [], mask: maskTurnText, fingerprintsOf: () => [], app_version: ctx.io.version, generated_at: at });
+      const sandbox = dockerSandbox(ctx.io.env);
+      const bundle = buildSandboxBundle({
+        detections,
+        ledger,
+        sandbox: sandbox && { name: sandbox.name, ...(ctx.io.env.SANDBOX_ID ? { id: ctx.io.env.SANDBOX_ID } : {}) },
+        app_version: ctx.io.version,
+        generated_at: at,
+      });
+      const problems = validateSandboxBundle(bundle);
+      schemaProblems(ctx, problems);
+      const out = args.values.out;
+      if (typeof out === "string") {
+        const path = writeOut(out, `${JSON.stringify(bundle, null, 2)}\n`);
+        const counts = { sightings: detections.detections.length, sessions: ledger.sessions.length };
+        return {
+          data: { path, ...counts, valid: problems.length === 0 },
+          text: [ctx.ui.mark("ok", `Wrote ${plural(counts.sightings, "sighting")} and ${plural(counts.sessions, "session")} to ${path}`)],
+        };
+      }
+      return { data: bundle, text: [JSON.stringify(bundle)], raw: true };
     });
   },
 };

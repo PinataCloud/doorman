@@ -28,6 +28,7 @@ function sessionJson(s: SessionSummary, label: string, alerts: number) {
     ...(s.task ? { task: s.task } : {}),
     ...(s.cwd ? { cwd: s.cwd } : {}),
     ...(s.git_branch ? { git_branch: s.git_branch } : {}),
+    ...(s.sandbox ? { sandbox: s.sandbox } : {}),
     alerts,
   };
 }
@@ -116,7 +117,7 @@ export const sessionsCommand: CliCommand = {
           const n = alerts.get(s.id) ?? 0;
           return [
             ago(s.ended_at, ctx.io.now()),
-            labels.get(s.source) ?? s.source,
+            `${labels.get(s.source) ?? s.source}${s.sandbox ? ` · sandbox ${s.sandbox}` : ""}`,
             String(s.turns + s.prompts),
             compactNumber(s.input_tokens + s.output_tokens),
             n > 0 ? st.warn(String(n)) : st.dim("0"),
@@ -180,6 +181,7 @@ export const sessionCommand: CliCommand = {
       const facts = ui.list(
         [
           labels.get(summary.source) ?? summary.source,
+          summary.sandbox && `sandbox ${summary.sandbox}`,
           plural(summary.turns + summary.prompts, "turn"),
           `${compactNumber(summary.input_tokens + summary.output_tokens)} tokens`,
           summary.models[0],

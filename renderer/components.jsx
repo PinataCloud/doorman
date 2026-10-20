@@ -867,6 +867,18 @@ function SourceChip({ source }) {
   return <span className={"srclabel src-" + source}>{SOURCE_LABELS[source] || source}</span>;
 }
 
+/* A session or sighting pulled from a Docker Sandbox (`doorman sbx pull`,
+   main/lib/sandbox-import.ts): it happened in the sandbox, whose agent and
+   transcripts live there — so this computer has no raw evidence for it. */
+function SandboxTag({ name }) {
+  if (!name) return null;
+  return (
+    <span className="srclabel sandbox-tag" title={"Pulled from Docker Sandbox " + name + " with doorman sbx pull"}>
+      sandbox {name}
+    </span>
+  );
+}
+
 /* The rail's brand mark — the logo a reader already knows, drawn from each
    brand's own single-path SVG on a 0 0 24 24 grid. Keyed by TurnSource: two Anthropic surfaces
    share one mark, as do GitHub's two Copilots. A rail without a mark here

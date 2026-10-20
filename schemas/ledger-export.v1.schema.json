@@ -200,6 +200,10 @@
         "git_branch": {
           "type": "string",
           "description": "Git branch."
+        },
+        "sandbox": {
+          "type": "string",
+          "description": "The Docker Sandbox (`sbx`) it was recorded in, for a turn pulled with `doorman sbx pull`."
         }
       }
     },
@@ -367,6 +371,10 @@
         "resume_command": {
           "type": "string",
           "description": "The host's resume command."
+        },
+        "sandbox": {
+          "type": "string",
+          "description": "The Docker Sandbox (`sbx`) it ran in, for a session pulled with `doorman sbx pull`; its ids then end in `@<sandbox>`."
         },
         "detection_ids": {
           "type": "array",

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:doorman:schemas:sandbox-bundle.v1",
+  "title": "Doorman sandbox bundle",
+  "description": "What Doorman recorded inside one Docker Sandbox: its detections export and its Event Ledger export, as `doorman export bundle` writes them and `doorman sbx pull` carries them to the host. Masked: no raw values.",
+  "type": "object",
+  "required": [
+    "schema",
+    "schema_version",
+    "generated_at",
+    "app_version",
+    "sandbox",
+    "detections",
+    "ledger"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "urn:doorman:schemas:sandbox-bundle.v1"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the bundle was written."
+    },
+    "app_version": {
+      "type": "string",
+      "description": "The Doorman that wrote it."
+    },
+    "sandbox": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The sandbox it came from; null when written outside one (`doorman sbx pull` names it from the host).",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
+          "description": "The sandbox's name, as `sbx` commands take it."
+        },
+        "id": {
+          "type": "string",
+          "description": "The sandbox's id (SANDBOX_ID)."
+        }
+      }
+    },
+    "detections": {
+      "type": "object",
+      "description": "The detections export (urn:doorman:schemas:detections-export.v1)."
+    },
+    "ledger": {
+      "type": "object",
+      "description": "The Event Ledger export (urn:doorman:schemas:ledger-export.v1)."
+    }
+  }
+}

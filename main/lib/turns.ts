@@ -77,6 +77,10 @@ export interface LedgerTurn {
   tools?: string[];
   cwd?: string;
   git_branch?: string;
+  /** The Docker Sandbox (`sbx`) this turn was recorded in, for one pulled to
+   * the host with `doorman sbx pull` (lib/sandbox-import.ts). Its ids carry
+   * `@<sandbox>`, and its transcript is in the sandbox, never on this disk. */
+  sandbox?: string;
 }
 
 /**
@@ -197,6 +201,9 @@ export interface SessionSummary {
    * <id>`), filled at snapshot time — the ledger's Continue button shows
    * only when one exists. lib/terminal-handoff.ts. */
   resume_command?: string;
+  /** The Docker Sandbox the session ran in, when it was pulled from one
+   * (LedgerTurn.sandbox) — what the screens label "sandbox <name>". */
+  sandbox?: string;
 }
 
 export interface TitleRecord {
@@ -253,6 +260,7 @@ export function groupSessions(
     }
     s.cwd ??= turn.cwd;
     s.git_branch ??= turn.git_branch;
+    if (turn.sandbox !== undefined) s.sandbox = turn.sandbox;
     if (turn.role === "user") {
       s.prompts += 1;
       continue;

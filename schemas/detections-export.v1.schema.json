@@ -500,6 +500,10 @@
             "project"
           ],
           "description": "The person allowed it for this project."
+        },
+        "sandbox": {
+          "type": "string",
+          "description": "The Docker Sandbox (`sbx`) it was recorded in, for a detection pulled to this computer with `doorman sbx pull`; its ids then end in `@<sandbox>`."
         }
       }
     }
