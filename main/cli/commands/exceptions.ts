@@ -3,7 +3,7 @@ import { KNOWN_IGNORE_SCOPES, parseIgnoreRule, type ScopedIgnoreRule } from "../
 import { isPathologicalPattern } from "../../guard/security-detect.js";
 import { localDetectorLabel } from "../../lib/findings.js";
 import type { CliCommand } from "../command.js";
-import { CliError, table } from "../output.js";
+import { CliError } from "../output.js";
 import { savePrefs, syncNote, tilde } from "./policy.js";
 
 /** Why an exception pattern can't be saved: the engine skips a pattern that
@@ -31,7 +31,11 @@ function describeScope(rule: ScopedIgnoreRule, nowMs: number, home: string): str
 const exceptionsList: CliCommand = {
   name: "exceptions",
   summary: "Exceptions: findings matching one of these are not raised",
-  details: ["Numbers in the first column are what `doorman exceptions remove` takes."],
+  notes: ["Numbers in the first column are what `doorman exceptions remove` takes."],
+  examples: [
+    ["doorman exceptions", "every exception, numbered"],
+    ["doorman exceptions remove 2", "drop the second one"],
+  ],
   async run(ctx) {
     const ignore = ctx.prefs().policy.ignore;
     const nowMs = ctx.io.now();
@@ -43,12 +47,12 @@ const exceptionsList: CliCommand = {
         expired: rule.expires_at !== undefined && Date.parse(rule.expires_at) <= nowMs,
       })),
     };
-    if (ignore.length === 0) return { data, text: ["No exceptions. Add one with `doorman exceptions add <rule|any> <pattern>`."] };
+    if (ignore.length === 0) return { data, text: ["No exceptions.", ctx.ui.next("`doorman exceptions add <rule|any> <pattern>` adds one.")] };
     return {
       data,
       text: [
-        s.bold("Exceptions"),
-        ...table(
+        ctx.ui.section("Exceptions"),
+        ...ctx.ui.table(
           ["#", "Rule", "Pattern", "Scope", "From"],
           ignore.map((rule, i) => {
             const scope = describeScope(rule, nowMs, ctx.io.home);
@@ -60,7 +64,8 @@ const exceptionsList: CliCommand = {
               `${rule.origin === "approval" ? "approval" : "you"}${rule.note ? s.dim(` · ${rule.note}`) : ""}`,
             ];
           }),
-        ).map((l) => `  ${l}`),
+          { indent: 2, keep: [0, 1] },
+        ),
       ],
     };
   },
@@ -70,12 +75,17 @@ const exceptionsAdd: CliCommand = {
   name: "exceptions add",
   summary: "Add an exception for one rule (or any rule), everywhere or in one project",
   usage: "<rule|any> <pattern> [--project <dir>] [--days <n>] [--note <text>]",
-  details: [
-    "<pattern> is a case-insensitive regex over the finding's visible fields: rule id, key name,",
-    "tool, target and the masked excerpt. Never the raw value.",
-    "--project <dir>  only for tool calls under this directory (default: everywhere)",
-    "--days <n>       expire after n days (the approval panel uses 30; default: never)",
-    "--note <text>    why, shown in the list",
+  notes: [
+    "<pattern> is a case-insensitive regex over the finding's visible fields: rule id, key name, tool, target and the masked excerpt. Never the raw value.",
+  ],
+  flags: [
+    ["--project <dir>", "only for tool calls under this directory (default: everywhere)"],
+    ["--days <n>", "expire after n days (the approval panel uses 30; default: never)"],
+    ["--note <text>", "why, shown in the list"],
+  ],
+  examples: [
+    ["doorman exceptions add secret_egress 'api\\.internal' --project .", "one rule, this project only"],
+    ["doorman exceptions add any npm --days 30 --note 'registry token'", "every rule, for 30 days"],
   ],
   options: { project: { type: "string" }, days: { type: "string" }, note: { type: "string" } },
   positionals: { min: 2, max: 2 },
@@ -87,7 +97,7 @@ const exceptionsAdd: CliCommand = {
     const raw: Record<string, unknown> = { pattern, origin: "manual" };
     if (ruleArg !== "any") {
       if (!KNOWN_IGNORE_SCOPES.has(ruleArg) && !ruleArg.startsWith("custom:")) {
-        throw new CliError(`Unknown rule "${ruleArg}". Use a rule id from \`doorman rules\`, a custom:<id>, or "any".`, 2);
+        throw new CliError(`Unknown rule "${ruleArg}".`, 2, 'Use a rule id from `doorman rules`, a custom:<id>, or "any".');
       }
       raw.detector = ruleArg;
     }
@@ -113,7 +123,7 @@ const exceptionsAdd: CliCommand = {
     return {
       data: { number, exception: prefs.policy.ignore[number - 1], ...(syncError ? { sync_error: syncError } : {}) },
       text: [
-        `Exception ${number}: ${rule.detector ? localDetectorLabel(rule.detector) : "any rule"} matching /${rule.pattern}/i, ${describeScope(rule, ctx.io.now(), ctx.io.home)}.`,
+        ctx.ui.mark("ok", `Exception ${number}: ${rule.detector ? localDetectorLabel(rule.detector) : "any rule"} matching /${rule.pattern}/i, ${describeScope(rule, ctx.io.now(), ctx.io.home)}.`),
         ctx.style.dim("It applies from the next scan and the next tool call. Findings already raised stay until you triage them."),
         ...syncNote(ctx, syncError),
       ],
@@ -125,12 +135,17 @@ const exceptionsRemove: CliCommand = {
   name: "exceptions remove",
   summary: "Remove an exception by its number in `doorman exceptions`",
   usage: "<number>",
+  examples: [["doorman exceptions remove 1", "the first one in `doorman exceptions`"]],
   positionals: { min: 1, max: 1 },
   async run(ctx, args) {
     const n = Number(args.positionals[0]);
     const count = ctx.prefs().policy.ignore.length;
     if (!Number.isInteger(n) || n < 1 || n > count) {
-      throw new CliError(count === 0 ? "There are no exceptions." : `Pick a number from 1 to ${count} (see \`doorman exceptions\`).`, 2);
+      throw new CliError(
+        count === 0 ? "There are no exceptions." : `No exception ${args.positionals[0]}. Pick a number from 1 to ${count}.`,
+        2,
+        count === 0 ? undefined : "`doorman exceptions` lists them.",
+      );
     }
     let removed: ScopedIgnoreRule | undefined;
     // rules:ignore-remove
@@ -140,7 +155,7 @@ const exceptionsRemove: CliCommand = {
     });
     return {
       data: { removed, ...(syncError ? { sync_error: syncError } : {}) },
-      text: [`Removed exception ${n}: ${removed?.detector ?? "any rule"} /${removed?.pattern ?? ""}/i.`, ...syncNote(ctx, syncError)],
+      text: [ctx.ui.mark("off", `Removed exception ${n}: ${removed?.detector ?? "any rule"} /${removed?.pattern ?? ""}/i.`), ...syncNote(ctx, syncError)],
     };
   },
 };

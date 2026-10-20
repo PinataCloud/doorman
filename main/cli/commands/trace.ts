@@ -1,8 +1,10 @@
 import { maskTurnText } from "../../lib/masking.js";
 import { literalForms, normalizeTraceInput, type TraceReport } from "../../lib/secret-trace.js";
 import type { CliCommand } from "../command.js";
-import type { CliEnvironment } from "../context.js";
+import type { CliContext } from "../context.js";
 import { CliError } from "../output.js";
+import { startProgress } from "../progress.js";
+import { plural } from "../ui.js";
 import { withEngine } from "./data-shared.js";
 
 type RawModeStream = NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?: (on: boolean) => unknown };
@@ -12,10 +14,12 @@ type RawModeStream = NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?: (on
  * `ps`), never echoed. On a terminal it is typed or pasted in raw mode, so
  * nothing appears, and ends at Enter; piped, it is the whole input.
  */
-async function readSecret(io: CliEnvironment): Promise<string> {
+async function readSecret(ctx: CliContext): Promise<string> {
+  const io = ctx.io;
   const stdin = io.stdin as RawModeStream;
   if (stdin.isTTY === true && typeof stdin.setRawMode === "function") {
-    io.stderr.write("Paste the value to trace, then press Enter (it won't be shown): ");
+    const s = ctx.errUi.style;
+    io.stderr.write(`${s.bold("Paste the value to trace, then press Enter")} ${s.dim("(it won't be shown)")}: `);
     stdin.setRawMode(true);
     stdin.resume();
     try {
@@ -54,20 +58,25 @@ export const traceCommand: CliCommand = {
   name: "trace",
   summary: "Trace a secret: where a value went across every transcript (read from stdin)",
   usage: "(the value on stdin)",
-  details: [
-    "Searches every agent transcript and the turn store on this machine for one value and reports",
-    "where it went: which agents and providers saw it, files written with it, commands that carried",
-    "it, and what the guard did. The value is read from stdin only (never an argument), is not shown,",
-    "and is kept for the length of the search; the report carries its shape (length, last characters,",
-    "family), not the value.",
-    "  doorman trace            prompts for the value",
-    "  pbpaste | doorman trace  reads it from a pipe",
+  notes: [
+    "Searches every agent transcript and the turn store on this machine for one value and reports where it went: which agents and providers saw it, files written with it, commands that carried it, and what the guard did.",
+    "The value is read from stdin only (never an argument), is not shown, and is kept for the length of the search; the report carries its shape (length, last characters, family), not the value.",
+  ],
+  examples: [
+    ["doorman trace", "prompts for the value"],
+    ["pbpaste | doorman trace", "reads it from a pipe"],
   ],
   async run(ctx) {
-    const normalized = normalizeTraceInput(await readSecret(ctx.io));
+    const normalized = normalizeTraceInput(await readSecret(ctx));
     if (!normalized.ok) throw new CliError(normalized.error);
     return withEngine(ctx, false, async ({ engine }) => {
-      const report = await engine.traceSecret(normalized.value);
+      const progress = ctx.json ? undefined : startProgress(ctx.errUi, ctx.io.stderr, { label: "Tracing", format: (n) => plural(n, "document") });
+      let report: TraceReport;
+      try {
+        report = await engine.traceSecret(normalized.value, progress ? ({ done, total }) => progress.update(done, total) : undefined);
+      } finally {
+        progress?.end();
+      }
       // A sighting's target is a raw tool argument and could hold the value
       // itself (`KEY=... node`); nothing this prints may, so every literal
       // form of it is cut out of the whole report, Markdown included.

@@ -4,7 +4,8 @@ import { confidenceOf, SEVERITY_RANK, type FindingStatus } from "../../lib/findi
 import { maskFindingRow, maskTurnText } from "../../lib/masking.js";
 import { hiddenConfidenceBands } from "../../state.js";
 import type { CliCommand } from "../command.js";
-import { ago, CliError, table } from "../output.js";
+import { ago, CliError } from "../output.js";
+import { plural, type KvRow } from "../ui.js";
 import {
   SEVERITIES,
   byIdOrPrefix,
@@ -95,18 +96,22 @@ export const findingsCommand: CliCommand = {
     limit: { type: "string" },
     scan: { type: "boolean", default: false },
   },
-  details: [
-    "One row per exposure (rule x place), worst first, as the Radar's cards. Rows in confidence",
-    "bands the Radar hides, and false positives unless you show them there, are left out here too.",
-    "",
-    "--all             include reviewed exposures (and their verdict)",
-    "--severity <min>  critical, high, medium or low: that severity and worse",
-    "--rule <id>       one rule, by id (secret_file_read) or name",
-    "--session <id>    findings from one session (id or prefix)",
-    "--limit <n>       at most n exposures (default 25, 0 = all)",
-    "--scan            read new transcripts first",
-    "",
+  flags: [
+    ["--all", "include reviewed exposures (and their verdict)"],
+    ["--severity <min>", "critical, high, medium or low: that severity and worse"],
+    ["--rule <id>", "one rule, by id (secret_file_read) or name"],
+    ["--session <id>", "findings from one session (id or prefix)"],
+    ["--limit <n>", "at most n exposures (default 25, 0 = all)"],
+    ["--scan", "read new transcripts first"],
+  ],
+  notes: [
+    "One row per exposure (rule x place), worst first, as the Radar's cards. Rows in confidence bands the Radar hides, and false positives unless you show them there, are left out here too.",
     "The ID column is the card's newest worst finding: pass it to `doorman findings show`.",
+  ],
+  examples: [
+    ["doorman findings --scan", "read new transcripts, then list open exposures"],
+    ["doorman findings --severity high", "high and critical exposures"],
+    ["doorman findings --all --limit 0", "every exposure, reviewed ones too"],
   ],
   async run(ctx, args) {
     const v = args.values;
@@ -145,16 +150,30 @@ export const findingsCommand: CliCommand = {
         exposures: shown.map((g) => exposureJson(g, labels)),
       };
       const s = ctx.style;
+      const ui = ctx.ui;
       const text: string[] = [
         open.length === 0
-          ? s.green("No open exposures.")
+          ? ui.mark("ok", s.ok("No open exposures."))
           : `${s.bold(String(open.length))} open exposure${open.length === 1 ? "" : "s"}  ${s.dim(severityLine(bySeverity))}`,
       ];
-      if (shown.length > 0) {
+      if (shown.length === 0) {
+        const filtered = minSeverity !== undefined || rule !== undefined || session !== undefined;
+        text.push(
+          ui.next(
+            v.scan !== true
+              ? "`doorman findings --scan` reads new transcripts first."
+              : filtered
+                ? "Without --severity, --rule or --session, `doorman findings --all` lists every exposure."
+                : v.all !== true
+                  ? "`doorman findings --all` lists reviewed exposures too."
+                  : "`doorman sessions` lists the sessions read so far.",
+          ),
+        );
+      } else {
         const header = ["SEVERITY", "TITLE", "PLACE", "SIGHTINGS", "LAST SEEN", ...(v.all === true ? ["STATUS"] : []), "ID"];
         text.push(
           "",
-          ...table(
+          ...ui.table(
             header,
             shown.map((g) => [
               paintSeverity(s, g.face.severity),
@@ -165,6 +184,7 @@ export const findingsCommand: CliCommand = {
               ...(v.all === true ? [g.bucket === "open" ? "open" : STATUS_WORDS[g.face.status]] : []),
               g.face.finding_id,
             ]),
+            { keep: [0, 3, 4, header.length - 1] },
           ),
         );
       }
@@ -174,7 +194,7 @@ export const findingsCommand: CliCommand = {
           hiddenBands.length > 0 ? `${hiddenBands.join("/")} confidence` : "",
           prefs.show_false_positives === true ? "" : "false positives",
         ].filter(Boolean);
-        text.push(s.dim(`${hiddenRows} finding${hiddenRows === 1 ? "" : "s"} hidden like on the Radar (${why.join(", ")}).`));
+        text.push(s.dim(`${plural(hiddenRows, "finding")} hidden like on the Radar (${why.join(", ")}).`));
       }
       return { data, text };
     });
@@ -187,17 +207,15 @@ export const findingsShowCommand: CliCommand = {
   usage: "<finding-id> [--reveal]",
   positionals: { min: 1, max: 1 },
   options: { reveal: { type: "boolean", default: false } },
-  details: [
-    "What happened, what the guard did, where, and what to do next, plus the finding's own record.",
-    "A unique prefix of the id is enough.",
-    "",
-    "--reveal  re-read the evidence around it from the transcript (masked: secret values never print)",
+  flags: [["--reveal", "re-read the evidence around it from the transcript (masked: secret values never print)"]],
+  notes: [
+    "What happened, what the guard did, where, and what to do next, plus the finding's own record. A unique prefix of the id is enough: `doorman findings` lists them.",
   ],
   async run(ctx, args) {
     const labels = ruleLabels(ctx);
     return withEngine(ctx, false, ({ engine }) => {
       const all = radarRows(engine.shownFindings(), ctx.io.home);
-      const row = byIdOrPrefix(all, args.positionals[0]!, (r) => r.finding_id, "finding");
+      const row = byIdOrPrefix(all, args.positionals[0]!, (r) => r.finding_id, "finding", "doorman findings --all");
       const bucket = row.status === "open" ? "open" : "triaged";
       const group = exposureGroups(all.filter((r) => r.exposure_key === row.exposure_key && (r.status === "open" ? "open" : "triaged") === bucket))[0]!;
       const masked = maskFindingRow(row);
@@ -232,39 +250,41 @@ export const findingsShowCommand: CliCommand = {
         ...(reveal ? { reveal } : {}),
       };
       const s = ctx.style;
-      const field = (k: string, val: string | undefined) => (val ? [`  ${s.dim(k.padEnd(11))}${val}`] : []);
+      const ui = ctx.ui;
+      const field = (k: string, val: string | undefined): KvRow => (val ? [k, val] : false);
       const text = [
-        `${paintSeverity(s, row.severity)}  ${s.bold(plain(cardTitle(masked, labels)))}`,
-        s.dim(`${ruleLabel(row, labels)} · ${row.place} · ${sources.join(" · ")}`),
+        `${paintSeverity(s, row.severity)}  ${ui.section(plain(cardTitle(masked, labels)))}`,
+        s.dim(ui.list([ruleLabel(row, labels), row.place, ...sources])),
         "",
-        ...field("What", what),
-        ...field("Action", OUTCOME_WORDS[group.outcome]),
-        ...field("Where", where),
-        ...field("Do next", next),
+        ...ui.kv([field("What", what), field("Action", OUTCOME_WORDS[group.outcome]), field("Where", where), field("Do next", next)]),
         "",
-        ...field("Status", STATUS_WORDS[row.status]),
-        ...field("Confidence", confidenceOf(row)),
-        ...field("Seen", `${row.first_seen_at === row.last_seen_at ? row.last_seen_at : `${row.first_seen_at} to ${row.last_seen_at}`} (${row.occurrences}x)`),
-        ...field("Session", row.session_id),
-        ...field("Tool", row.tool_name),
-        ...field("Target", masked.target ? oneLine(masked.target, 120) : undefined),
-        ...field("Held", row.resolution ? RESOLUTION_WORDS[row.resolution] : undefined),
-        ...field("Excerpt", oneLine(masked.excerpt, 200)),
-        ...field("ID", row.finding_id),
+        ...ui.kv([
+          field("Status", STATUS_WORDS[row.status]),
+          field("Confidence", confidenceOf(row)),
+          field("Seen", `${row.first_seen_at === row.last_seen_at ? row.last_seen_at : `${row.first_seen_at} to ${row.last_seen_at}`} (${row.occurrences}x)`),
+          field("Session", row.session_id),
+          field("Tool", row.tool_name),
+          field("Target", masked.target ? oneLine(masked.target, 120) : undefined),
+          field("Held", row.resolution ? RESOLUTION_WORDS[row.resolution] : undefined),
+          field("Excerpt", oneLine(masked.excerpt, 200)),
+          field("ID", row.finding_id),
+        ]),
       ];
       if (reveal) {
         text.push("");
         if (reveal.ok === true) {
           text.push(
-            s.bold(`Evidence (${String(reveal.source ?? "transcript")}, masked)`),
+            ui.section("Evidence", `${String(reveal.source ?? "transcript")}, masked`),
             ...String(reveal.text)
               .split("\n")
               .map((l) => `  ${l}`),
           );
           if (reveal.truncated === true) text.push(s.dim("  (cut to the window around the finding)"));
         } else {
-          text.push(s.yellow(`Couldn't reveal the evidence: ${String(reveal.error)}`));
+          text.push(ui.mark("warn", s.warn(`Couldn't reveal the evidence: ${String(reveal.error)}`)));
         }
+      } else if (row.status === "open") {
+        text.push("", ui.next(`\`doorman findings review ${row.finding_id}\` marks it reviewed once handled.`));
       }
       return { data, text };
     });
@@ -281,9 +301,9 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
     usage: "<finding-id...> [--only]",
     positionals: { min: 1, max: 500 },
     options: { only: { type: "boolean", default: false } },
-    details: [
-      "Each id marks its whole exposure (every finding on that Radar card), like the card's button.",
-      "--only  mark just the findings named",
+    flags: [["--only", "mark just the findings named"]],
+    notes: [
+      "Each id marks its whole exposure (every finding on that Radar card), like the card's button. `doorman findings` lists the ids; a unique prefix is enough.",
       "Refuses while Doorman is running: do it in the app then.",
     ],
     async run(ctx, args) {
@@ -292,7 +312,7 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
         const all = radarRows(engine.shownFindings(), ctx.io.home);
         const ids = new Set<string>();
         for (const id of args.positionals) {
-          const row = byIdOrPrefix(all, id, (r) => r.finding_id, "finding");
+          const row = byIdOrPrefix(all, id, (r) => r.finding_id, "finding", "doorman findings --all");
           if (args.values.only === true) {
             ids.add(row.finding_id);
             continue;
@@ -306,8 +326,8 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
         const data = { status, updated, finding_ids: [...ids] };
         const text = [
           updated === 0
-            ? `Nothing changed: ${ids.size === 1 ? "that finding is" : "those findings are"} already ${STATUS_WORDS[status]}.`
-            : `${status === "open" ? "Reopened" : "Marked"} ${updated} finding${updated === 1 ? "" : "s"}${status === "open" ? "" : ` ${STATUS_WORDS[status]}`}.`,
+            ? ctx.ui.mark("off", `Nothing changed: ${ids.size === 1 ? "that finding is" : "those findings are"} already ${STATUS_WORDS[status]}.`)
+            : ctx.ui.mark("ok", `${status === "open" ? "Reopened" : "Marked"} ${plural(updated, "finding")}${status === "open" ? "" : ` ${STATUS_WORDS[status]}`}.`),
         ];
         return { data, text };
       });

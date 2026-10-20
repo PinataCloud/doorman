@@ -5,7 +5,8 @@ import { mcpInventoryNow } from "../../mcp-inventory-now.js";
 import { mcpServerStatus, switchMcpAnswers, type McpInstallOutcome } from "../../mcp-install.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
-import { ago, CliError, table } from "../output.js";
+import { ago, CliError } from "../output.js";
+import { plural } from "../ui.js";
 
 /** `/Users/me/.cursor/mcp.json` → `~/.cursor/mcp.json`. */
 export function homeRelative(path: string, home: string): string {
@@ -21,27 +22,29 @@ export function applyMcpAnswers(ctx: CliContext, enabled: boolean): McpInstallOu
 
 function stateText(ctx: CliContext, row: McpServerRow): string {
   const s = ctx.style;
-  if (row.recognized && row.recognized_stale) return s.yellow("recognized, changed since");
-  if (row.recognized) return s.green("recognized");
-  return s.yellow("unknown");
+  if (row.recognized && row.recognized_stale) return ctx.ui.mark("warn", s.warn("recognized, changed since"));
+  if (row.recognized) return ctx.ui.mark("ok", s.ok("recognized"));
+  return ctx.ui.mark("warn", s.warn("unknown"));
 }
 
 function whereText(ctx: CliContext, row: McpServerRow): string {
   if (row.observed_only) return ctx.style.dim("no config found (seen in transcripts)");
   const places = [...new Set(row.configs.map((c) => mcpConfigHost(c.path)?.label ?? homeRelative(c.path, ctx.io.home)))];
-  return `${places.join(", ")}${row.gatewayed ? ctx.style.purple(" (gateway)") : ""}`;
+  return `${places.join(", ")}${row.gatewayed ? ctx.style.accent(" (gateway)") : ""}`;
 }
 
 const listCommand: CliCommand = {
   name: "mcp",
   summary: "MCP servers on this machine: where they are configured, use, and findings",
   options: { scan: { type: "boolean", default: false } },
-  details: [
-    "Reads every MCP config the app reads (Claude Code, Claude Desktop, Cursor, Windsurf, VS Code,",
-    "Copilot CLI, Zed, Gemini CLI, each project's .mcp.json) and the gateway's observations.",
-    "A server is unknown until you recognize it (doorman mcp recognize <server>).",
-    "",
-    "--scan  read new transcripts first (otherwise the store as last saved)",
+  flags: [["--scan", "read new transcripts first (otherwise the store as last saved)"]],
+  notes: [
+    "Reads every MCP config the app reads (Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, Copilot CLI, Zed, Gemini CLI, each project's .mcp.json) and the gateway's observations.",
+    "A server is unknown until you recognize it with `doorman mcp recognize <server>`.",
+  ],
+  examples: [
+    ["doorman mcp", "every MCP server on this machine"],
+    ["doorman mcp --scan", "read new transcripts first"],
   ],
   async run(ctx, args) {
     const prefs = ctx.prefs();
@@ -60,30 +63,40 @@ const listCommand: CliCommand = {
     }
     const s = ctx.style;
     const now = ctx.io.now();
-    if (inventory.servers.length === 0) return { data: inventory, text: ["No MCP servers configured or seen on this machine."] };
+    if (inventory.servers.length === 0) {
+      const text = ["No MCP servers configured or seen on this machine."];
+      if (args.values.scan !== true) text.push(ctx.ui.next("`doorman mcp --scan` reads new transcripts first."));
+      return { data: inventory, text };
+    }
     const rows = inventory.servers.map((row) => {
       const findings = [
-        row.poison_open > 0 ? s.red(`${row.poison_open} poisoning`) : "",
-        row.unknown_open > 0 ? s.yellow(`${row.unknown_open} unknown-server`) : "",
-        row.changed_tools > 0 ? s.yellow(`${row.changed_tools} changed tool${row.changed_tools === 1 ? "" : "s"}`) : "",
+        row.poison_open > 0 ? s.error(`${row.poison_open} poisoning`) : "",
+        row.unknown_open > 0 ? s.warn(`${row.unknown_open} unknown-server`) : "",
+        row.changed_tools > 0 ? s.warn(plural(row.changed_tools, "changed tool")) : "",
       ].filter((f) => f !== "");
       return [
         s.bold(row.name),
         stateText(ctx, row),
-        row.calls > 0 ? `${row.calls} call${row.calls === 1 ? "" : "s"}${row.last_used_at ? s.dim(`, ${ago(row.last_used_at, now)}`) : ""}` : s.dim("unused"),
+        row.calls > 0 ? `${plural(row.calls, "call")}${row.last_used_at ? s.dim(`, ${ago(row.last_used_at, now)}`) : ""}` : s.dim("unused"),
         findings.length > 0 ? findings.join(", ") : s.dim("none"),
         whereText(ctx, row),
       ];
     });
     const unknown = inventory.servers.filter((r) => !r.recognized).length;
-    return {
-      data: inventory,
-      text: [
-        `${s.bold("MCP servers")}  ${inventory.servers.length} · ${inventory.recognized_count} recognized${unknown > 0 ? ` · ${s.yellow(`${unknown} unknown`)}` : ""}${inventory.stale_recognitions > 0 ? ` · ${s.yellow(`${inventory.stale_recognitions} changed since recognized`)}` : ""} · ${inventory.gatewayed_count} through the gateway`,
-        "",
-        ...table(["SERVER", "STATE", "USE", "FINDINGS", "CONFIGURED IN"], rows),
-      ],
-    };
+    const facts = [
+      String(inventory.servers.length),
+      `${inventory.recognized_count} recognized`,
+      unknown > 0 ? s.warn(`${unknown} unknown`) : "",
+      inventory.stale_recognitions > 0 ? s.warn(`${inventory.stale_recognitions} changed since recognized`) : "",
+      `${inventory.gatewayed_count} through the gateway`,
+    ].filter((f) => f !== "");
+    const text = [
+      ctx.ui.section("MCP servers", ctx.ui.list(facts)),
+      "",
+      ...ctx.ui.table(["SERVER", "STATE", "USE", "FINDINGS", "CONFIGURED IN"], rows, { indent: 2, keep: [0] }),
+    ];
+    if (unknown > 0) text.push("", ctx.ui.next("`doorman mcp recognize <server>` marks a server you know."));
+    return { data: inventory, text };
   },
 };
 
@@ -91,7 +104,7 @@ const listCommand: CliCommand = {
  * re-stamped on every recognize so a later description change reads as stale. */
 function recognize(ctx: CliContext, server: string, recognized: boolean): string[] {
   const key = server.trim();
-  if (key === "") throw new CliError("Name a server.");
+  if (key === "") throw new CliError("No server named.", 2, "`doorman mcp` lists the servers.");
   ctx.requireWritable(`${recognized ? "Recognize" : "Forget"} the server`);
   const prefs = ctx.prefs();
   const current = prefs.mcp_recognized ?? [];
@@ -103,7 +116,7 @@ function recognize(ctx: CliContext, server: string, recognized: boolean): string
   ctx.setPrefs({ mcp_recognized: next, mcp_recognized_at: at });
   // The recognized list feeds livePolicy's approved_mcp_servers.
   const synced = syncGuard(ctx.dataDir, ctx.policy());
-  if (!synced.ok) throw new CliError(`Saved, but the guard's policy didn't update: ${synced.error}`);
+  if (!synced.ok) throw new CliError(`Saved, but the guard's policy didn't update: ${synced.error}`, 1, "`doorman doctor` checks the guard setup.");
   return next;
 }
 
@@ -112,10 +125,12 @@ const recognizeCommand: CliCommand = {
   summary: "Mark an MCP server as one you know (the guard treats it as approved)",
   usage: "<server>",
   positionals: { min: 1, max: 1 },
+  notes: ["Recognizing is case-insensitive and re-stamps the server, so a later change to its tool descriptions shows as changed since recognized."],
+  examples: [["doorman mcp recognize github", "approve the github server"]],
   async run(ctx, args) {
     const server = args.positionals[0]!.trim();
     const recognized = recognize(ctx, server, true);
-    return { data: { server, recognized }, text: [`Recognized ${ctx.style.bold(server)}.`] };
+    return { data: { server, recognized }, text: [ctx.ui.mark("ok", `Recognized ${ctx.style.bold(server)}.`)] };
   },
 };
 
@@ -124,13 +139,18 @@ const forgetCommand: CliCommand = {
   summary: "Take an MCP server off the recognized list",
   usage: "<server>",
   positionals: { min: 1, max: 1 },
+  examples: [["doorman mcp forget github", "github is unknown again"]],
   async run(ctx, args) {
     const server = args.positionals[0]!.trim();
     const was = (ctx.prefs().mcp_recognized ?? []).some((s) => s.toLowerCase() === server.toLowerCase());
     const recognized = recognize(ctx, server, false);
     return {
       data: { server, recognized },
-      text: [was ? `${ctx.style.bold(server)} is no longer recognized.` : `${ctx.style.bold(server)} wasn't recognized; nothing changed.`],
+      text: [
+        was
+          ? ctx.ui.mark("ok", `${ctx.style.bold(server)} is no longer recognized.`)
+          : ctx.ui.mark("off", `${ctx.style.bold(server)} wasn't recognized. Nothing changed.`),
+      ],
     };
   },
 };
@@ -138,9 +158,14 @@ const forgetCommand: CliCommand = {
 function hostRows(ctx: CliContext, hosts: McpInstallOutcome["hosts"]): string[] {
   const s = ctx.style;
   if (hosts.length === 0) return [s.dim("No MCP host Doorman registers with is on this machine (VS Code, Copilot CLI).")];
-  return table(
+  return ctx.ui.table(
     ["HOST", "REGISTERED", "CONFIG"],
-    hosts.map((h) => [h.label, h.unreadable ? s.red("unreadable") : h.registered ? s.green("yes") : s.dim("no"), homeRelative(h.path, ctx.io.home)]),
+    hosts.map((h) => [
+      h.label,
+      h.unreadable ? ctx.ui.mark("error", s.error("unreadable")) : h.registered ? ctx.ui.mark("ok", s.ok("yes")) : ctx.ui.mark("off", s.dim("no")),
+      homeRelative(h.path, ctx.io.home),
+    ]),
+    { indent: 2, keep: [0, 1] },
   );
 }
 
@@ -150,10 +175,13 @@ const serverStatusCommand: CliCommand = {
   async run(ctx) {
     const wanted = ctx.prefs().mcp_answers === true;
     const hosts = mcpServerStatus(ctx.dataDir, ctx.io.home, ctx.io.env);
-    return {
-      data: { wanted, hosts },
-      text: [`${ctx.style.bold("Doorman MCP server")}  ${wanted ? ctx.style.green("on") : ctx.style.dim("off")}`, ...hostRows(ctx, hosts)],
-    };
+    const s = ctx.style;
+    const text = [
+      `${ctx.ui.section("Doorman MCP server")}  ${wanted ? ctx.ui.mark("ok", s.ok("on")) : ctx.ui.mark("off", s.dim("off"))}`,
+      ...hostRows(ctx, hosts),
+    ];
+    if (!wanted) text.push("", ctx.ui.next("`doorman mcp server install` registers it."));
+    return { data: { wanted, hosts }, text };
   },
 };
 
@@ -162,21 +190,24 @@ function serverSwitch(enabled: boolean): CliCommand["run"] {
     ctx.requireWritable(`${enabled ? "Register" : "Unregister"} Doorman's MCP server`);
     ctx.setPrefs({ mcp_answers: enabled });
     const outcome = applyMcpAnswers(ctx, enabled);
-    if (!outcome.ok) throw new CliError(`Couldn't ${enabled ? "register" : "unregister"} the MCP server: ${outcome.error ?? "failed"}`);
+    if (!outcome.ok) {
+      throw new CliError(`Couldn't ${enabled ? "register" : "unregister"} the MCP server: ${outcome.error ?? "failed"}`, 1, "`doorman mcp server status` shows each host's config.");
+    }
     const registered = outcome.hosts.filter((h) => h.registered).map((h) => h.label);
     const head = enabled
       ? registered.length > 0
         ? `Registered Doorman's MCP server with ${registered.join(", ")}.`
-        : "MCP answers are on; no host to register with yet."
+        : "MCP answers are on. No host to register with yet."
       : "Doorman's MCP server is unregistered.";
-    return { data: { wanted: enabled, hosts: outcome.hosts }, text: [head, ...hostRows(ctx, outcome.hosts)] };
+    return { data: { wanted: enabled, hosts: outcome.hosts }, text: [ctx.ui.mark("ok", head), ...hostRows(ctx, outcome.hosts)] };
   };
 }
 
 const serverInstallCommand: CliCommand = {
   name: "mcp server install",
   summary: "Register Doorman's MCP server with every MCP host here (VS Code, Copilot CLI)",
-  details: ["Turns on the app's MCP answers setting (prefs mcp_answers) and recognizes the doorman server."],
+  notes: ["Turns on the app's MCP answers setting (prefs mcp_answers) and recognizes the doorman server."],
+  examples: [["doorman mcp server install", "register with VS Code and Copilot CLI"]],
   run: serverSwitch(true),
 };
 

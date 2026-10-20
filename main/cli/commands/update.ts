@@ -60,24 +60,28 @@ export const updateCommand: CliCommand = {
   summary: "Check for a newer Doorman CLI and install it",
   usage: "[--check]",
   options: { check: { type: "boolean", default: false } },
-  details: [
-    "--check  only say whether an update is available (exit 0 either way)",
-    "",
-    "Doorman checks npm for a newer version at most once a day and says so after a",
-    "command. Turn that off with DOORMAN_NO_UPDATE_CHECK=1 (it is also off under CI",
-    "and when stderr is not a terminal).",
+  flags: [["--check", "only say whether an update is available (exit 0 either way)"]],
+  notes: [
+    "Doorman checks npm for a newer version at most once a day and says so after a command. Turn that off with DOORMAN_NO_UPDATE_CHECK=1 (it is also off under CI and when stderr is not a terminal).",
+  ],
+  examples: [
+    ["doorman update --check", "is there a newer version?"],
+    ["doorman update", "install it"],
   ],
   async run(ctx: CliContext, args) {
     const name = ctx.io.packageName ?? "@pinata/doorman";
     const current = ctx.io.version;
     const status = await checkForUpdate(ctx, name, current);
-    if (status.latest === undefined) throw new CliError(`couldn't check for updates: ${status.error ?? "no answer from the registry"}`);
-    const s = ctx.style;
-    if (!status.update_available) {
-      return { data: { ...status, updated: false }, text: [`Doorman CLI ${current} is up to date (latest on npm: ${status.latest}).`] };
+    if (status.latest === undefined) {
+      throw new CliError(`Doorman couldn't check for updates: ${status.error ?? "no answer from the registry"}`, 1, "Check the network and run `doorman update` again.");
     }
-    const available = `Doorman CLI ${status.latest} is available (you have ${current}).`;
-    if (args.values.check === true) return { data: { ...status, updated: false }, text: [available] };
+    const s = ctx.style;
+    const ui = ctx.ui;
+    if (!status.update_available) {
+      return { data: { ...status, updated: false }, text: [ui.mark("ok", `Doorman CLI ${current} is up to date (latest on npm: ${status.latest}).`)] };
+    }
+    const available = ui.mark("info", `Doorman CLI ${status.latest} is available (you have ${current}).`);
+    if (args.values.check === true) return { data: { ...status, updated: false }, text: [available, ui.next("`doorman update` installs it.")] };
 
     const npm = ctx.io.runNpm ?? defaultNpmRunner(ctx.io.platform);
     const packageDir = ctx.io.packageDir ?? cliPackageDir();
@@ -90,7 +94,7 @@ export const updateCommand: CliCommand = {
           : kind === "project"
             ? `It is installed in a project: run \`npm install ${spec}\` there.`
             : "It runs from a source checkout: pull the repo and run `npm run compile`.";
-      return { data: { ...status, updated: false, install: kind }, text: [available, how] };
+      return { data: { ...status, updated: false, install: kind }, text: [available, ui.prose(how)] };
     }
 
     ctx.io.stderr.write(s.dim(`Installing ${spec} with npm...\n`));
@@ -99,12 +103,14 @@ export const updateCommand: CliCommand = {
     if (result.status !== 0 || now !== status.latest) {
       const tail = result.output.trim().split(/\r?\n/).slice(-6).join("\n");
       throw new CliError(
-        `npm couldn't install ${spec}${result.status !== 0 ? ` (exit ${result.status})` : ""}. Run \`npm install -g ${spec}\` yourself${tail ? `:\n${tail}` : "."}`,
+        `npm couldn't install ${spec}${result.status !== 0 ? ` (exit ${result.status})` : ""}${tail ? `:\n${tail}` : "."}`,
+        1,
+        `Run \`npm install -g ${spec}\` yourself.`,
       );
     }
     return {
       data: { ...status, updated: true, install: kind, version: now, cache: updateCachePath(ctx.dataDir) },
-      text: [s.green(`Updated the Doorman CLI from ${current} to ${now}.`)],
+      text: [ui.mark("ok", s.ok(`Updated the Doorman CLI from ${current} to ${now}.`))],
     };
   },
 };

@@ -3,7 +3,8 @@ import { alertsBySession, radarRows } from "../../lib/app-views.js";
 import { maskFindingRow, maskTurnText } from "../../lib/masking.js";
 import type { LedgerTurn, SessionSummary } from "../../lib/turns.js";
 import type { CliCommand } from "../command.js";
-import { ago, CliError, compactNumber, table } from "../output.js";
+import { ago, CliError, compactNumber } from "../output.js";
+import { plural } from "../ui.js";
 import { byIdOrPrefix, cardTitle, intOption, oneLine, paintSeverity, ruleLabels, withEngine } from "./data-shared.js";
 
 /** A session as the Ledger lists it, tokens only (the app shows no dollars),
@@ -60,11 +61,16 @@ export const sessionsCommand: CliCommand = {
     source: { type: "string" },
     scan: { type: "boolean", default: false },
   },
-  details: [
-    "--days <n>     sessions active in the last n days",
-    "--limit <n>    at most n sessions (default 20, 0 = all)",
-    "--source <id>  one agent: claude-code, codex, cursor, ... (id or name)",
-    "--scan         read new transcripts first",
+  flags: [
+    ["--days <n>", "sessions active in the last n days"],
+    ["--limit <n>", "at most n sessions (default 20, 0 = all)"],
+    ["--source <id>", "one agent: claude-code, codex, cursor, ... (id or name)"],
+    ["--scan", "read new transcripts first"],
+  ],
+  notes: ["Newest first. The ID column is what `doorman session` takes; a unique prefix is enough."],
+  examples: [
+    ["doorman sessions --scan", "read new transcripts, then list sessions"],
+    ["doorman sessions --days 1 --source codex", "Codex sessions from the last day"],
   ],
   async run(ctx, args) {
     const v = args.values;
@@ -85,8 +91,24 @@ export const sessionsCommand: CliCommand = {
       const shown = limit === 0 ? matching : matching.slice(0, limit);
       const data = { total: matching.length, sessions: shown.map((s) => sessionJson(s, labels.get(s.source) ?? s.source, alerts.get(s.id) ?? 0)) };
       const st = ctx.style;
-      if (shown.length === 0) return { data, text: [st.dim("No sessions.")] };
-      const text = table(
+      const ui = ctx.ui;
+      if (shown.length === 0) {
+        const filtered = days !== undefined || source !== undefined;
+        return {
+          data,
+          text: [
+            ui.mark("off", "No sessions."),
+            ui.next(
+              v.scan !== true
+                ? "`doorman sessions --scan` reads new transcripts first."
+                : filtered
+                  ? "`doorman sessions` without --days or --source lists them all."
+                  : "`doorman doctor` checks which agents' transcripts Doorman can read.",
+            ),
+          ],
+        };
+      }
+      const text = ui.table(
         ["LAST ACTIVITY", "SOURCE", "TURNS", "TOKENS", "ALERTS", "TITLE", "ID"],
         shown.map((s) => {
           const n = alerts.get(s.id) ?? 0;
@@ -95,11 +117,13 @@ export const sessionsCommand: CliCommand = {
             labels.get(s.source) ?? s.source,
             String(s.turns + s.prompts),
             compactNumber(s.input_tokens + s.output_tokens),
-            n > 0 ? st.yellow(String(n)) : st.dim("0"),
+            n > 0 ? st.warn(String(n)) : st.dim("0"),
             oneLine(s.title === undefined ? "(untitled)" : maskTurnText(s.title), 56),
-            s.id,
+            // On a terminal the id's first block is enough for `doorman session`.
+            ui.width !== undefined ? s.id.slice(0, 8) : s.id,
           ];
         }),
+        { keep: [0, 2, 3, 4, 6] },
       );
       if (shown.length < matching.length) text.push(st.dim(`... ${matching.length - shown.length} more (--limit 0 shows all)`));
       return { data, text };
@@ -117,12 +141,12 @@ export const sessionCommand: CliCommand = {
     offset: { type: "string" },
     full: { type: "boolean", default: false },
   },
-  details: [
-    "Turns oldest first, text masked as the Ledger shows it. A unique prefix of the id is enough.",
-    "--limit <n>   turns per page (default 50)",
-    "--offset <n>  skip the first n turns",
-    "--full        print each turn's whole text (default: the first 400 characters)",
+  flags: [
+    ["--limit <n>", "turns per page (default 50)"],
+    ["--offset <n>", "skip the first n turns"],
+    ["--full", "print each turn's whole text (default: the first 400 characters)"],
   ],
+  notes: ["Turns oldest first, text masked as the Ledger shows it. A unique prefix of the id is enough: `doorman sessions` lists them."],
   async run(ctx, args) {
     const limit = intOption(args.values.limit, "limit", 50, 1);
     const offset = intOption(args.values.offset, "offset", 0);
@@ -130,7 +154,7 @@ export const sessionCommand: CliCommand = {
     const ruleNames = ruleLabels(ctx);
     return withEngine(ctx, false, ({ engine }) => {
       const sessions = engine.sessions();
-      const summary = byIdOrPrefix(sessions, args.positionals[0]!, (s) => s.id, "session");
+      const summary = byIdOrPrefix(sessions, args.positionals[0]!, (s) => s.id, "session", "doorman sessions --limit 0");
       const labels = sourceLabels(engine);
       const page = engine.sessionTurns(summary.id, offset, limit);
       const rows = radarRows(engine.shownFindings(), ctx.io.home)
@@ -146,26 +170,22 @@ export const sessionCommand: CliCommand = {
         findings: rows,
       };
       const st = ctx.style;
+      const ui = ctx.ui;
       const title = summary.title === undefined ? "(untitled)" : oneLine(maskTurnText(summary.title), 100);
-      const text = [
-        st.bold(title),
-        st.dim(
-          [
-            labels.get(summary.source) ?? summary.source,
-            `${summary.turns + summary.prompts} turns`,
-            `${compactNumber(summary.input_tokens + summary.output_tokens)} tokens`,
-            summary.models[0],
-            summary.cwd,
-            `${summary.started_at} to ${summary.ended_at}`,
-          ]
-            .filter(Boolean)
-            .join(" · "),
-        ),
-        st.dim(summary.id),
-      ];
+      const facts = ui.list(
+        [
+          labels.get(summary.source) ?? summary.source,
+          plural(summary.turns + summary.prompts, "turn"),
+          `${compactNumber(summary.input_tokens + summary.output_tokens)} tokens`,
+          summary.models[0],
+          summary.cwd,
+          `${summary.started_at} to ${summary.ended_at}`,
+        ].filter((x): x is string => !!x),
+      );
+      const text = [ui.section(title), ...(ui.width === undefined ? [facts] : ui.wrap(facts, ui.width)).map(st.dim), st.dim(summary.id)];
       const onPage = new Set(page.turns.map((t) => t.id));
       const findingLine = (f: (typeof rows)[number]) =>
-        `    ${st.purple("finding")} ${paintSeverity(st, f.severity)} ${cardTitle(f, ruleNames)} ${st.dim(f.finding_id)}`;
+        `    ${ui.mark("warn", st.accent("finding"))} ${paintSeverity(st, f.severity)} ${cardTitle(f, ruleNames)} ${st.dim(f.finding_id)}`;
       for (const t of page.turns) {
         const tokens = t.usage ? ` · ${compactNumber(t.usage.input_tokens + t.usage.output_tokens)} tokens` : "";
         const tools = t.tools && t.tools.length > 0 ? ` · ${t.tools.join(", ")}` : "";
@@ -175,10 +195,11 @@ export const sessionCommand: CliCommand = {
         for (const line of shown.split("\n")) if (line.trim() !== "") text.push(`  ${line}`);
         for (const f of rows) if (f.turn_id === t.id) text.push(findingLine(f));
       }
+      if (page.turns.length === 0) text.push("", st.dim(offset > 0 ? `No turns past ${offset}; the session has ${page.total}.` : "No turns stored for this session."));
       const elsewhere = rows.filter((f) => !f.turn_id || !onPage.has(f.turn_id));
-      if (elsewhere.length > 0) text.push("", st.bold(`Findings not on these turns (${elsewhere.length})`), ...elsewhere.map(findingLine));
+      if (elsewhere.length > 0) text.push("", ui.section(`Findings not on these turns (${elsewhere.length})`), ...elsewhere.map(findingLine));
       const end = offset + page.turns.length;
-      if (end < page.total) text.push("", st.dim(`Turns ${offset + 1}-${end} of ${page.total}. Next: --offset ${end}`));
+      if (end < page.total) text.push("", st.dim(`Turns ${offset + 1}-${end} of ${page.total}.`), ui.next(`\`doorman session ${summary.id} --offset ${end}\` shows the next page.`));
       return { data, text };
     });
   },
@@ -190,17 +211,25 @@ export const searchCommand: CliCommand = {
   usage: "<query...> [--limit <n>]",
   positionals: { min: 1, max: 50 },
   options: { limit: { type: "string" } },
-  details: ["The Event Ledger's search: newest first, text masked.", "--limit <n>  at most n turns (default 20)"],
+  flags: [["--limit <n>", "at most n turns (default 20)"]],
+  notes: ["The Event Ledger's search: newest first, text masked."],
+  examples: [
+    ["doorman search npm publish", "turns that mention npm publish"],
+    ["doorman search .env --limit 50", "up to 50 turns that touch .env"],
+  ],
   async run(ctx, args) {
     const query = args.positionals.join(" ").trim();
-    if (query === "") throw new CliError("Give something to search for.", 2);
+    if (query === "") throw new CliError("Give something to search for.", 2, "`doorman search npm publish`, for example.");
     const limit = intOption(args.values.limit, "limit", 20, 1, 500);
     return withEngine(ctx, false, ({ engine }) => {
       const labels = sourceLabels(engine);
       const hits = engine.search(query, limit).map(turnJson);
       const data = { query, turns: hits };
       const st = ctx.style;
-      if (hits.length === 0) return { data, text: [st.dim(`Nothing matches "${query}".`)] };
+      const ui = ctx.ui;
+      if (hits.length === 0) {
+        return { data, text: [ui.mark("off", `Nothing matches "${query}".`), ui.next("`doorman scan` reads new transcripts, then search again.")] };
+      }
       const needle = query.toLowerCase().split(/\s+/)[0] ?? "";
       const text: string[] = [];
       for (const t of hits) {
@@ -209,7 +238,7 @@ export const searchCommand: CliCommand = {
         const start = Math.max(0, at - 60);
         const snippet = `${start > 0 ? "..." : ""}${oneLine(body.slice(start, start + 200), 200)}`;
         text.push(
-          `${st.dim(t.at.slice(0, 16).replace("T", " "))}  ${labels.get(t.source) ?? t.source}  ${t.role}  ${st.dim(t.session_id)}`,
+          ui.fit(`${st.dim(t.at.slice(0, 16).replace("T", " "))}  ${labels.get(t.source) ?? t.source}  ${t.role}  ${st.dim(t.session_id)}`),
           `  ${snippet}`,
         );
       }

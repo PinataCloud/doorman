@@ -169,12 +169,12 @@ export function maybeStartModelDownload(ctx: CliContext, commandName: string): b
       return false;
     }
     handOverLock(ctx.dataDir, "model-download", process.pid, pid);
-    const stderr = ctx.io.stderr as NodeJS.WritableStream & { isTTY?: boolean };
-    if (stderr.isTTY === true) {
+    if (ctx.io.stderr.isTTY === true) {
       const plan = modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env);
       const model = plan.selected === "doorman-1" && doormanSource(ctx.io.env) !== undefined ? "doorman-1" : "stock";
       const size = (manifestBytes(injectionModelManifest(model)) / 1e6).toFixed(0);
-      stderr.write(ctx.style.dim(`Downloading the injection classifier (${model}, ${size} MB) in the background; \`doorman model\` shows its progress.\n`));
+      const ui = ctx.errUi;
+      ctx.io.stderr.write(`${ui.mark("info", ui.style.dim(`Downloading the injection classifier (${model}, ${size} MB) in the background; \`doorman model\` shows its progress.`))}\n`);
     }
     ctx.log(`started the model download in the background (pid ${pid})`);
     return true;

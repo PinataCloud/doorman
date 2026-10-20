@@ -17,7 +17,9 @@ import { readPrefsFile, writePrefsFile } from "../lib/prefs-file.js";
 import { Store, type Prefs } from "../state.js";
 import { loadClassifier, modelPlan } from "./classifier.js";
 import { processLabel } from "./docker-sandbox.js";
-import { CliError, styles, type Styles } from "./output.js";
+import { CliError, type Styles } from "./output.js";
+import { startProgress, withPolledProgress } from "./progress.js";
+import { Ui, plural } from "./ui.js";
 import type { NpmRunner } from "./commands/update.js";
 
 export interface CliEnvironment {
@@ -26,8 +28,8 @@ export interface CliEnvironment {
   platform: NodeJS.Platform;
   /** The CLI package's version, reported as `appVersion` in what it writes. */
   version: string;
-  stdout: NodeJS.WritableStream & { isTTY?: boolean };
-  stderr: NodeJS.WritableStream;
+  stdout: NodeJS.WritableStream & { isTTY?: boolean; columns?: number };
+  stderr: NodeJS.WritableStream & { isTTY?: boolean; columns?: number };
   stdin: NodeJS.ReadableStream & { isTTY?: boolean };
   now(): number;
   verbose: boolean;
@@ -80,16 +82,25 @@ export interface EngineHandle {
  */
 export class CliContext {
   readonly dataDir: string;
+  /** How stdout is drawn (ui.ts): decorated on a terminal, plain when piped. */
+  readonly ui: Ui;
+  /** The same for stderr, where prompts, progress and errors go. */
+  readonly errUi: Ui;
+  /** stdout's styles (`ui.style`). */
   readonly style: Styles;
   /** The command being run, for the writer lock's record. */
   commandName = "";
+  /** `--json`: stdout is machine output, and nothing draws on stderr either. */
+  json = false;
   private storeInstance: Store | undefined;
   /** This command holds the CLI writer lock (taken by its first write). */
   private writing = false;
 
   constructor(readonly io: CliEnvironment) {
     this.dataDir = doormanDataDir(io.env, io.platform, io.home);
-    this.style = styles(io.stdout.isTTY === true && io.env.NO_COLOR === undefined);
+    this.ui = Ui.for(io.stdout, io.env, io.platform);
+    this.errUi = Ui.for(io.stderr, io.env, io.platform);
+    this.style = this.ui.style;
   }
 
   get guardDir(): string {
@@ -97,7 +108,16 @@ export class CliContext {
   }
 
   log(message: string): void {
-    if (this.io.verbose) this.io.stderr.write(`${this.style.dim(message)}\n`);
+    if (this.io.verbose) this.io.stderr.write(`${this.errUi.style.dim(message)}\n`);
+  }
+
+  /** The transcript scan, its progress on stderr: redrawn on a terminal, a
+   * line every few seconds otherwise, none under --json or --verbose (whose
+   * log lines it would cut into). */
+  async scan(engine: CaptureEngine): Promise<void> {
+    if (this.json || this.io.verbose) return engine.scan();
+    const progress = startProgress(this.errUi, this.io.stderr, { label: "Scanning transcripts", format: (n) => plural(n, "file") + " read" });
+    await withPolledProgress(progress, () => engine.filesSeen, () => engine.scan());
   }
 
   /** Who owns the data besides this process: the heartbeat's writer when it
@@ -251,7 +271,7 @@ export class CliContext {
       ...(snapshot ? {} : { shouldStop: () => this.running() !== undefined }),
     });
     engine.open();
-    if (options.scan) await engine.scan();
+    if (options.scan) await this.scan(engine);
     return {
       engine,
       snapshot,
