@@ -246,6 +246,9 @@ describe("doorman guard and policy commands", () => {
       writeFileSync(settings(), JSON.stringify({ theme: "dark" }));
       const installed = await run(["guard", "install"], cli);
       expect(installed.code, installed.err).toBe(0);
+      expect(installed.out).toMatch(/^Guard on\./);
+      const again = await run(["guard", "install"], cli);
+      expect(again.out).toMatch(/^Guard already on; nothing changed\./);
       const doc = readFileSync(settings(), "utf8");
       // JSON escapes a Windows path's `\`.
       expect(doc).toContain(JSON.stringify(join(guardDir(dataDir), "guard.js")).slice(1, -1));
@@ -265,9 +268,22 @@ describe("doorman guard and policy commands", () => {
       await run(["policy", "confirm", "--hold", "30"], cli);
       expect(readFileSync(settings(), "utf8")).toContain('"timeout": 45');
 
-      expect((await run(["guard", "uninstall"], cli)).code).toBe(0);
+      const off = await run(["guard", "uninstall"], cli);
+      expect(off.code).toBe(0);
+      // Off: no hold or answer settings that only apply while it is on.
+      expect(off.out).not.toMatch(/^\s*(holds|answers)\b/m);
+      expect(off.out).toMatch(/Claude Code\s+missing/);
       expect(carriesGuardMarker(readFileSync(settings(), "utf8"))).toBe(false);
       expect(prefs().guard_wanted).toBe(false);
+    });
+
+    it("matches a mistyped subcommand against the family's commands", async () => {
+      const typo = await run(["guard", "instal"]);
+      expect(typo.code).toBe(2);
+      expect(typo.err).toBe('doorman: Unknown guard command "instal". Did you mean `doorman guard install`?\n');
+      const family = await run(["gaurd", "install"]);
+      expect(family.code).toBe(2);
+      expect(family.err).toContain("Did you mean `doorman guard install`?");
     });
 
     // Windows runs a bare `node`, no launcher to probe.

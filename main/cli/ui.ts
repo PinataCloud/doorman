@@ -19,9 +19,11 @@ import { styles, visibleLength, type ColorDepth, type Styles } from "./output.js
  *   character Doorman itself writes (· — … → and the like, `toAscii`) in its
  *   ASCII form; `--json` stays as it is. The art is ASCII always.
  * - Fitting (truncating table cells, wrapping long values) only on a
- *   terminal, to its width (`COLUMNS` when the terminal doesn't say); piped
- *   output keeps every character. In-place redraws (progress, the watch
- *   countdown) also need a terminal that isn't `dumb`.
+ *   terminal, to its width (`COLUMNS` when the terminal doesn't say), read
+ *   afresh on every access so a resized window gets the new width. Piped
+ *   output keeps every character, whatever a caller asks (`truncate` is then
+ *   a no-op). In-place redraws (progress, the watch countdown) also need a
+ *   terminal that isn't `dumb`.
  */
 
 export interface TermInfo {
@@ -32,8 +34,9 @@ export interface TermInfo {
   ascii: boolean;
   /** Unicode glyphs and frames (only with `decorate`, never with `ascii`). */
   unicode: boolean;
-  /** Columns to fit to; undefined when the stream is not a terminal. */
-  width: number | undefined;
+  /** Columns to fit to; undefined when the stream is not a terminal. Read
+   * from the stream on every access, so it follows a resized window. */
+  readonly width: number | undefined;
   /** Lines may be redrawn in place. */
   live: boolean;
 }
@@ -47,7 +50,7 @@ export function termInfo(stream: UiStream, env: NodeJS.ProcessEnv, platform: Nod
   const tty = stream.isTTY === true;
   const dumb = env.TERM === "dumb";
   const decorate = tty && !dumb && (env.NO_COLOR === undefined || env.NO_COLOR === "");
-  const columns = stream.columns !== undefined && stream.columns > 0 ? stream.columns : Number.parseInt(env.COLUMNS ?? "", 10);
+  const envColumns = Number.parseInt(env.COLUMNS ?? "", 10);
   const forced = asciiSetting(env);
   const ascii = forced ?? (tty && asciiTerminal(env, platform));
   return {
@@ -55,7 +58,12 @@ export function termInfo(stream: UiStream, env: NodeJS.ProcessEnv, platform: Nod
     decorate,
     ascii,
     unicode: decorate && !ascii,
-    width: tty ? (Number.isFinite(columns) && columns > 0 ? columns : 80) : undefined,
+    // A getter: Node updates a TTY stream's `columns` on SIGWINCH.
+    get width() {
+      if (!tty) return undefined;
+      const columns = stream.columns !== undefined && stream.columns > 0 ? stream.columns : envColumns;
+      return Number.isFinite(columns) && columns > 0 ? columns : 80;
+    },
     live: tty && !dumb,
   };
 }
@@ -170,9 +178,19 @@ export type KvRow = readonly [key: string, value: string] | undefined | false;
 export interface TableOptions {
   /** Spaces before every line. */
   indent?: number;
-  /** Columns that are never shortened to fit (ids, counts). */
+  /** Columns never cut: ids and names a command takes back, short counts.
+   * A table that can't fit without cutting them prints as records. */
   keep?: readonly number[];
+  /** Low-value columns (sightings, last seen), left out in this order
+   * before any other is cut short; records leave them out too. */
+  drop?: readonly number[];
 }
+
+/** No cut column is narrower than this (or its header): the table turns
+ * into records instead. */
+const MIN_CUT = 20;
+/** Below this many columns a table that needs cutting prints as records. */
+const NARROW = 70;
 
 export class Ui {
   readonly style: Styles;
@@ -243,7 +261,8 @@ export class Ui {
    * Keys left (dim on a terminal, unless `plainKeys`: the caller styled
    * them), values aligned after the widest key (or `keyWidth`). On a
    * terminal a value too long for the line (`width`, default the
-   * terminal's) wraps under itself rather than under the key.
+   * terminal's) wraps under itself rather than under the key; when the keys
+   * leave it under 20 columns, it goes on the lines below its key instead.
    */
   kv(rows: readonly KvRow[], options: { indent?: number; plainKeys?: boolean; keyWidth?: number; width?: number } = {}): string[] {
     const shown = rows.filter((r): r is readonly [string, string] => !!r);
@@ -254,7 +273,12 @@ export class Ui {
     for (const [key, value] of shown) {
       const head = `${indent}${this.decorate && !options.plainKeys ? this.style.dim(key) : key}${" ".repeat(keyWidth - visibleLength(key))}  `;
       const room = width === undefined ? undefined : width - visibleLength(head);
-      const lines = room !== undefined && room >= 20 ? this.wrap(value, room) : [value];
+      if (width !== undefined && room! < 20 && visibleLength(value) > room!) {
+        const hang = `${indent}    `;
+        out.push(...(head.trim() ? [head.trimEnd()] : []), ...this.wrap(value, Math.max(20, width - hang.length)).map((l) => `${hang}${l}`));
+        continue;
+      }
+      const lines = room !== undefined ? this.wrap(value, room) : [value];
       out.push(`${head}${lines[0] ?? ""}`.trimEnd());
       for (const more of lines.slice(1)) out.push(`${" ".repeat(visibleLength(head))}${more}`);
     }
@@ -263,39 +287,57 @@ export class Ui {
 
   /**
    * Columns padded to the widest cell (colour codes don't count), two spaces
-   * apart. On a terminal the widest cells are cut (with an ellipsis, to no
-   * less than 8 columns or the header) until the table fits; columns in
-   * `keep` only when cutting the others isn't enough. Piped, nothing is cut.
-   * The header is dim on a terminal.
+   * apart, the header dim on a terminal. Piped, nothing is cut or left out.
+   * On a terminal that is too narrow: the `drop` columns go first, in order
+   * and only while the table doesn't fit; then the columns not
+   * in `keep` are cut to one common width, the widest first, with an
+   * ellipsis. When that would leave a cut column under 20 columns (or its
+   * header), the terminal is under 70 columns, or the kept ones alone don't
+   * fit, each row prints as a record
+   * instead: its first and kept cells on one line (labelled by header), the
+   * rest wrapped under it, nothing cut.
    */
   table(header: readonly string[], rows: readonly (readonly string[])[], options: TableOptions = {}): string[] {
     const indent = options.indent ?? 0;
-    const cols = header.length;
     const natural = header.map((h, i) => Math.max(visibleLength(h), ...rows.map((r) => visibleLength(r[i] ?? ""))));
-    const widths = [...natural];
-    if (this.width !== undefined) {
-      const width = this.width;
-      const total = () => indent + widths.reduce((a, b) => a + b, 0) + 2 * (cols - 1);
-      const keep = new Set(options.keep ?? []);
-      const floor = (i: number) => Math.min(natural[i]!, Math.max(visibleLength(header[i]!), 8));
-      for (const spareKept of [false, true]) {
-        while (total() > width) {
-          let widest = -1;
-          for (let i = 0; i < cols; i++) {
-            if ((spareKept || !keep.has(i)) && widths[i]! > floor(i) && (widest < 0 || widths[i]! > widths[widest]!)) widest = i;
-          }
-          if (widest < 0) break;
-          widths[widest] = Math.max(floor(widest), widths[widest]! - (total() - width));
-        }
-      }
+    const all = header.map((_, i) => i);
+    const width = this.width;
+    if (width === undefined) return this.grid(header, rows, all, natural, indent);
+    const keep = new Set(options.keep ?? []);
+    const drop = (options.drop ?? []).filter((i) => i >= 0 && i < header.length);
+    // The width every cut column may take with these columns shown:
+    // Infinity = nothing is cut, undefined = it doesn't fit as a table.
+    const capFor = (shown: readonly number[]): number | undefined => {
+      const cut = shown.filter((i) => !keep.has(i));
+      const fixed = indent + 2 * (shown.length - 1) + shown.reduce((a, i) => a + (keep.has(i) ? natural[i]! : 0), 0);
+      const total = (cap: number) => fixed + cut.reduce((a, i) => a + Math.min(natural[i]!, cap), 0);
+      if (total(Infinity) <= width) return Infinity;
+      let cap = Math.max(0, ...cut.map((i) => natural[i]!));
+      while (cap > 0 && total(cap) > width) cap--;
+      return cut.every((i) => natural[i]! <= cap || cap >= Math.max(MIN_CUT, visibleLength(header[i]!))) ? cap : undefined;
+    };
+    let shown = all;
+    let cap = capFor(shown);
+    for (const gone of drop) {
+      if (cap === Infinity) break;
+      shown = shown.filter((i) => i !== gone);
+      cap = capFor(shown);
     }
+    if (cap === undefined || (cap !== Infinity && width < NARROW)) return this.records(header, rows, all.filter((i) => !drop.includes(i)), keep, indent, width);
+    const widths = natural.map((n, i) => (keep.has(i) ? n : Math.min(n, cap)));
+    return this.grid(header, rows, shown, widths, indent);
+  }
+
+  /** The `shown` columns, each cell cut to its width. */
+  private grid(header: readonly string[], rows: readonly (readonly string[])[], shown: readonly number[], widths: readonly number[], indent: number): string[] {
     const pad = " ".repeat(indent);
     const line = (cells: readonly string[]) =>
       pad +
-      cells
-        .map((c, i) => {
+      shown
+        .map((i, k) => {
+          const c = cells[i] ?? "";
           const cell = visibleLength(c) > widths[i]! ? this.truncate(c, widths[i]!) : c;
-          return i === cells.length - 1 ? cell : cell + " ".repeat(Math.max(0, widths[i]! - visibleLength(cell)));
+          return k === shown.length - 1 ? cell : cell + " ".repeat(Math.max(0, widths[i]! - visibleLength(cell)));
         })
         .join("  ")
         .trimEnd();
@@ -303,9 +345,35 @@ export class Ui {
     return [this.decorate ? this.style.dim(head) : head, ...rows.map(line)];
   }
 
-  /** Cut to `width` columns, ending in an ellipsis; colour codes kept and closed. */
+  /** A table too wide for the terminal, a row at a time: the first and kept
+   * cells on a line (the kept ones labelled by their header, broken between
+   * cells), then the other cells in a list wrapped under it. */
+  private records(header: readonly string[], rows: readonly (readonly string[])[], shown: readonly number[], keep: ReadonlySet<number>, indent: number, width: number): string[] {
+    const pad = " ".repeat(indent);
+    const [first, ...others] = shown;
+    if (first === undefined) return [];
+    const out: string[] = [];
+    for (const row of rows) {
+      const cell = (i: number) => row[i] ?? "";
+      const labelled = (i: number) => (/[a-z]/i.test(header[i]!) ? `${this.style.dim(header[i]!.toLowerCase())} ${cell(i)}` : cell(i));
+      const heads = [cell(first), ...others.filter((i) => keep.has(i) && visibleLength(cell(i)) > 0).map(labelled)];
+      const lines: string[] = [];
+      for (const item of heads) {
+        const last = lines.length - 1;
+        if (last >= 0 && visibleLength(lines[last]!) + 2 + visibleLength(item) <= width - indent - (last > 0 ? 4 : 0)) lines[last] += `  ${item}`;
+        else lines.push(item);
+      }
+      out.push(...lines.map((l, k) => `${pad}${k > 0 ? "    " : ""}${l}`));
+      const rest = others.filter((i) => !keep.has(i)).map(cell).filter((c) => visibleLength(c) > 0);
+      if (rest.length > 0) out.push(...this.wrap(this.list(rest), Math.max(20, width - indent - 2)).map((l) => `${pad}  ${l}`));
+    }
+    return out;
+  }
+
+  /** Cut to `width` columns, ending in an ellipsis; colour codes kept and
+   * closed. Unchanged when piped: piped output keeps every character. */
   truncate(text: string, width: number): string {
-    if (visibleLength(text) <= width) return text;
+    if (this.width === undefined || visibleLength(text) <= width) return text;
     const ellipsis = this.glyphs.ellipsis;
     const room = Math.max(0, width - ellipsis.length);
     let out = "";

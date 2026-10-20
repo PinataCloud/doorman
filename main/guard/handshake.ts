@@ -38,8 +38,12 @@ import type { SecurityDetectorId, SecuritySeverity } from "./security-detect.js"
 export const POLL_MS = 200;
 /** A heartbeat older than this means the app is gone (it writes every 15s). */
 export const HEARTBEAT_STALE_MS = 45_000;
-/** Redacted preview of the tool input carried on the request. */
+/** Redacted preview of the tool input carried on the request: what a card
+ * shows at first. */
 export const PREVIEW_LIMIT = 700;
+/** The longest preview carried for a card's "show the full call", when the
+ * preview above had to be cut. */
+export const FULL_PREVIEW_LIMIT = 20_000;
 /** A shell call's own one-line description, shown beside the command. */
 export const DESCRIPTION_LIMIT = 200;
 
@@ -184,10 +188,25 @@ export interface ApprovalRequest {
   tool_class?: "read" | "write" | "act";
   max_severity?: SecuritySeverity;
   reason: string;
+  /** What the call is, named after its risky part (`curl → webhook.site`)
+   * rather than the tool and its first word (`Bash → echo`). Display-only;
+   * absent when the tool and target already say it. */
+  call_name?: string;
   /** A shell call's `description` (what the agent says the command is for),
    * redacted like the preview. Shown as its own line, never mixed into it. */
   description?: string;
   preview: string;
+  /** The whole preview's length, when `preview` is cut at PREVIEW_LIMIT: a
+   * card must say how much it is not showing. */
+  preview_chars?: number;
+  /** The preview up to FULL_PREVIEW_LIMIT, carried only when `preview` is cut:
+   * what a card's "show the full call" shows. */
+  preview_full?: string;
+  /** The agent runs this call without its own permission prompt — the payload
+   * said `permission_mode: bypassPermissions`, or the agent runs in a Docker
+   * Sandbox, where every agent starts with its prompts off. Allowing then
+   * runs the call at once: there is no second approval behind ours. */
+  permissions_bypassed?: boolean;
   hold_seconds: number;
   on_timeout: "deny" | "ask";
   /** The waiting guard, so the app can drop a card whose process is already
@@ -302,10 +321,19 @@ export function writeRequest(guardDir: string, request: ApprovalRequest): void {
 }
 
 /** What a held tool call's card shows: the part of the input a person reads
- * to decide, not the input's JSON. */
+ * to decide, not the input's JSON. Uncut: cappedPreview cuts it for the
+ * request. */
 export interface ToolCallPreview {
   preview: string;
   description?: string;
+}
+
+/** A card's preview as the request carries it: the first PREVIEW_LIMIT
+ * characters, and when that cuts it, the whole length and the longer copy a
+ * "show the full call" reads. */
+export function cappedPreview(text: string): Pick<ApprovalRequest, "preview" | "preview_chars" | "preview_full"> {
+  if (text.length <= PREVIEW_LIMIT) return { preview: text };
+  return { preview: text.slice(0, PREVIEW_LIMIT), preview_chars: text.length, preview_full: text.slice(0, FULL_PREVIEW_LIMIT) };
 }
 
 const COMMAND_KEYS = ["command", "cmd", "script", "commandLine"] as const;
@@ -344,21 +372,21 @@ function argvLine(argv: readonly string[]): string {
  * its command, with the agent's description apart; a file write its path and
  * what it writes; a fetch its URL; an MCP call its server and tool, then the
  * arguments one per line. Anything else (or input that no longer parses)
- * reads one field per line, or as it came.
+ * reads one field per line, or as it came. Uncut: the request carries it
+ * through cappedPreview.
  */
 export function toolCallPreview(toolName: string | undefined, redactedInput: string): ToolCallPreview {
-  const cap = (text: string): string => text.slice(0, PREVIEW_LIMIT);
   let parsed: unknown;
   try {
     parsed = JSON.parse(redactedInput);
   } catch {
-    return { preview: cap(redactedInput) };
+    return { preview: redactedInput };
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { preview: cap(redactedInput) };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { preview: redactedInput };
   const obj = parsed as Record<string, unknown>;
 
   const mcp = /^mcp__(.+?)__(.+)$/.exec(toolName ?? "");
-  if (mcp) return { preview: cap([`${mcp[1]} / ${mcp[2]}`, ...fieldLines(obj)].join("\n")) };
+  if (mcp) return { preview: [`${mcp[1]} / ${mcp[2]}`, ...fieldLines(obj)].join("\n") };
 
   for (const key of COMMAND_KEYS) {
     const value = obj[key];
@@ -370,7 +398,7 @@ export function toolCallPreview(toolName: string | undefined, redactedInput: str
           : undefined;
     if (command === undefined || command.trim() === "") continue;
     const description = typeof obj.description === "string" ? obj.description.trim().slice(0, DESCRIPTION_LIMIT) : "";
-    return { preview: cap(command), ...(description === "" ? {} : { description }) };
+    return { preview: command, ...(description === "" ? {} : { description }) };
   }
 
   const path = stringField(obj, PATH_KEYS);
@@ -381,14 +409,14 @@ export function toolCallPreview(toolName: string | undefined, redactedInput: str
         .filter((s): s is string => typeof s === "string")
     : [];
   if (path && (content || edits.length > 0)) {
-    return { preview: cap([path.value, "", ...(content ? [content.value] : edits)].join("\n")) };
+    return { preview: [path.value, "", ...(content ? [content.value] : edits)].join("\n") };
   }
 
   const url = stringField(obj, URL_KEYS);
-  if (url) return { preview: cap([url.value, ...fieldLines(obj, url.key)].join("\n")) };
+  if (url) return { preview: [url.value, ...fieldLines(obj, url.key)].join("\n") };
 
   const lines = fieldLines(obj);
-  return { preview: cap(lines.length > 0 ? lines.join("\n") : redactedInput) };
+  return { preview: lines.length > 0 ? lines.join("\n") : redactedInput };
 }
 
 export function parseRequest(json: string): ApprovalRequest | undefined {
@@ -429,7 +457,11 @@ export function parseRequest(json: string): ApprovalRequest | undefined {
         : {}),
       max_severity: raw.max_severity,
       reason: typeof raw.reason === "string" ? raw.reason : "",
+      ...(typeof raw.call_name === "string" && raw.call_name !== "" ? { call_name: raw.call_name } : {}),
       preview: typeof raw.preview === "string" ? raw.preview : "",
+      ...(typeof raw.preview_chars === "number" && Number.isFinite(raw.preview_chars) ? { preview_chars: raw.preview_chars } : {}),
+      ...(typeof raw.preview_full === "string" && raw.preview_full !== "" ? { preview_full: raw.preview_full } : {}),
+      ...(raw.permissions_bypassed === true ? { permissions_bypassed: true } : {}),
       ...(typeof raw.description === "string" && raw.description !== "" ? { description: raw.description } : {}),
       hold_seconds: typeof raw.hold_seconds === "number" ? raw.hold_seconds : 60,
       on_timeout: raw.on_timeout === "ask" ? "ask" : "deny",

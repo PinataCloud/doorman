@@ -1,10 +1,10 @@
 /**
- * Whether the CLI runs inside a Docker Sandbox (`sbx`), and which one.
+ * The CLI's advice inside a Docker Sandbox (`sbx`). Whether this is one, and
+ * which, is guard/sandbox.ts's call — the guard bundle words its reasons from
+ * the same check, so the two never disagree.
  *
- * Read off sbx 0.46.0 (2026-10-20): every sandbox's processes get
- * `SANDBOX_NAME` (the name `sbx` commands take), `SANDBOX_ID` and
- * `WORKSPACE_DIR`, and their traffic goes through the sandbox's proxy at
- * `gateway.docker.internal:3128` (`HTTPS_PROXY`), which enforces the network
+ * Read off sbx 0.46.0 (2026-10-20): a sandbox's traffic goes through its proxy
+ * at `gateway.docker.internal:3128` (`HTTPS_PROXY`), which enforces the network
  * policy and answers a blocked request with HTTP 403.
  *
  * Inside one, the desktop app cannot run, so the CLI's advice changes: held
@@ -13,16 +13,9 @@
  * an `sbx policy allow network` rule rather than a retry.
  */
 
-export interface DockerSandbox {
-  /** The sandbox's name, as `sbx exec` / `sbx policy --sandbox` take it. */
-  name: string;
-}
+import { dockerSandbox, type DockerSandbox } from "../guard/sandbox.js";
 
-export function dockerSandbox(env: NodeJS.ProcessEnv): DockerSandbox | undefined {
-  const name = env.SANDBOX_NAME?.trim();
-  if (!name || !env.SANDBOX_ID) return undefined;
-  return { name };
-}
+export { dockerSandbox, sandboxFindingsCommand, sandboxWatchCommand, type DockerSandbox } from "../guard/sandbox.js";
 
 /** How a message names another Doorman process, with a leading space: its
  * pid on this machine, the sandbox inside one (a container's pid means
@@ -39,9 +32,12 @@ export function sandboxProxied(env: NodeJS.ProcessEnv): boolean {
   return /\/\/gateway\.docker\.internal(?::\d+)?\/?$/i.test(proxy.trim());
 }
 
-/** The host-side command that answers this sandbox's held calls. */
-export function sandboxWatchCommand(sandbox: DockerSandbox): string {
-  return `sbx exec -it ${sandbox.name} doorman watch`;
+/** The sandbox whose network policy refused a request that got `status`:
+ * the policy proxy answers a blocked request with 403. Undefined outside a
+ * sandbox, without its proxy, and for any other answer. */
+export function sandboxPolicyBlock(env: NodeJS.ProcessEnv, status: number | undefined): DockerSandbox | undefined {
+  const sandbox = dockerSandbox(env);
+  return sandbox && status === 403 && sandboxProxied(env) ? sandbox : undefined;
 }
 
 /** The host-side command that lets this sandbox reach `hosts`. */

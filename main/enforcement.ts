@@ -104,6 +104,7 @@ export const GUARD_FILES = [
   // Which rules the app shows — policy.js narrows ALL_DETECTORS
   // through it, so the copied guard needs it too.
   "rule-scope.js",
+  "sandbox.js",
   "second-opinion.js",
   "security-detect.js",
   "segments.js",
@@ -741,7 +742,9 @@ export class GuardHeartbeat {
   private timer: NodeJS.Timeout | undefined;
 
   constructor(
-    private readonly deps: { userDataDir: string; version: string; log(message: string): void },
+    /** `extra`: more fields for each beat — `doorman watch` adds when its
+     * terminal last saw a key, so a later watch can tell an abandoned one. */
+    private readonly deps: { userDataDir: string; version: string; log(message: string): void; extra?: () => Record<string, unknown> },
   ) {}
 
   private path(): string {
@@ -776,6 +779,7 @@ export class GuardHeartbeat {
       at: now.toISOString(),
       pid: process.pid,
       version: this.deps.version,
+      ...this.deps.extra?.(),
     })}\n`;
     try {
       mkdirSync(guardDir(this.deps.userDataDir), { recursive: true });

@@ -56,19 +56,27 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
   const absent = new Set(hosts.filter((h) => !h.present).map((h) => h.label)).size;
   const sandbox = dockerSandbox(ctx.io.env);
   const switchedOff = prefs.guard_wanted ? "" : s.dim("  (switched off)");
+  // The guard is on or off; each agent's hook is installed or missing.
   const state = broken
-    ? ui.mark("error", `${s.error("not working")}${switchedOff}`)
+    ? ui.mark("error", `${s.error("on, but not working")}${switchedOff}`)
     : integrity.status === "healthy"
-      ? ui.mark("ok", s.ok("installed"))
+      ? ui.mark("ok", s.ok("on"))
       : integrity.status === "tampered"
-        ? ui.mark("error", `${s.error("altered")}${switchedOff}`)
+        ? ui.mark("error", `${s.error("on, but changed outside Doorman")}${switchedOff}`)
         : integrity.status === "not_installed"
           ? prefs.guard_wanted
-            ? ui.mark("warn", s.warn("not installed"))
-            : ui.mark("off", s.dim("switched off"))
+            ? ui.mark("warn", s.warn("off (hooks missing)"))
+            : ui.mark("off", s.dim("off"))
           : ui.mark("warn", `${s.warn("no agent found")}${switchedOff}`);
   const hook = (h: (typeof hosts)[number]) =>
-    h.installed ? ui.mark("ok", s.ok("installed")) : h.present ? ui.mark("warn", s.warn("not installed")) : ui.mark("off", s.dim("not on this machine"));
+    h.installed
+      ? ui.mark("ok", s.ok("installed"))
+      : h.present
+        ? // Switched off, a missing hook is what was asked for.
+          prefs.guard_wanted
+          ? ui.mark("warn", s.warn("missing"))
+          : ui.mark("off", s.dim("missing"))
+        : ui.mark("off", s.dim("not on this machine"));
   // The one thing to do next, if anything needs doing.
   const next = !advise
     ? undefined
@@ -102,8 +110,12 @@ function guardReport(ctx: CliContext, all: boolean, advise = true): CommandResul
     "",
     ...ui.kv([
       ["bundle", `${tilde(ctx.guardDir, ctx.io.home)}${data.policy_file ? "" : s.warn("  (no policy.json yet)")}`],
-      ["holds", confirmSentence(policy.confirm)],
-      ["answers", answering ? s.ok(`${answering.by}${processLabel(ctx.io.env, answering.pid)}`) : nobodyAnswers(hosts, policy.confirm.unattended, sandbox)],
+      // Holds and who answers them only matter while some hook is in; a running answerer is said regardless.
+      installed && ["holds", confirmSentence(policy.confirm)],
+      (installed || answering !== null) && [
+        "answers",
+        answering ? s.ok(`${answering.by}${processLabel(ctx.io.env, answering.pid)}`) : nobodyAnswers(hosts, policy.confirm.unattended, sandbox),
+      ],
     ]),
     ...(next ? ["", ui.next(next)] : []),
   ];
@@ -149,7 +161,7 @@ const guardStatus: CliCommand = {
 const guardBare: CliCommand = {
   ...guardStatus,
   name: "guard",
-  summary: "Same as `doorman guard status`",
+  summary: "The guard that holds risky agent tool calls for your OK: whether it is on (same as `guard status`)",
   examples: [
     ["doorman guard --all", "every agent Doorman supports, wired or not"],
     ["doorman guard install", "turn the guard on in every agent here"],
@@ -166,6 +178,12 @@ const guardInstall: CliCommand = {
   async run(ctx) {
     // setGuardWanted(true): install, and only then record the intent.
     ctx.requireWritable("Turn the guard on");
+    const present = guardHostStates(ctx.io.env).filter((h) => h.present);
+    const wasOn =
+      ctx.prefs().guard_wanted &&
+      present.length > 0 &&
+      present.every((h) => h.installed) &&
+      checkGuardIntegrity(ctx.dataDir, true, { heal: false }).status === "healthy";
     // Fresh probes: an explicit install re-checks every runtime it may use.
     const outcome = installGuard(ctx.dataDir, ctx.policy(), { fresh: true });
     if (!outcome.ok) {
@@ -184,7 +202,16 @@ const guardInstall: CliCommand = {
         failed_hosts: outcome.failures,
       },
       // Wired but unable to start is not "on": the report below says why.
-      text: [report.exitCode ? ui.mark("error", s.error("Guard wired, but it can't start.")) : ui.mark("ok", s.ok("Guard on.")), ...notes, "", ...report.text],
+      text: [
+        report.exitCode
+          ? ui.mark("error", s.error("Guard wired, but it can't start."))
+          : wasOn && outcome.failures.length === 0
+            ? ui.mark("ok", "Guard already on; nothing changed.")
+            : ui.mark("ok", s.ok("Guard on.")),
+        ...notes,
+        "",
+        ...report.text,
+      ],
       ...(report.exitCode ? { exitCode: report.exitCode } : {}),
     };
   },

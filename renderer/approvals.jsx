@@ -49,12 +49,11 @@ function ApprovalPanel({ state }) {
         <ApprovalCountdown request={request} state={state} />
       </div>
       <div className="panel-where mono">
-        {request.tool_name || "tool"}
-        {request.target ? " → " + request.target : ""}
+        {request.call_name || (request.tool_name || "tool") + (request.target ? " → " + request.target : "")}
       </div>
       {request.context_note ? <div className="ap-context">{request.context_note}</div> : null}
       {request.description ? <div className="ap-desc" title={request.description}>{request.description}</div> : null}
-      <Evidence excerpt={request.preview} />
+      <ApprovalPreview key={request.id} request={request} />
       <div className="ap-actions">
         <button className="btn danger primary" disabled={!!busy} onClick={() => answer("deny")}>
           {busy === "deny" ? "Denying…" : "Deny"}
@@ -105,6 +104,7 @@ function ApprovalOverlay({ state }) {
         </div>
 
         <div className="ap-why">{request.reason}</div>
+        {request.call_name ? <div className="ap-where mono">{request.call_name}</div> : null}
 
         <div className="fcols">
           <div className="fc">
@@ -141,7 +141,7 @@ function ApprovalOverlay({ state }) {
 
         <div className="ap-label">What the agent is about to run</div>
         {request.description ? <div className="ap-desc">{request.description}</div> : null}
-        <Evidence excerpt={request.preview} />
+        <ApprovalPreview key={request.id} request={request} />
 
         <div className="ap-actions">
           <button
@@ -174,6 +174,33 @@ function ApprovalOverlay({ state }) {
 
         <div className="ap-foot">{approvalFootnote(request, state)}</div>
       </div>
+    </div>
+  );
+}
+
+/** The call as the guard previewed it. The guard cuts a long preview (and
+    carries a longer copy); a card that showed the cut part as if it were the
+    whole call would ask for an answer about a command nobody can see the end
+    of — the egress at the tail of a long `&&` chain. So the cut is said, with
+    how much is missing, and the longer copy is one click away. Keyed by the
+    request id, so the next call starts cut again. */
+function ApprovalPreview({ request }) {
+  const [full, setFull] = useState(false);
+  const preview = request.preview || "";
+  const text = full && request.preview_full ? request.preview_full : preview;
+  const omitted = Math.max(request.preview_chars || 0, text.length) - text.length;
+  const expandable = !full && (request.preview_full || "").length > preview.length;
+  return (
+    <div className="ap-preview">
+      <Evidence excerpt={text} />
+      {omitted > 0 ? (
+        <div className="ap-cut">
+          {"… " + omitted + (omitted === 1 ? " more character " : " more characters ") + (full ? "the guard did not carry." : "not shown.")}
+          {expandable ? (
+            <button className="btn quiet" onClick={() => setFull(true)}>Show the full call</button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -221,6 +248,19 @@ function approvalFootnote(request, state) {
       (request.on_timeout === "deny"
         ? " No answer within the hold window denies the call."
         : " No answer within the hold window forwards the call — there is no agent fallback for an MCP call.")
+    );
+  }
+  // An agent running with its prompts bypassed runs the call the moment it is
+  // allowed: saying it "still applies its approval flow" would promise a
+  // second check that does not exist.
+  if (request.permissions_bypassed) {
+    return (
+      "Allowing runs it now: " + approvalAgent(request, state) + " runs without its own prompts here." +
+      (request.on_timeout === "deny"
+        ? " No answer within the hold window denies the call."
+        : hostAsks(request, state)
+          ? " No answer within the hold window hands the question to " + approvalAgent(request, state) + "."
+          : " No answer continues the call with a visible warning.")
     );
   }
   return (

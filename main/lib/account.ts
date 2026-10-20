@@ -381,6 +381,34 @@ const NAMED_AS_EXAMPLE = /\b(example|fixture|placeholder|mock|dummy|fake|sample|
 /** How far back from the value a naming comment or identifier may sit. */
 const NAMING_REACH = 240;
 
+/**
+ * Fields of a tool call the AGENT wrote about the call rather than the data it
+ * acts on — Claude's Bash `description`, Cursor's `explanation`, Codex's
+ * `justification`. The agent's own label ("Test key") is its opinion of a
+ * value it may not have looked at; a live Stripe key sent to a webhook read
+ * as a placeholder because of one. Removed (string value and all, a cut-off
+ * one too) before any naming is read.
+ */
+const AUTHORED_FIELD = /"(?:description|explanation|justification|reason|reasoning|rationale|summary|thought|thoughts)"\s*:\s*"(?:[^"\\]|\\.)*"?/g;
+
+/** A host is where a value went, not what it is: `api.example.com` and
+ *  `evil.example` are reserved test hosts, not text calling a value an
+ *  example. URL authorities, mail domains and bare example.* hosts. */
+const HOSTS = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/"'`?#\\]+|@[\w.-]+\.[a-z]{2,}\b|\b(?:[\w-]+\.)*example\.(?:com|org|net|edu)\b/gi;
+
+/** Where a masked text (an excerpt) has the value it is about. */
+const MASK_MARKER = /\[redacted(?::[a-z0-9_]+)?\]/g;
+
+/**
+ * A value whose vendor prefix says it is LIVE — the families guard/redact.ts
+ * names whose key carries a live/test mode (Stripe `sk_live_`/`rk_live_`,
+ * Shippo, Duffel, Flutterwave's non-TEST secret) and AWS access key ids
+ * (`AKIA` long-lived, `ASIA` session), which have no test mode at all. Where
+ * such a value sits and what is written near it cannot make it a placeholder;
+ * only the value itself can (a published example, a synthetic shape).
+ */
+const LIVE_VALUE = /^(?:(?:sk|rk|shippo|duffel)_live_|FLWSECK-|(?:AKIA|ASIA)[A-Z0-9]{16,17}$)/;
+
 /** A run of consecutive ascending letters or digits, ≥ `n` long. */
 export function hasSequentialRun(value: string, n = 8): boolean {
   let run = 1;
@@ -400,9 +428,13 @@ export function hasRepeatRun(value: string, n = 6): boolean {
 }
 
 /**
- * Why `value` looks like a placeholder, from the text around it and the path
- * it lives in. Empty when nothing says so. `value` may be undefined (the
- * reveal could not recover it) — path and naming signals still apply.
+ * Why `value` looks like a placeholder: its own shape, the path it lives in,
+ * and naming in the DATA just before it — never text the agent wrote about
+ * the call (AUTHORED_FIELD) and never a host. Empty when nothing says so.
+ * `value` may be undefined (the reveal could not recover it): the path still
+ * applies, and naming counts only right before a `[redacted…]` marker in a
+ * masked text — with no value and no marker, there is nothing to be next to.
+ * A LIVE_VALUE keeps only the signals read off the value itself.
  */
 export function placeholderSignals(
   value: string | undefined,
@@ -410,13 +442,16 @@ export function placeholderSignals(
   paths: ReadonlyArray<string | undefined> = [],
 ): PlaceholderSignal[] {
   const out: PlaceholderSignal[] = [];
-  if (paths.some((p) => p !== undefined && TEST_PATH.test(p))) out.push("test_path");
-  if (value !== undefined && value !== "") {
-    if (isDocExample(value)) out.push("doc_example");
-    if (SYNTHETIC_WORDS.test(value) || hasSequentialRun(value) || hasRepeatRun(value)) out.push("synthetic_value");
-    const at = raw.indexOf(value);
-    if (at >= 0 && NAMED_AS_EXAMPLE.test(raw.slice(Math.max(0, at - NAMING_REACH), at))) out.push("named_as_example");
-  } else if (NAMED_AS_EXAMPLE.test(raw.slice(0, NAMING_REACH * 2))) {
+  const hasValue = value !== undefined && value !== "";
+  const live = hasValue && LIVE_VALUE.test(value);
+  if (!live && paths.some((p) => p !== undefined && TEST_PATH.test(p))) out.push("test_path");
+  if (hasValue && isDocExample(value)) out.push("doc_example");
+  if (hasValue && (SYNTHETIC_WORDS.test(value) || hasSequentialRun(value) || hasRepeatRun(value))) out.push("synthetic_value");
+  const data = raw.replace(AUTHORED_FIELD, "");
+  // Where the value sits in the data: the value itself, or — none recovered —
+  // each mask marker standing in for it.
+  const spots = hasValue ? [data.indexOf(value)].filter((at) => at >= 0) : [...data.matchAll(MASK_MARKER)].map((m) => m.index);
+  if (!live && spots.some((at) => NAMED_AS_EXAMPLE.test(data.slice(Math.max(0, at - NAMING_REACH), at).replace(HOSTS, " ")))) {
     out.push("named_as_example");
   }
   return out;
@@ -478,17 +513,6 @@ function whereSent(a: Partial<ExposureAccount>): string {
   const to = a.destination_host ? ` to ${code(a.destination_host)}` : "";
   const with_ = a.sink_tool ? ` with ${code(a.sink_tool)}` : "";
   return `sent it${to}${with_}`;
-}
-
-/** The placeholder clause, when there is one. */
-export function placeholderClause(signals: readonly PlaceholderSignal[]): string {
-  if (signals.length === 0) return "";
-  const why: string[] = [];
-  if (signals.includes("doc_example")) why.push("it is a provider's published example value");
-  if (signals.includes("test_path")) why.push("it lives under a test or docs path");
-  if (signals.includes("named_as_example")) why.push("the text around it calls it an example");
-  if (signals.includes("synthetic_value")) why.push("its shape is synthetic");
-  return ` It looks like a placeholder: ${why.join(", ")}.`;
 }
 
 /** The sentence for one account — what the transcript shows, and only that.
@@ -596,7 +620,17 @@ export function renderTitle(detector: string, a: Partial<ExposureAccount>): stri
 /** The consequence — what the exposure means for the person. */
 export function renderSo(detector: string, a: Partial<ExposureAccount>): string {
   const ph = a.placeholder_signals ?? [];
-  if (ph.length > 0) return `It looks like a placeholder, not a live secret:${placeholderClause(ph).replace(/^ It looks like a placeholder:/, "")}`;
+  if (ph.length > 0) {
+    // No `secret:`-shaped phrase: the masker reads `<word>: <word>` as a
+    // credential assignment and would swallow the word after the colon.
+    const why: string[] = [];
+    if (ph.includes("doc_example")) why.push("it is a provider's published example value");
+    if (ph.includes("test_path")) why.push("it lives under a test or docs path");
+    if (ph.includes("named_as_example")) why.push("the data next to it calls it an example");
+    if (ph.includes("synthetic_value")) why.push("its shape is synthetic");
+    const reasons = why.length > 1 ? `${why.slice(0, -1).join(", ")} and ${why.at(-1)}` : why[0];
+    return `It looks like a placeholder rather than a live secret, because ${reasons}.`;
+  }
   const file = q(a.source_ref, "that file");
   const host = a.destination_host ? code(a.destination_host) : undefined;
   switch (detector) {
@@ -723,8 +757,9 @@ export function accountForUnit(
   const own = ownValue(finding, secrets);
   // Quotes come from the MASKED unit: the extractor picks tokens by shape (the
   // first dotted word is a "file"), and a SendGrid key or a JWT is dotted. The
-  // placeholder judgement below still reads the raw text — it yields signals,
-  // never quotes.
+  // placeholder judgement reads the raw text around a recovered value — it
+  // yields signals, never quotes — and, with none recovered, the masked text,
+  // whose markers stand where a value was.
   const quoted = maskedUnit(unit);
   const source = readSource(quoted);
   const sink = unit.kind === "tool_call" ? readSink(quoted) : {};
@@ -738,7 +773,7 @@ export function accountForUnit(
     ...named,
     ...family,
     ...outputOf(readOutputOf(finding.detector, finding.severity)),
-    placeholder_signals: placeholderSignals(own?.value, unit.raw, [unit.target, source.source_ref, cwd]),
+    placeholder_signals: placeholderSignals(own?.value, own ? unit.raw : quoted.raw, [unit.target, source.source_ref, cwd]),
   };
   // The tool's name, target and the finding's key are the unit's own metadata
   // — quotable, though not in the command text itself.
@@ -815,7 +850,7 @@ export function accountForFlow(
     ...to,
     ...(own?.label ? { credential_family: own.label } : {}),
     ...(sourceAt && sinkAt ? { gap: flowGapLabel(sourceAt, sinkAt) } : {}),
-    placeholder_signals: placeholderSignals(own?.value, `${source.raw}\n${sink.raw}`, [source.target, sink.target, from.source_ref, cwd]),
+    placeholder_signals: placeholderSignals(own?.value, own ? `${source.raw}\n${sink.raw}` : `${quotedSource.raw}\n${quotedSink.raw}`, [source.target, sink.target, from.source_ref, cwd]),
   };
   const verified = verifyQuotes(partial, [quotedSource.raw, quotedSink.raw, quotedSource.target ?? "", quotedSink.target ?? "", source.tool_name ?? "", sink.tool_name ?? ""]);
   return finish(finding.detector, verified);

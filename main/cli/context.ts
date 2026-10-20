@@ -92,6 +92,8 @@ export class CliContext {
   commandName = "";
   /** `--json`: stdout is machine output, and nothing draws on stderr either. */
   json = false;
+  /** `--quiet`: no progress or notices on stderr; output, warnings and errors only. */
+  quiet = false;
   private storeInstance: Store | undefined;
   /** This command holds the CLI writer lock (taken by its first write). */
   private writing = false;
@@ -115,7 +117,7 @@ export class CliContext {
    * line every few seconds otherwise, none under --json or --verbose (whose
    * log lines it would cut into). */
   async scan(engine: CaptureEngine): Promise<void> {
-    if (this.json || this.io.verbose) return engine.scan();
+    if (this.json || this.quiet || this.io.verbose) return engine.scan();
     const progress = startProgress(this.errUi, this.io.stderr, { label: "Scanning transcripts", format: (n) => plural(n, "file") + " read" });
     await withPolledProgress(progress, () => engine.filesSeen, () => engine.scan());
   }

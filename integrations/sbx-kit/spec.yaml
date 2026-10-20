@@ -8,6 +8,12 @@ licenses: [Apache-2.0]
 # No `requires`: the kit works with any agent sbx runs. `requires.agent` takes
 # one agent name only, and `doorman guard install` finds the agent itself.
 
+args:
+  version:
+    default: latest
+    description: The @pinata/doorman version to install, such as 0.4.1
+    pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$'
+
 permissions:
   network:
     allow:
@@ -17,13 +23,29 @@ permissions:
       - "**.hf.co"
 
 setup:
-  # Install commands run once, when the sandbox is created (or on sbx kit add).
-  # A stopped and restarted sandbox keeps its files, so the CLI and the hooks
-  # are still there and nothing needs to run at every start.
+  # Install commands run when the sandbox is created, and again on every
+  # `sbx kit add` (which recreates the sandbox and its agent configuration).
   install:
     - description: Install the Doorman CLI
       user: "1000"
-      command: npm install -g --no-audit --no-fund @pinata/doorman
+      command: npm install -g --no-audit --no-fund "@pinata/doorman@${{ kit.args.version }}"
     - description: Add the Doorman guard to the agent's hooks
       user: "1000"
       command: doorman guard install
+  # Startup commands run at every start. The agent's settings file is
+  # sandbox-managed (sbx can rewrite it, dropping the hook), so each start puts
+  # the guard back where it was lost. `doctor --repair auto` only repairs what
+  # is on: a guard turned off with `doorman guard uninstall` stays off. The
+  # model download is the background one, run here because a command without a
+  # terminal never starts it; it does nothing once the model is on disk.
+  #
+  # Read off sbx 0.46.0: startup commands get a bare PATH without npm's global
+  # bin (where the install put `doorman`), so they ask npm for it. And a
+  # startup command that exits non-zero stops the sandbox from starting at
+  # all, so these never fail; what they print is in /var/log/sbx-kit-startup.log.
+  startup:
+    - description: Re-assert the Doorman guard hook
+      command: ["sh", "-c", 'PATH="$(npm prefix -g)/bin:$PATH"; doorman doctor --repair auto > /dev/null || true']
+    - description: Download Doorman's injection classifier if it is missing
+      command: ["sh", "-c", 'PATH="$(npm prefix -g)/bin:$PATH"; doorman model download --auto > /dev/null || true']
+      background: true

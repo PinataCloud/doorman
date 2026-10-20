@@ -38,13 +38,18 @@ export function startProgress(ui: Ui, stream: NodeJS.WritableStream, options: Pr
   const draw = (done: number, total: number) => {
     const s = ui.style;
     const spinner = s.accent(ui.glyphs.spinner[frame++ % ui.glyphs.spinner.length]!);
+    // Read on every draw: a resized window gets lines of its new width.
     const width = ui.width ?? 80;
     let line: string;
     if (total > 0) {
       const fraction = Math.min(1, done / total);
       const tail = ` ${options.format(done)} of ${options.format(total)}  ${String(Math.floor(fraction * 100)).padStart(3)}%`;
-      const cells = Math.max(10, Math.min(30, width - options.label.length - tail.length - 6));
-      line = `${spinner} ${options.label}  ${ui.bar(fraction, cells, "info")}${s.dim(tail)}`;
+      // The bar takes what the words leave (one column spare, so the line
+      // never wraps) and goes when that is under 6 cells; then the label is
+      // cut, so the amount and percentage stay.
+      const cells = Math.min(30, width - 1 - (2 + options.label.length + 2) - tail.length);
+      const label = cells >= 6 ? options.label : ui.truncate(options.label, Math.max(8, width - 1 - 2 - tail.length));
+      line = `${spinner} ${label}${cells >= 6 ? `  ${ui.bar(fraction, cells, "info")}` : ""}${s.dim(tail)}`;
     } else {
       line = `${spinner} ${options.label}${s.dim(`  ${options.format(done)}`)}`;
     }

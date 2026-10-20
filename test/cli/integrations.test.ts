@@ -238,6 +238,52 @@ describe("doorman doctor", () => {
   it("rejects a repair mode it doesn't know", async () => {
     expect((await dm(["doctor", "--repair", "everything"])).code).toBe(2);
   });
+
+  it("on a fresh install the companion is a warning with a CLI step, never installed by --repair auto", async () => {
+    writeFileSync(join(dataDir, "prefs.json"), JSON.stringify({ ...defaultPrefs(), vscode_extension: true, guard_wanted: false }));
+    const text = await dm(["doctor"]);
+    expect(text.out).toMatch(/warn\s+Editor companion/);
+    expect(text.out).not.toMatch(/fail\s+Editor companion/);
+    expect(text.out).toContain("`doorman editor install`");
+    expect(text.out).toContain("`doorman guard install` turns it on");
+    expect(text.out).not.toContain("Settings →");
+    const data = (await dm(["doctor", "--json"])).json<{ attention: string[]; report: { checks: Array<{ id: string; status: string }> } }>();
+    const open = data.report.checks.filter((c) => c.status === "warn" || c.status === "fail").map((c) => c.id);
+    expect(data.attention).toEqual(open);
+    expect(text.out).toContain(`${open.length} ${open.length === 1 ? "needs" : "need"} attention`);
+    const repaired = await dm(["doctor", "--repair", "auto", "--json"]);
+    const after = repaired.json<{ report: { checks: Array<{ id: string; status: string }> }; repairs: { applied: string[] } }>();
+    expect(after.report.checks.find((c) => c.id === "vscode.extension")?.status).toBe("warn");
+    expect(after.repairs.applied.join(" ")).not.toMatch(/extension/i);
+  });
+
+  it("inside a Docker Sandbox, doctor and status say who answers held calls", async () => {
+    extraEnv = { SANDBOX_NAME: "my-proj", SANDBOX_ID: "abc123" };
+    const doctor = await dm(["doctor"]);
+    expect(doctor.out).toContain("Docker Sandbox my-proj");
+    expect(doctor.out).toContain("sbx exec -it my-proj doorman watch");
+    const status = await dm(["status"]);
+    expect(status.out.split("\n")[0]).toContain("in Docker Sandbox my-proj");
+    expect(status.out).toContain("sbx exec -it my-proj doorman watch");
+  });
+});
+
+describe("bare command families", () => {
+  it("show a status where one exists, else help on stderr with exit 2", async () => {
+    const editor = await dm(["editor"]);
+    expect(editor.code).toBe(0);
+    expect(editor.out).toBe((await dm(["editor", "status"])).out);
+    const exported = await dm(["export"]);
+    expect(exported.code).toBe(2);
+    expect(exported.out).toBe("");
+    expect(exported.err).toContain("doorman export detections");
+  });
+
+  it("--no-color and --quiet are taken by every command", async () => {
+    const plain = await dm(["status", "--no-color", "--quiet"]);
+    expect(plain.code).toBe(0);
+    expect(plain.out).not.toMatch(/\u001b\[/);
+  });
 });
 
 interface ModelStatusJson {
@@ -306,13 +352,41 @@ describe("the classifier model downloads on its own", () => {
   /** The fake child is the test runner's parent: alive, so its lock holds,
    * and — like a real child — not the process running the next command. */
   const child = process.ppid;
+  /** A person at a terminal (the background download starts only for one),
+   * and the update check kept out of it. */
+  const NO_UPDATE = { DOORMAN_NO_UPDATE_CHECK: "1" };
+  const atTerminal = () => {
+    const stderr = new PassThrough() as PassThrough & { isTTY?: boolean };
+    stderr.isTTY = true;
+    stderr.resume();
+    ioExtra.stderr = stderr;
+  };
   const spawnHere = () => {
     spawned = [];
     ioExtra.spawnDetached = (args: readonly string[]) => {
       spawned.push([...args]);
       return child;
     };
+    atTerminal();
   };
+  beforeEach(() => {
+    extraEnv = { ...NO_UPDATE };
+  });
+
+  it("doesn't start from a script: not under CI, not when stderr isn't a terminal", async () => {
+    spawnHere();
+    delete ioExtra.stderr; // piped, as in a pipeline or an sbx kit's setup step
+    await dm(["status"]);
+    expect(spawned).toEqual([]);
+    atTerminal();
+    extraEnv = { ...NO_UPDATE, CI: "true" };
+    await dm(["status"]);
+    expect(spawned).toEqual([]);
+    expect((await dm(["model"])).out).toMatch(/running\s+none\s+\(no model downloaded yet: doorman model download\)/);
+    extraEnv = { ...NO_UPDATE };
+    await dm(["status"]);
+    expect(spawned).toEqual([["model", "download", "--auto"]]);
+  });
 
   it("a fresh install says no model runs yet, instead of naming the fallback", async () => {
     const r = await dm(["model"]);
@@ -330,6 +404,7 @@ describe("the classifier model downloads on its own", () => {
     expect(existsSync(lock())).toBe(true);
     await dm(["findings"]);
     expect(spawned).toHaveLength(1);
+    delete ioExtra.stderr; // the rest reads each command's own stderr
 
     const view = await dm(["model"]);
     expect(view.out).toMatch(/running\s+none\s+\(downloading doorman-1 in the background, 0 B of 96\.0 MB\)/);
@@ -368,10 +443,10 @@ describe("the classifier model downloads on its own", () => {
 
   it("starts nothing with the classifier off, while the app owns the data, or for the model commands", async () => {
     spawnHere();
-    extraEnv = { DOORMAN_INJECTION_CLASSIFIER: "off" };
+    extraEnv = { ...NO_UPDATE, DOORMAN_INJECTION_CLASSIFIER: "off" };
     await dm(["status"]);
     expect((await dm(["model"])).out).toMatch(/running\s+none\s+\(the classifier is off\)/);
-    extraEnv = {};
+    extraEnv = { ...NO_UPDATE };
 
     const { heartbeatPath } = require(join(build, "guard", "handshake.js")) as { heartbeatPath(dir: string): string };
     const { guardDir } = require(join(build, "enforcement.js")) as { guardDir(dataDir: string): string };
@@ -389,7 +464,7 @@ describe("the classifier model downloads on its own", () => {
 
   it("the background child records a failure, releases the lock and spaces out the retry", async () => {
     spawnHere();
-    extraEnv = { DOORMAN_INJECTION_CLASSIFIER_SOURCE: "https://models.example/doorman-1/" };
+    extraEnv = { ...NO_UPDATE, DOORMAN_INJECTION_CLASSIFIER_SOURCE: "https://models.example/doorman-1/" };
     const asked: string[] = [];
     ioExtra.fetch = async (url: string) => {
       asked.push(url);
@@ -471,7 +546,7 @@ describe("the classifier model downloads on its own", () => {
     async () => {
       const source = join(root, "source");
       cpSync(SHOT_MODEL, source, { recursive: true, filter: (p) => !p.endsWith(".verified.json") });
-      extraEnv = { DOORMAN_INJECTION_CLASSIFIER_SOURCE: source };
+      extraEnv = { ...NO_UPDATE, DOORMAN_INJECTION_CLASSIFIER_SOURCE: source };
       expect((await dm(["model", "download", "--auto"])).code).toBe(0);
       expect(record()).toMatchObject({ failures: 0 });
       const after = (await dm(["model", "--json"])).json<AutoJson>();

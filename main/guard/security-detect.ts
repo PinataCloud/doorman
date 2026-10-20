@@ -1327,6 +1327,23 @@ export function egressDestinations(command: string): string[] {
 }
 
 /**
+ * The network invocation a command's egress goes through, named the way a
+ * person reads it: `curl → webhook.site`, or the program alone when it names
+ * no host (`ssh`, `aws s3`). The FIRST such invocation, wherever it sits in a
+ * chain, so a long `echo … && … | curl …` is named after the curl, not the
+ * echo. Undefined when nothing in the command reaches the network.
+ */
+export function networkCallName(command: string): string | undefined {
+  for (const rawHead of invocationHeads(command)) {
+    const program = networkProgramOfHead(normalizeProgramWord(rawHead.replace(/["']/g, "")));
+    if (program === undefined) continue;
+    const host = headDestinations(normalizeProgramWord(rawHead))[0];
+    return host === undefined || host === program ? program : `${program} → ${host}`;
+  }
+  return undefined;
+}
+
+/**
  * Tools that reach the network through a SUBCOMMAND rather than by being a
  * network program: object storage uploads, the GitHub CLI's write verbs, rclone,
  * a git push to an explicit URL, and a DNS lookup whose name is built from a

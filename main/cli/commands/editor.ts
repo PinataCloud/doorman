@@ -97,4 +97,10 @@ const uninstallCommand: CliCommand = {
   run: switchRun(false),
 };
 
-export const editorCommands: CliCommand[] = [statusCommand, installCommand, uninstallCommand];
+const bareCommand: CliCommand = {
+  ...statusCommand,
+  name: "editor",
+  summary: "The Doorman VS Code companion (spend, guard state, held calls in the editor): same as `editor status`",
+};
+
+export const editorCommands: CliCommand[] = [bareCommand, statusCommand, installCommand, uninstallCommand];

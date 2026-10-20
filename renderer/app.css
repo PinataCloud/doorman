@@ -1217,6 +1217,10 @@ button.link {
 .approval .fcols .fc .v { overflow-wrap: anywhere; }
 /* The agent's own one-line account of a shell command, above the command. */
 .ap-desc { font-size: var(--t-2); color: var(--ink-2); margin: 0 0 var(--s3); overflow-wrap: anywhere; }
+/* The call named after its risky part (`curl → webhook.site`). */
+.ap-where { font-size: var(--t-2); color: var(--ink-2); margin: 0 0 var(--s3); overflow-wrap: anywhere; }
+/* The guard cut the preview: say how much is missing, offer the rest. */
+.ap-cut { display: flex; align-items: center; gap: var(--s3); font-size: var(--t-2); color: var(--warn); margin: calc(-1 * var(--s2)) 0 var(--s3); }
 button.btn.danger.primary { background: var(--bad); border-color: var(--bad); color: var(--on-fill); }
 button.btn.quiet { border-color: transparent; color: var(--ink-3); }
 button.btn.quiet:hover { border-color: var(--tan-2); }
@@ -1969,7 +1973,7 @@ body.doorman-panel { background: transparent; overflow: hidden; }
 /* Buttons must not be part of the drag region, or a click becomes a window move.
    The evidence strip's Copy button sits outside .ap-actions and needs the same
    exemption — inside the drag region a click on it moves the window instead. */
-.panel .ap-actions, .panel .ap-actions *, .panel button.copybtn { -webkit-app-region: no-drag; }
+.panel .ap-actions, .panel .ap-actions *, .panel button.copybtn, .panel .ap-cut button { -webkit-app-region: no-drag; }
 .panel .ap-actions { display: flex; align-items: center; gap: var(--s3); }
 .panel .ap-actions .spacer { flex: 1; }
 .panel .ap-foot { margin-top: var(--s3); font-size: var(--t-3); color: var(--ink-4); }

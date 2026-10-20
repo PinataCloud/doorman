@@ -7,12 +7,12 @@ export const scanCommand: CliCommand = {
   name: "scan",
   summary: "Read new transcripts now and say what was new",
   notes: [
-    "Runs the app's own scan over every agent transcript on this machine (Claude Code, Codex and every other registered source) and reports the turns, sessions and findings it added. Progress goes to stderr.",
-    "While Doorman is running it owns the store: the scan then reads into a temporary copy, so the numbers are a preview and the app records the same findings on its own next scan.",
+    "Runs the app's own scan over every agent transcript on this machine (Claude Code, Codex and every other registered source) and reports the turns, sessions, exposures (a rule at a place, what you review) and sightings (each time it happened) it added. Progress goes to stderr.",
+    "While Doorman is running it owns the store: the scan then reads into a temporary copy, so the numbers are a preview and the app records the same sightings on its own next scan.",
   ],
   examples: [
     ["doorman scan", "read new transcripts and list what they exposed"],
-    ["doorman scan --json", "the counts and new findings as JSON"],
+    ["doorman scan --json", "the counts and new exposures as JSON"],
   ],
   async run(ctx) {
     const labels = ruleLabels(ctx);
@@ -53,16 +53,16 @@ export const scanCommand: CliCommand = {
       const text = [
         ui.mark("ok", scanned),
         fresh.length === 0
-          ? `  ${ui.mark("ok", s.ok("No new findings."))}`
-          : `  ${ui.mark(bySeverity.critical + bySeverity.high > 0 ? "error" : "warn", `${plural(fresh.length, "new finding")} (${plural(newExposures, "new exposure")})`)}  ${s.dim(severityLine(bySeverity))}`,
+          ? `  ${ui.mark("ok", s.ok("Nothing new to review."))}`
+          : `  ${ui.mark(bySeverity.critical + bySeverity.high > 0 ? "error" : "warn", `${plural(newExposures, "new exposure")}, ${plural(fresh.length, "new sighting")}${newExposures === groups.length ? "" : ` (some on exposures already listed)`}`)}  ${s.dim(severityLine(bySeverity))}`,
       ];
       if (groups.length > 0) {
         text.push(
           "",
           ...ui.table(
-            ["SEVERITY", "TITLE", "PLACE", "NEW", "ID"],
-            groups.map((g) => [paintSeverity(s, g.face.severity), oneLine(cardTitle(g.face, labels), 60), g.face.place, String(g.rows.length), g.face.finding_id]),
-            { keep: [0, 3, 4] },
+            ["SEVERITY", "TITLE", "PLACE", "NEW SIGHTINGS", "ID"],
+            groups.map((g) => [paintSeverity(s, g.face.severity), oneLine(cardTitle(g.face, labels)), g.face.place, String(g.rows.length), g.face.finding_id]),
+            { keep: [0, 4], drop: [3] },
           ),
           "",
           ui.next(`\`doorman findings show ${groups[0]!.face.finding_id}\` shows the first in full.`),

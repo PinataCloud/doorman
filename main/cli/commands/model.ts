@@ -20,13 +20,15 @@ import {
   autoDownloadView,
   downloadRefusal,
   markDownloadFailureNoticed,
+  recordExplicitDownload,
   runAutoDownload,
+  sandboxBlock,
+  scriptedRun,
   unnoticedDownloadFailure,
   type AutoDownloadView,
-  type DownloadRefusal,
 } from "../auto-download.js";
 import { doormanSource, loadClassifier, modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
-import { dockerSandbox, MODEL_HOSTS, processLabel, sandboxAllowCommand, sandboxProxied } from "../docker-sandbox.js";
+import { processLabel } from "../docker-sandbox.js";
 import type { CliCommand, ParsedArgs } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError, type CommandResult, type Styles } from "../output.js";
@@ -92,7 +94,7 @@ export function runningModel(
       : download.status === "running"
         ? `${download.by === "app" ? "the app is downloading" : "downloading"} ${download.model}${download.by === "app" ? "" : " in the background"}, ${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}`
         : download.status === "failed"
-          ? failedWhy(ctx, download)
+          ? failedWhy(download)
           : "no model downloaded yet: doorman model download";
   // Shown to a person (`doorman model`, `doorman status`): the notice after a
   // command has nothing left to tell about this run of failures.
@@ -105,7 +107,6 @@ export function runningModel(
  * nobody has been told: the download is silent by design, so without this a
  * proxy or an offline machine leaves the classifier missing for days unless
  * someone runs `doorman model`. Once per run of failures (a failing retry
- * doesn't say it again), and like the update notice only to a person: not
  * under --json or CI, not when stderr isn't a terminal. Nothing while a model
  * runs anyway (the stock fallback), while a retry is under way, or after
  * `doorman model download`, which just reported its own outcome.
@@ -114,9 +115,7 @@ export function modelDownloadFailureNotice(ctx: CliContext, commandName: string)
   if (ctx.json || commandName.startsWith("model download") || !unnoticedDownloadFailure(ctx)) return undefined;
   // The app (or `doorman watch`) downloads for itself; this CLI's record is not its story.
   if (ctx.running()) return undefined;
-  const ci = ctx.io.env.CI;
-  if (ci !== undefined && ci !== "" && ci !== "0" && ci.toLowerCase() !== "false") return undefined;
-  if ((ctx.io.stderr as NodeJS.WritableStream & { isTTY?: boolean }).isTTY !== true) return undefined;
+  if (scriptedRun(ctx)) return undefined;
   const policy = ctx.policy();
   if (!(policy.injection_classifier ?? defaultInjectionClassifierConfig()).enabled || !runtimePresent(runtimeDir())) return undefined;
   const plan = modelPlan(ctx.dataDir, policy, ctx.io.env);
@@ -124,28 +123,18 @@ export function modelDownloadFailureNotice(ctx: CliContext, commandName: string)
   const download = autoDownloadView(ctx);
   if (download.status !== "failed") return undefined;
   markDownloadFailureNoticed(ctx);
-  return sandboxBlock(ctx, download.refused)
-    ? `The injection classifier didn't download: ${failedWhy(ctx, download)}.`
+  return download.blocked
+    ? `The injection classifier didn't download: ${failedWhy(download)}.`
     : `The injection classifier didn't download (${download.error}). It retries on its own; \`doorman model download\` tries now.`;
 }
 
-/** Why the last background download failed, and what to do about it. */
-function failedWhy(ctx: CliContext, download: Extract<AutoDownloadView, { status: "failed" }>): string {
-  const blocked = sandboxBlock(ctx, download.refused);
+/** Why the last background download failed, and what to do about it. A
+ * refusal from the sandbox's policy is not retried on its own (auto-download.ts):
+ * the person allows the model's hosts from the host, then downloads. */
+function failedWhy(download: Extract<AutoDownloadView, { status: "failed" }>): string {
+  const blocked = download.blocked;
   if (!blocked) return `the background download failed (${download.error}); retry now: doorman model download`;
-  return `the sandbox's network policy blocked ${blocked.host}; on your computer run ${blocked.allow}, then here: doorman model download`;
-}
-
-/**
- * A download the Docker Sandbox's policy proxy refused (it answers a blocked
- * request with HTTP 403): the host it blocked, which after a redirect is the
- * CDN rather than the Hub, and the host-side command that lets the model's
- * downloads through. Undefined outside a sandbox and for any other failure.
- */
-function sandboxBlock(ctx: CliContext, refused: DownloadRefusal | undefined): { host: string; allow: string } | undefined {
-  const sandbox = dockerSandbox(ctx.io.env);
-  if (!sandbox || refused?.status !== 403 || !sandboxProxied(ctx.io.env)) return undefined;
-  return { host: refused.host, allow: sandboxAllowCommand(sandbox, MODEL_HOSTS) };
+  return `blocked by this sandbox's network policy (${blocked.host}); on your computer run ${blocked.allow}, then here: doorman model download`;
 }
 
 const statusRun: CliCommand["run"] = async (ctx) => {
@@ -217,7 +206,7 @@ const downloadCommand: CliCommand = {
   ],
   notes: [
     "doorman-1 comes from DOORMAN_INJECTION_CLASSIFIER_SOURCE when set (a URL or an absolute directory), else its pinned Hugging Face revision. Every file is checked against its pinned size and sha256 before it is kept. Progress goes to stderr.",
-    "You rarely need this: while the classifier is on, the first command that finds its model missing starts this download in the background (DOORMAN_INJECTION_CLASSIFIER=off stops that). Run while that one is going, this waits for it with its progress, then fetches only what it didn't.",
+    "You rarely need this: while the classifier is on, the first command run in a terminal that finds its model missing starts this download in the background (not under CI or with stderr redirected; DOORMAN_INJECTION_CLASSIFIER=off stops it). Run while that one is going, this waits for it with its progress, then fetches only what it didn't. In a Docker Sandbox whose network policy blocked the download, this is the retry once the hosts are allowed.",
   ],
   examples: [
     ["doorman model download", "the selected model"],
@@ -326,10 +315,14 @@ async function downloadNow(ctx: CliContext, args: ParsedArgs, waited: boolean): 
   } catch (err) {
     progress.end();
     const why = err instanceof Error ? err.message : String(err);
-    const blocked = sandboxBlock(ctx, downloadRefusal(err));
+    const refused = downloadRefusal(err);
+    recordExplicitDownload(ctx, { ok: false, error: `${model}: ${why}`, refused });
+    const blocked = sandboxBlock(ctx.io.env, refused);
     if (blocked) {
+      // sbx also lists the refused request as a pending approval; approving
+      // it lets the Hub through but not the CDN the files redirect to.
       throw new CliError(
-        `Couldn't download ${model}: the sandbox's network policy blocked ${blocked.host} (${why}).\nOn your computer, run:\n  ${blocked.allow}\nThen run doorman model download here again.`,
+        `Couldn't download ${model}: the sandbox's network policy blocked ${blocked.host} (${why}).\nOn your computer, run:\n  ${blocked.allow}\n(Approving the blocked request in sbx isn't enough: it lets huggingface.co through, not the CDN the model files come from.)\nThen run doorman model download here again.`,
       );
     }
     throw new CliError(`Couldn't download ${model}: ${why}`);
@@ -337,6 +330,7 @@ async function downloadNow(ctx: CliContext, args: ParsedArgs, waited: boolean): 
   progress.end();
   const view = modelView(ctx, model);
   if (!view.installed) throw new CliError(`${model} downloaded but didn't verify.`, 1, "Run `doorman model download` again.");
+  recordExplicitDownload(ctx, { ok: true });
   return {
     data: view,
     text: [

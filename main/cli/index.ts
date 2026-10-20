@@ -49,12 +49,28 @@ export function matchCommand(argv: readonly string[], commands: readonly CliComm
  * (scripts match on it). On a terminal: a red mark, the message with its
  * commands coloured, and the hint under it, dim.
  */
-function errorText(ui: Ui, message: string, hint: string | undefined, who: string): string {
-  if (!ui.decorate) return `${who}: ${message}${hint ? ` ${hint}` : ""}\n`;
+function errorText(ui: Ui, message: string, hint: string | undefined): string {
+  if (!ui.decorate) return `doorman: ${message}${hint ? ` ${hint}` : ""}\n`;
   const [first = "", ...rest] = message.split("\n");
   const lines = [ui.mark("error", ui.style.bold(ui.prose(first))), ...rest.map((l) => `  ${ui.prose(l)}`)];
   if (hint) lines.push(`  ${ui.style.dim(ui.prose(hint))}`);
   return `${lines.join("\n")}\n`;
+}
+
+/** The command an unknown invocation most likely meant, word by word:
+ * `gaurd install` → `guard install`, not just `guard`. */
+function guessCommand(words: readonly string[]): string | undefined {
+  const first = words[0] ?? "";
+  const head = COMMANDS.some((c) => c.name.split(" ")[0] === first) ? first : suggest(first, COMMANDS)?.split(" ")[0];
+  if (!head) return suggest(words.join(" "), COMMANDS);
+  const subs = COMMANDS.filter((c) => c.name.startsWith(`${head} `));
+  const second = words[1];
+  if (second !== undefined && !second.startsWith("-") && subs.length > 0) {
+    const exact = subs.find((c) => c.name === `${head} ${second}`);
+    const sub = exact?.name ?? suggest(`${head} ${second}`, subs);
+    if (sub && sub !== head) return sub;
+  }
+  return head;
 }
 
 /** `doorman help <words>` for a family or command, or why there is none. */
@@ -86,8 +102,13 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   const json = argv.includes("--json");
   const verbose = argv.includes("--verbose");
   const help = argv.includes("--help") || argv.includes("-h");
-  const args = argv.filter((a) => a !== "--json" && a !== "--verbose" && a !== "--help" && a !== "-h");
-  const given = io ?? { ...defaultEnvironment(version, verbose), packageName: pkg.name };
+  const quiet = argv.includes("--quiet") || argv.includes("-q");
+  const noColor = argv.includes("--no-color");
+  const globals = new Set(["--json", "--verbose", "--help", "-h", "--quiet", "-q", "--no-color"]);
+  const args = argv.filter((a) => !globals.has(a));
+  const base = io ?? { ...defaultEnvironment(version, verbose), packageName: pkg.name };
+  // --no-color: as NO_COLOR, for this run and anything it starts.
+  const given: CliEnvironment = noColor ? { ...base, env: { ...base.env, NO_COLOR: "1" } } : base;
   // In ASCII mode every character Doorman writes is ASCII (ui.ts), except
   // --json on stdout, which is machine output and stays as it is.
   const asciiOut = !json && termInfo(given.stdout, given.env, given.platform).ascii;
@@ -100,8 +121,8 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   const write = (lines: readonly string[]) => env.stdout.write(lines.length > 0 ? `${lines.join("\n")}\n` : "");
   const outUi = Ui.for(env.stdout, env.env, env.platform);
   const errUi = Ui.for(env.stderr, env.env, env.platform);
-  const fail = (message: string, hint: string | undefined, code: number, who = "doorman") => {
-    env.stderr.write(errorText(errUi, message, hint, who));
+  const fail = (message: string, hint: string | undefined, code: number) => {
+    env.stderr.write(errorText(errUi, message, hint));
     return code;
   };
 
@@ -127,12 +148,17 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   const match = matchCommand(args, COMMANDS);
   const family = !match && COMMANDS.some((c) => c.name.startsWith(`${args[0]} `)) ? args[0] : undefined;
   if (!match && family && (help || args.length === 1)) {
-    // `doorman export`: a family with no bare command lists its commands.
-    write(commandHelp(outUi, family, COMMANDS));
-    return help ? 0 : 2;
+    // `doorman export`: a family with no bare command lists its commands;
+    // asked for, on stdout; as a usage error, on stderr.
+    if (help) {
+      write(commandHelp(outUi, family, COMMANDS));
+      return 0;
+    }
+    env.stderr.write(`${commandHelp(errUi, family, COMMANDS).join("\n")}\n`);
+    return 2;
   }
   if (!match) {
-    const guess = suggest(args[0] ?? "", COMMANDS) ?? suggest(args.join(" "), COMMANDS);
+    const guess = guessCommand(args);
     return fail(`Unknown command "${args.join(" ")}".`, guess ? `Did you mean \`doorman ${guess}\`? \`doorman help\` lists every command.` : "`doorman help` lists every command.", 2);
   }
   if (help) {
@@ -146,16 +172,28 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   } catch (err) {
     // node's own message, without its advice on positionals that start with "-".
     const why = err instanceof Error ? err.message.replace(/\. To specify a positional argument[\s\S]*$/, ".") : String(err);
-    return fail(why, `Usage: ${usageLine(command)}. \`doorman ${command.name} --help\` lists its options.`, 2, `doorman ${command.name}`);
+    return fail(why, `Usage: ${usageLine(command)}. \`doorman ${command.name} --help\` lists its options.`, 2);
   }
   const range = command.positionals ?? { min: 0, max: 0 };
+  const subs = COMMANDS.filter((c) => c.name.startsWith(`${command.name} `));
+  const word = parsed.positionals[0];
+  if (parsed.positionals.length > range.max && subs.length > 0 && word !== undefined) {
+    // `doorman guard instal`: a mistyped subcommand, not an argument.
+    const guess = suggest(`${command.name} ${word}`, subs);
+    return fail(
+      `Unknown ${command.name} command "${word}".`,
+      guess && guess !== command.name ? `Did you mean \`doorman ${guess}\`?` : `\`doorman help ${command.name}\` lists its commands.`,
+      2,
+    );
+  }
   if (parsed.positionals.length < range.min || parsed.positionals.length > range.max) {
     const what = parsed.positionals.length < range.min ? "Missing an argument." : "Too many arguments.";
-    return fail(what, `Usage: ${usageLine(command)}. \`doorman ${command.name} --help\` has examples.`, 2, `doorman ${command.name}`);
+    return fail(what, `Usage: ${usageLine(command)}. \`doorman ${command.name} --help\` has examples.`, 2);
   }
   const ctx = new CliContext(env);
   ctx.commandName = command.name;
   ctx.json = json;
+  ctx.quiet = quiet;
   // Whether a newer CLI is out: asked at most once a day, while the command
   // runs, and said on stderr after its output (update-check.ts).
   const updateNotice = command.name === "update" ? undefined : startUpdateCheck(ctx, env.packageName ?? DEFAULT_PACKAGE, env.version);
@@ -172,6 +210,8 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   } catch (err) {
     if (err instanceof CliError) {
       code = fail(err.message, err.hint, err.exitCode);
+    } else if (!verbose && err instanceof Error && "code" in err && err.code === "ENOENT" && "path" in err && typeof err.path === "string") {
+      code = fail(`No such file: ${err.path}`, undefined, 1);
     } else {
       code = fail(err instanceof Error ? (verbose ? (err.stack ?? err.message) : err.message) : String(err), undefined, 1);
     }
@@ -187,7 +227,8 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
     failed = undefined; // a notice never fails a command
   }
   if (failed) env.stderr.write(`\n${errUi.decorate ? errUi.mark("warn", errUi.prose(failed)) : failed}\n`);
-  const notice = await updateNotice?.();
+  // --quiet: only the command's own output, warnings and errors.
+  const notice = quiet ? undefined : await updateNotice?.();
   if (notice) env.stderr.write(`\n${errUi.decorate ? errUi.mark("info", errUi.prose(notice)) : notice}\n`);
   return code;
 }

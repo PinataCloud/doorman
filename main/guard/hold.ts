@@ -14,7 +14,7 @@
 import { randomUUID } from "node:crypto";
 import {
   DESCRIPTION_LIMIT,
-  PREVIEW_LIMIT,
+  cappedPreview,
   clearExchange,
   decidedAtMs,
   holdForVerdict,
@@ -78,6 +78,10 @@ export interface HoldContext {
   redacted: string;
   /** A shell call's own description, redacted with the rest of the input. */
   description?: string;
+  /** The call named after its risky part — see ApprovalRequest.call_name. */
+  call_name?: string;
+  /** The agent runs it without its own prompt — see ApprovalRequest. */
+  permissions_bypassed?: boolean;
   /** The (detector, key_name) pairs behind the hold — see ApprovalRequest. */
   held_keys?: { detector: string; key_name?: string }[];
   /** Labels for custom-rule detector ids named in the decision. */
@@ -114,8 +118,10 @@ export async function holdForHuman(
       : {}),
     max_severity: decision.max_severity,
     reason,
+    ...(context.call_name ? { call_name: context.call_name } : {}),
     ...(context.description ? { description: context.description.slice(0, DESCRIPTION_LIMIT) } : {}),
-    preview: context.redacted.slice(0, PREVIEW_LIMIT),
+    ...cappedPreview(context.redacted),
+    ...(context.permissions_bypassed ? { permissions_bypassed: true } : {}),
     hold_seconds: holdSeconds,
     on_timeout: policy.confirm.on_timeout,
     pid: process.pid,

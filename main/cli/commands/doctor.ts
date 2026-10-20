@@ -1,9 +1,32 @@
-import { DoctorRunner, attentionChecks } from "../../doctor.js";
+import { DoctorRunner } from "../../doctor.js";
 import type { DoctorCheck } from "../../lib/doctor.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
+import { dockerSandbox, sandboxWatchCommand } from "../docker-sandbox.js";
 import { CliError } from "../output.js";
 import { plural } from "../ui.js";
+
+/**
+ * A check as a CLI user acts on it. The shared doctor speaks to the app:
+ * its skipped guard checks point at a Settings screen, and the editor
+ * companion — on by default — fails until installed and is installed by the
+ * automatic repair. From a terminal, that install is asked for by name
+ * (`doorman editor install`), so it reads as a warning with that step.
+ */
+function forCli(check: DoctorCheck): DoctorCheck {
+  if ((check.id === "guard.off" || check.id === "vscode.guard_off") && check.status === "skip") {
+    return { ...check, detail: "The guard is off: rules only watch; nothing is held or blocked. `doorman guard install` turns it on." };
+  }
+  if (check.id === "vscode.extension" && check.fix === "install-vscode-extension") {
+    const { fix: _fix, auto: _auto, ...rest } = check;
+    return {
+      ...rest,
+      status: "warn",
+      manual: "`doorman editor install` installs it; `doorman config set vscode_extension false` stops asking.",
+    };
+  }
+  return check;
+}
 
 /** The check's status word, marked: ok / warn / fail / skip, padded to one width. */
 function statusText(ctx: CliContext, check: DoctorCheck): string {
@@ -22,7 +45,7 @@ function repairCommand(check: DoctorCheck): string | undefined {
 
 /** What to do about a check that isn't ok: the person's step, or the repair. */
 function remedy(ctx: CliContext, check: DoctorCheck): string | undefined {
-  if (check.manual) return ctx.style.dim(check.manual);
+  if (check.manual) return ctx.style.dim(ctx.ui.prose(check.manual));
   const command = repairCommand(check);
   return command === undefined ? undefined : `${ctx.style.dim("fix:")} ${ctx.ui.code(command)}`;
 }
@@ -38,7 +61,8 @@ export const doctorCommand: CliCommand = {
     ["--only <check>", "report (and repair) one check by id"],
   ],
   notes: [
-    "The setup doctor from the app's Integrations screen, run once.",
+    "The setup doctor (the app runs the same checks on its own), run once.",
+    "The VS Code companion is installed only when asked: `doorman editor install`, or `--repair all --only vscode.extension`.",
     "Exit code 1 when any check still warns or fails after the run (something needs attention).",
   ],
   examples: [
@@ -54,11 +78,14 @@ export const doctorCommand: CliCommand = {
     const repair = repairArg ?? "none";
     const only = typeof args.values.only === "string" ? args.values.only : undefined;
     if (repair !== "none") ctx.requireWritable("Repair the setup");
+    const sandbox = dockerSandbox(ctx.io.env);
+    // The companion is installed by the repair only when that check is named.
+    let probeExtension = repair === "none" || only === "vscode.extension";
     const runner = new DoctorRunner({
       userDataDir: ctx.dataDir,
       guardWanted: () => ctx.prefs().guard_wanted,
       mcpWanted: () => ctx.prefs().mcp_answers === true,
-      editorExtensionWanted: () => ctx.prefs().vscode_extension === true,
+      editorExtensionWanted: () => probeExtension && ctx.prefs().vscode_extension === true,
       appVersion: ctx.io.version,
       policy: () => ctx.policy(),
       onState: () => {},
@@ -82,9 +109,19 @@ export const doctorCommand: CliCommand = {
       // The state keeps the last outcome; a pass that repaired nothing leaves it as it was.
       repaired = state.last_repair === repaired ? undefined : state.last_repair;
     }
-    const report = state.report;
-    if (!report) throw new CliError("The doctor couldn't finish.", 1, "`doorman doctor --verbose` shows why.");
-    const checks = report.checks.filter((c) => only === undefined || c.id === only);
+    if (!probeExtension) {
+      // Repairs done without the companion: report it as it stands, unrepaired.
+      probeExtension = true;
+      state = await runner.run({ reason: "cli", repair: "none", only, refresh: true });
+    }
+    if (!state.report) throw new CliError("The doctor couldn't finish.", 1, "`doorman doctor --verbose` shows why.");
+    const all = state.report.checks.map(forCli);
+    const checks = all.filter((c) => only === undefined || c.id === only);
+    const ok = all.filter((c) => c.status === "ok").length;
+    const warn = all.filter((c) => c.status === "warn").length;
+    const fail = all.filter((c) => c.status === "fail").length;
+    const issues = [fail > 0 ? plural(fail, "issue") : "", warn > 0 ? plural(warn, "warning") : ""].filter(Boolean).join(", ");
+    const report = { ...state.report, checks: all, ok, warn, fail, headline: issues || "Everything is wired" };
     if (only !== undefined && !report.checks.some((c) => c.id === only)) {
       throw new CliError(`No check "${only}".`, 1, `Checks: ${report.checks.map((c) => c.id).join(", ")}`);
     }
@@ -93,11 +130,14 @@ export const doctorCommand: CliCommand = {
     // Detail lines sit under the title: past the status word, and its glyph when there is one.
     const under = " ".repeat(ui.decorate ? 10 : 8);
     const text = [ui.section(report.headline), ""];
+    if (sandbox) {
+      text.push(`  ${ui.mark("info", `Docker Sandbox ${s.bold(sandbox.name)}: the app can't run here; held calls are answered from the host with ${ui.code(sandboxWatchCommand(sandbox))}.`)}`, "");
+    }
     for (const check of checks) {
       text.push(`  ${statusText(ctx, check)}  ${check.title}  ${s.dim(`[${check.id}]`)}`);
       if (check.status === "warn" || check.status === "fail" || (check.status === "skip" && check.detail !== "")) {
         const width = ui.width === undefined ? undefined : ui.width - under.length;
-        for (const line of width === undefined || width < 20 ? [check.detail] : ui.wrap(check.detail, width)) text.push(`${under}${line}`);
+        for (const line of width === undefined || width < 20 ? [check.detail] : ui.wrap(check.detail, width)) text.push(`${under}${ui.prose(line)}`);
         const step = remedy(ctx, check);
         if (step) text.push(`${under}${step}`);
       }
@@ -128,8 +168,10 @@ export const doctorCommand: CliCommand = {
     return {
       data: {
         report: { ...report, checks },
-        attention: attentionChecks(report, state.paused).map((c) => c.id),
+        // The checks the text counts as needing attention: every warn or fail still open.
+        attention: open.map((c) => c.id),
         repairs: { applied, failed },
+        ...(sandbox ? { sandbox: { name: sandbox.name, answer_command: sandboxWatchCommand(sandbox) } } : {}),
       },
       text,
       exitCode: needsAttention ? 1 : 0,

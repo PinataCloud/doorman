@@ -12,7 +12,12 @@
  * The last attempt's outcome sits beside the models and spaces retries out the
  * way the app's widening delay does. Nothing starts while another Doorman owns
  * the data — the app downloads for itself, and `doorman watch` started one when
- * it began — nor with the classifier off (`DOORMAN_INJECTION_CLASSIFIER=off`).
+ * it began — nor with the classifier off (`DOORMAN_INJECTION_CLASSIFIER=off`),
+ * nor from a script: under CI or with stderr not a terminal (a kit's setup
+ * step, a pipeline), a 96 MB download nobody asked for is not this command's
+ * to start. A download a Docker Sandbox's network policy refused is not
+ * retried on its own either: nothing changes until someone allows the hosts
+ * from the host, and then `doorman model download` is the retry.
  *
  * Like the app's, this is also the update path: a CLI that pins newer weights
  * finds them missing and fetches them (into their own folder, beside the
@@ -37,6 +42,7 @@ import {
 import { injectionModelSourceFromEnv } from "../lib/policy-env.js";
 import { doormanSource, modelPlan, modelsRoot, runtimeDir } from "./classifier.js";
 import type { CliContext } from "./context.js";
+import { MODEL_HOSTS, sandboxAllowCommand, sandboxPolicyBlock } from "./docker-sandbox.js";
 
 /** The child the CLI starts: the arguments after the CLI's own entry point. */
 export const AUTO_DOWNLOAD_ARGS = ["model", "download", "--auto"] as const;
@@ -79,10 +85,29 @@ interface AttemptRecord {
   noticed?: boolean;
 }
 
-/** What `doorman model` and `doorman status` show about a model download. */
+/** A download the Docker Sandbox's policy proxy refused: the sandbox, the
+ * host it blocked (after a redirect, the CDN rather than the Hub), and the
+ * host-side command that lets the model's downloads through. */
+export interface SandboxBlock {
+  sandbox: string;
+  host: string;
+  allow: string;
+}
+
+/** The sandbox block behind a refusal, in this environment; undefined outside
+ * a sandbox and for any other failure. */
+export function sandboxBlock(env: NodeJS.ProcessEnv, refused: DownloadRefusal | undefined): SandboxBlock | undefined {
+  const sandbox = sandboxPolicyBlock(env, refused?.status);
+  if (!sandbox || !refused) return undefined;
+  return { sandbox: sandbox.name, host: refused.host, allow: sandboxAllowCommand(sandbox, MODEL_HOSTS) };
+}
+
+/** What `doorman model` and `doorman status` show about a model download.
+ * A failure the sandbox's policy caused carries `blocked`, and has no next
+ * attempt (`next_attempt_at: null`): it waits for `doorman model download`. */
 export type AutoDownloadView =
   | { status: "running"; by: "app" | "cli"; pid: number; model: InjectionModelId; bytes_done: number; bytes_total: number }
-  | { status: "failed"; error: string; refused?: DownloadRefusal; next_attempt_at: string }
+  | { status: "failed"; error: string; refused?: DownloadRefusal; blocked?: SandboxBlock; next_attempt_at: string | null }
   | { status: "idle" };
 
 const recordPath = (dataDir: string) => join(modelsRoot(dataDir), ".auto-download.json");
@@ -131,9 +156,11 @@ export function markDownloadFailureNoticed(ctx: CliContext): void {
   }
 }
 
-/** When the next attempt may start after `record`'s failures (0 = now). */
-function nextAttemptAt(record: AttemptRecord | undefined): number {
+/** When the next attempt may start after `record`'s failures (0 = now;
+ * Infinity = not on its own: the sandbox's policy refused the last one). */
+function nextAttemptAt(env: NodeJS.ProcessEnv, record: AttemptRecord | undefined): number {
   if (!record || record.failures === 0) return 0;
+  if (sandboxBlock(env, record.refused)) return Infinity;
   const delay = AUTO_DOWNLOAD_RETRY_MS[Math.min(record.failures, AUTO_DOWNLOAD_RETRY_MS.length) - 1]!;
   return Date.parse(record.last_attempt_at) + delay;
 }
@@ -171,14 +198,26 @@ function fetchDeps(
   };
 }
 
+/** Whether the classifier could use a model and one it needs is missing. */
+function modelsWanted(ctx: CliContext): boolean {
+  const cfg = ctx.policy().injection_classifier ?? defaultInjectionClassifierConfig();
+  return cfg.enabled && runtimePresent(runtimeDir()) && injectionModelsMissing(fetchDeps(ctx, () => {}));
+}
+
+/** Whether this run is a script's — CI, or stderr not a terminal — where
+ * nobody would see a notice or wait for a download. */
+export function scriptedRun(ctx: CliContext): boolean {
+  const ci = ctx.io.env.CI;
+  if (ci !== undefined && ci !== "" && ci !== "0" && ci.toLowerCase() !== "false") return true;
+  return ctx.io.stderr.isTTY !== true;
+}
+
 /** Whether a background download should start now. */
 function autoDownloadDue(ctx: CliContext): boolean {
-  const cfg = ctx.policy().injection_classifier ?? defaultInjectionClassifierConfig();
-  if (!cfg.enabled || !runtimePresent(runtimeDir())) return false;
-  if (!injectionModelsMissing(fetchDeps(ctx, () => {}))) return false;
+  if (scriptedRun(ctx) || !modelsWanted(ctx)) return false;
   if (ctx.running()) return false;
   if (activeDownload(ctx)) return false;
-  return ctx.io.now() >= nextAttemptAt(readRecord(ctx.dataDir));
+  return ctx.io.now() >= nextAttemptAt(ctx.io.env, readRecord(ctx.dataDir));
 }
 
 /**
@@ -198,15 +237,14 @@ export function maybeStartModelDownload(ctx: CliContext, commandName: string): b
       return false;
     }
     handOverLock(ctx.dataDir, "model-download", process.pid, pid);
-    if (ctx.io.stderr.isTTY === true) {
-      const plan = modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env);
-      const model = plan.selected === "doorman-1" && doormanSource(ctx.io.env) !== undefined ? "doorman-1" : "stock";
-      const size = (manifestBytes(injectionModelManifest(model)) / 1e6).toFixed(0);
-      const ui = ctx.errUi;
-      ctx.io.stderr.write(
-        `${ui.mark("info", ui.style.dim(`Downloading the injection classifier (${model}, ${size} MB) in the background; until it's ready, injection findings come from the rules alone. \`doorman model\` shows its progress.`))}\n`,
-      );
-    }
+    // Only on a terminal (autoDownloadDue): the person who will wait for it.
+    const plan = modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env);
+    const model = plan.selected === "doorman-1" && doormanSource(ctx.io.env) !== undefined ? "doorman-1" : "stock";
+    const size = (manifestBytes(injectionModelManifest(model)) / 1e6).toFixed(0);
+    const ui = ctx.errUi;
+    ctx.io.stderr.write(
+      `${ui.mark("info", ui.style.dim(`Downloading the injection classifier (${model}, ${size} MB) in the background; until it's ready, injection findings come from the rules alone. \`doorman model\` shows its progress.`))}\n`,
+    );
     ctx.log(`started the model download in the background (pid ${pid})`);
     return true;
   } catch (err) {
@@ -222,6 +260,9 @@ export function maybeStartModelDownload(ctx: CliContext, commandName: string): b
  * takes the lock itself, and does nothing while another download holds it.
  */
 export async function runAutoDownload(ctx: CliContext): Promise<{ ok: boolean; error?: string; fetched: InjectionModelId[] }> {
+  // Started by hand (the sbx kit's startup step does), nothing to do when
+  // the classifier is off or has what it needs.
+  if (!modelsWanted(ctx)) return { ok: true, fetched: [] };
   const started = new Date(ctx.io.now()).toISOString();
   mkdirSync(modelsRoot(ctx.dataDir), { recursive: true });
   if (!takeLock(ctx.dataDir, "model-download", { pid: process.pid, by: "cli", command: "model download --auto" }, ctx.io.now())) {
@@ -259,6 +300,32 @@ export async function runAutoDownload(ctx: CliContext): Promise<{ ok: boolean; e
   }
 }
 
+/**
+ * Record what `doorman model download` got, so the background download and
+ * the views agree with it: a success ends a run of failures (whatever was
+ * wrong may be fixed — the background download may try the rest), and a
+ * refusal from the sandbox's policy is recorded as one, already told, so no
+ * background attempt repeats it. Any other failure leaves the record as it
+ * was. Best effort, like the notice.
+ */
+export function recordExplicitDownload(ctx: CliContext, outcome: { ok: true } | { ok: false; error: string; refused: DownloadRefusal | undefined }): void {
+  const previous = readRecord(ctx.dataDir);
+  const at = new Date(ctx.io.now()).toISOString();
+  let record: AttemptRecord | undefined;
+  if (outcome.ok) {
+    if (previous && previous.failures > 0) record = { last_attempt_at: at, failures: 0 };
+  } else if (outcome.refused && sandboxBlock(ctx.io.env, outcome.refused)) {
+    record = { last_attempt_at: at, failures: (previous?.failures ?? 0) + 1, error: outcome.error, refused: outcome.refused, noticed: true };
+  }
+  if (!record) return;
+  try {
+    mkdirSync(modelsRoot(ctx.dataDir), { recursive: true });
+    writeFileSync(recordPath(ctx.dataDir), JSON.stringify(record));
+  } catch {
+    // the views fall back to the previous record
+  }
+}
+
 /** The model download as `doorman model` reports it. */
 export function autoDownloadView(ctx: CliContext): AutoDownloadView {
   const lock = activeDownload(ctx);
@@ -270,7 +337,15 @@ export function autoDownloadView(ctx: CliContext): AutoDownloadView {
   }
   const record = readRecord(ctx.dataDir);
   if (record?.error !== undefined && record.failures > 0) {
-    return { status: "failed", error: record.error, ...(record.refused ? { refused: record.refused } : {}), next_attempt_at: new Date(nextAttemptAt(record)).toISOString() };
+    const blocked = sandboxBlock(ctx.io.env, record.refused);
+    const next = nextAttemptAt(ctx.io.env, record);
+    return {
+      status: "failed",
+      error: record.error,
+      ...(record.refused ? { refused: record.refused } : {}),
+      ...(blocked ? { blocked } : {}),
+      next_attempt_at: Number.isFinite(next) ? new Date(next).toISOString() : null,
+    };
   }
   return { status: "idle" };
 }

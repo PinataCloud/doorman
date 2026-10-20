@@ -43,8 +43,9 @@ export function plain(text: string): string {
   return text.replace(/`/g, "");
 }
 
-/** Whitespace folded to single spaces and cut to `max` characters. */
-export function oneLine(text: string, max: number): string {
+/** Whitespace folded to single spaces, cut to `max` characters when given.
+ * Table cells pass none: the table cuts to the terminal and never when piped. */
+export function oneLine(text: string, max = Number.POSITIVE_INFINITY): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 3)}...` : flat;
 }
@@ -52,7 +53,9 @@ export function oneLine(text: string, max: number): string {
 /** The item whose id is `id`, or the only one it starts. Ids are long; the
  * lists print them whole, but a unique prefix is enough to type. `list` is
  * the command that lists them, offered when nothing matches. */
-export function byIdOrPrefix<T>(items: readonly T[], id: string, idOf: (item: T) => string | undefined, what: string, list?: string): T {
+export function byIdOrPrefix<T>(items: readonly T[], given: string, idOf: (item: T) => string | undefined, what: string, list?: string): T {
+  // An id copied from a cut table cell ends in an ellipsis: the rest is a prefix.
+  const id = given.replace(/(?:…|\.\.\.)$/, "");
   const exact = items.find((item) => idOf(item) === id);
   if (exact) return exact;
   const matches = items.filter((item) => idOf(item)?.startsWith(id));
@@ -65,7 +68,9 @@ export function byIdOrPrefix<T>(items: readonly T[], id: string, idOf: (item: T)
 export function intOption(value: unknown, name: string, fallback: number, min = 0, max = Number.MAX_SAFE_INTEGER): number {
   if (value === undefined) return fallback;
   const n = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : Number.NaN;
-  if (!Number.isInteger(n) || n < min || n > max) throw new CliError(`--${name} takes a whole number from ${min} to ${max}.`, 2);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw new CliError(`--${name} takes a whole number ${max === Number.MAX_SAFE_INTEGER ? `of ${min} or more` : `from ${min} to ${max}`}.`, 2);
+  }
   return n;
 }
 
@@ -94,7 +99,9 @@ export function writeOut(path: string, content: string): string {
   try {
     writeFileSync(target, content);
   } catch (err) {
-    throw new CliError(`Couldn't write ${target}: ${err instanceof Error ? err.message : String(err)}`);
+    const code = err instanceof Error && "code" in err ? err.code : undefined;
+    const why = code === "ENOENT" ? "no such folder" : code === "EACCES" || code === "EPERM" ? "permission denied" : err instanceof Error ? err.message : String(err);
+    throw new CliError(`Couldn't write ${target}: ${why}.`);
   }
   return target;
 }

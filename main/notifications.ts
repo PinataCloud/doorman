@@ -10,7 +10,7 @@ import { SEVERITY_RANK } from "./guard/policy.js";
 import type { SecuritySeverity } from "./guard/security-detect.js";
 import { localDetectorLabel } from "./lib/findings.js";
 import type { ApprovalRequest } from "./guard/handshake.js";
-import { approvalRules, approvalSummary } from "./lib/approvals.js";
+import { approvalRules, approvalSummary, approvalWhere } from "./lib/approvals.js";
 import type { FindingRow } from "./lib/findings.js";
 import { formatTokens } from "./lib/format.js";
 import type { SpendGraphs } from "./lib/spend.js";
@@ -337,7 +337,7 @@ export function notifyApprovalNeeded(
   handlers: { onDeny(): void; onAllow(): void; onOpen(): void; iconPath?: string },
 ): Notification | undefined {
   if (!Notification.isSupported()) return undefined;
-  const where = [request.tool_name, request.target].filter(Boolean).join(" → ");
+  const where = approvalWhere(request);
   const notification = trackDelivery(new Notification({
     // Identity: macOS labels the banner with the app name and the bundle icon,
     // so the brand is already on it — `icon` adds the mark as the banner's

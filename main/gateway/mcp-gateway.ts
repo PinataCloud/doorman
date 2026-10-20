@@ -64,6 +64,7 @@ import { ruleShown } from "../guard/rule-scope.js";
 import { parsePolicy, type GuardPolicy, type McpPermissionMode } from "../guard/policy.js";
 import {
   appListening,
+  cappedPreview,
   decidedAtMs,
   holdForVerdict,
   toolCallPreview,
@@ -401,7 +402,7 @@ function main(): void {
     }
     const id = randomUUID();
     const heldAt = new Date().toISOString();
-    const preview = toolCallPreview(`mcp__${args.server}__${call.name}`, redact(JSON.stringify(call.arguments ?? {}))).preview;
+    const preview = cappedPreview(toolCallPreview(`mcp__${args.server}__${call.name}`, redact(JSON.stringify(call.arguments ?? {}))).preview);
     // Set the moment the call has been forwarded or refused, so the catch below
     // can never answer a call twice.
     let settled = false;
@@ -418,7 +419,7 @@ function main(): void {
         detector_labels: { mcp_permission: `MCP ${decision.cls} call on ${args.server}` },
         max_severity: decision.armed ? "critical" : "high",
         reason: decision.reason ?? "Held by Doorman.",
-        preview,
+        ...preview,
         hold_seconds: policy.confirm.hold_seconds,
         on_timeout: policy.confirm.on_timeout,
         pid: process.pid,

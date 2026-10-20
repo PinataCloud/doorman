@@ -9,7 +9,7 @@ import { daysOption, delta, duration, paintSeverity, ruleLabels, withEngine } fr
 
 export const usageCommand: CliCommand = {
   name: "usage",
-  summary: "Tokens and time spent with AI, like the Usage screen",
+  summary: "Tokens and time spent with AI agents, by use case",
   usage: "[--days 7|30] [--scan]",
   options: { days: { type: "string" }, scan: { type: "boolean", default: false } },
   flags: [
@@ -93,7 +93,7 @@ export const usageCommand: CliCommand = {
           "",
           ui.section("By use case"),
           ...ui.table(
-            ["USE CASE", "TIME", "SHARE", "TOKENS", "SESSIONS", "ALERTS"],
+            ["USE CASE", "TIME", "SHARE", "TOKENS", "SESSIONS", "SIGHTINGS"],
             g.by_task.map((t) => [
               TASK_LABELS[t.task as TaskClass] ?? t.task,
               duration(t.seconds),
@@ -141,7 +141,7 @@ export const usageCommand: CliCommand = {
 
 export const analyticsCommand: CliCommand = {
   name: "analytics",
-  summary: "Security analytics: what each rule found, like the Analytics screen",
+  summary: "Security analytics: what each rule caught in the window, and how held calls were answered",
   usage: "[--days 7|14|30|90] [--scan]",
   options: { days: { type: "string" }, scan: { type: "boolean", default: false } },
   flags: [
@@ -149,7 +149,7 @@ export const analyticsCommand: CliCommand = {
     ["--scan", "read new transcripts first"],
   ],
   notes: [
-    "Exposures (rule x place), things under them and sightings in the window, how many of the sessions that ran had a finding, how held calls were answered, and every rule that fired.",
+    "Exposures (a rule at a place), the distinct items exposed under them (secrets, files) and sightings in the window, how many of the sessions that ran had a sighting, how held calls were answered, and every rule that fired.",
   ],
   examples: [
     ["doorman analytics", "the last 14 days"],
@@ -175,11 +175,11 @@ export const analyticsCommand: CliCommand = {
         ui.section(`Security analytics, last ${days} days`),
         ...ui.kv([
           ["exposures", noted(String(stats.exposures), `${stats.new_exposures} new${prevNew !== undefined ? ` (${prevNew} the ${days} days before)` : ""}`)],
-          ["things", noted(String(stats.things), `${stats.new_things} new`)],
+          ["items", noted(String(stats.things), `${stats.new_things} new`)],
           ["sightings", String(stats.total)],
           [
             "sessions",
-            noted(rate !== undefined ? `${rate}%` : String(stats.sessions), `${stats.sessions} of the ${stats.window_sessions ?? 0} sessions that ran had a finding`),
+            noted(rate !== undefined ? `${rate}%` : String(stats.sessions), `${stats.sessions} of the ${stats.window_sessions ?? 0} sessions that ran had a sighting`),
           ],
           [
             "held calls",
@@ -214,7 +214,7 @@ export const analyticsCommand: CliCommand = {
               String(r.warned),
               r.last_fired_at ? ago(r.last_fired_at, ctx.io.now()) : "",
             ]),
-            { indent: 2, keep: [1, 2, 3, 4, 5, 6, 7, 8] },
+            { indent: 2, keep: [0, 1, 2, 3, 4, 5, 6, 7, 8], drop: [5, 6, 7, 4] },
           ),
         );
       } else {

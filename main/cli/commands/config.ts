@@ -24,14 +24,14 @@ const SETTINGS: Record<ConfigKey, { help: string; parse(raw: string): Prefs[Conf
     parse: (raw) => (/^\d+$/.test(raw.trim()) ? Number(raw.trim()) : undefined),
   },
   confidence_bands: {
-    help: `comma list of ${CONFIDENCE_BANDS.join(", ")} (which findings show)`,
+    help: `comma list of ${CONFIDENCE_BANDS.join(", ")} (which sightings show)`,
     parse: (raw) => {
       const parts = raw.split(",").map((p) => p.trim().toLowerCase()).filter((p) => p !== "");
       if (parts.length === 0 || parts.some((p) => !(CONFIDENCE_BANDS as readonly string[]).includes(p))) return undefined;
       return CONFIDENCE_BANDS.filter((b) => parts.includes(b));
     },
   },
-  show_false_positives: { help: "true or false (list findings marked false positive)", parse: parseBoolean },
+  show_false_positives: { help: "true or false (list sightings marked false positive)", parse: parseBoolean },
   vscode_extension: { help: "true or false (VS Code companion; installs or removes it)", parse: parseBoolean },
   mcp_answers: { help: "true or false (Doorman's MCP server for your agents)", parse: parseBoolean },
   // Any word; the sanitizer below refuses what isn't a theme.
@@ -139,7 +139,7 @@ const setCommand: CliCommand = {
 
 const configCommand: CliCommand = {
   name: "config",
-  summary: "Same as `doorman config get`",
+  summary: "Settings shared with the app: history kept, which confidence shows, editor companion, theme (same as `config get`)",
   notes: getCommand.notes!,
   examples: getCommand.examples!,
   run: getCommand.run,

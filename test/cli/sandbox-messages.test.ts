@@ -131,8 +131,12 @@ describe("a model download the network refuses", () => {
     expect(r.code).toBe(1);
     expect(r.err).toContain("Couldn't download stock: the sandbox's network policy blocked us.aws.cdn.hf.co");
     expect(r.err).toContain(`  ${ALLOW}\n`);
+    // sbx's pending approval for the refused request only lets the Hub through.
+    expect(r.err).toContain("Approving the blocked request in sbx isn't enough");
     expect(r.err).toContain("doorman model download");
   });
+
+  const BLOCKED = `blocked by this sandbox's network policy (us.aws.cdn.hf.co); on your computer run ${ALLOW}, then here: doorman model download`;
 
   it("in a sandbox, doorman model and doorman status show the background failure the same way", async () => {
     extraEnv = SANDBOX_ENV;
@@ -140,9 +144,35 @@ describe("a model download the network refuses", () => {
     expect((await dm(["model", "download", "--auto"])).code).toBe(1);
     // The record's error stays the string its readers expect.
     expect(record()).toMatchObject({ failures: 1, error: expect.stringContaining("HTTP 403") });
-    const fix = `the sandbox's network policy blocked us.aws.cdn.hf.co; on your computer run ${ALLOW}, then here: doorman model download`;
-    expect((await dm(["model"])).out).toContain(fix);
-    expect((await dm(["status"])).out).toContain(fix);
+    expect((await dm(["model"])).out).toContain(BLOCKED);
+    expect((await dm(["status"])).out).toContain(BLOCKED);
+  });
+
+  it("in a sandbox, a blocked download stays blocked: no background retry, and never shown as downloading", async () => {
+    extraEnv = { ...SANDBOX_ENV, DOORMAN_NO_UPDATE_CHECK: "1" };
+    refuse(403);
+    expect((await dm(["model", "download"])).code).toBe(1);
+    // A person at a terminal, days later: the retry spacing would have run it again by now.
+    const spawned: string[][] = [];
+    ioExtra.spawnDetached = (args: readonly string[]) => (spawned.push([...args]), process.ppid);
+    const stderr = new PassThrough() as PassThrough & { isTTY?: boolean };
+    stderr.isTTY = true;
+    stderr.resume();
+    ioExtra.stderr = stderr;
+    ioExtra.now = () => Date.now() + 3 * 24 * 60 * 60_000;
+    const model = await dm(["model"]);
+    const status = await dm(["status"]);
+    expect(spawned).toEqual([]);
+    for (const r of [model, status]) {
+      expect(r.out).toContain(BLOCKED);
+      expect(r.out).not.toContain("downloading");
+    }
+    const json = JSON.parse((await dm(["model", "--json"])).out) as { auto_download: Record<string, unknown> };
+    expect(json.auto_download).toMatchObject({
+      status: "failed",
+      blocked: { sandbox: "doorman", host: "us.aws.cdn.hf.co", allow: ALLOW },
+      next_attempt_at: null,
+    });
   });
 
   it("in a sandbox, other HTTP errors keep today's retry advice", async () => {
@@ -182,7 +212,7 @@ describe("another Doorman process, named the way a person can find it", () => {
     const guard = await dm(["guard", "status"]);
     expect(answersLine(guard.out)).toContain("doorman watch in sandbox doorman");
     const status = await dm(["status"]);
-    expect(status.out).toMatch(/app\s+doorman watch running in sandbox doorman\n/);
+    expect(status.out).toMatch(/answers\s+doorman watch running in sandbox doorman\n/);
     const download = await dm(["model", "download"]);
     expect(download.err).toContain("Doorman is running in sandbox doorman, and it keeps the classifier's model itself");
     for (const r of [watch, guard, status, download]) expect(r.out + r.err).not.toContain(`pid ${other}`);

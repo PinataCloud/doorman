@@ -165,7 +165,7 @@ const observedCommand: CliCommand = {
       ),
     ];
     if (findings.length > 0) {
-      text.push("", ctx.ui.section("Findings", String(findings.length)));
+      text.push("", ctx.ui.section("Sightings", String(findings.length)));
       for (const f of findings) {
         const high = f.severity === "critical" || f.severity === "high";
         const sev = high ? s.error(f.severity) : f.severity === "medium" ? s.warn(f.severity) : s.dim(f.severity);

@@ -25,11 +25,17 @@ export function approvalRules(request: ApprovalRequest): string {
   return rules.length > 0 ? rules.join(", ") : "Security policy";
 }
 
+/** What the held call is: its risky part when the guard named one
+ * (`curl → webhook.site`), else the tool and its target (`Bash → rm`). */
+export function approvalWhere(request: ApprovalRequest): string {
+  return request.call_name ?? [request.tool_name, request.target].filter(Boolean).join(" → ");
+}
+
 /** One line describing what is being held: "Destructive command · Bash → rm". */
 export function approvalSummary(request: ApprovalRequest): string {
   const rules = request.detectors.map((d) => label(request, d));
   const what = rules.length > 0 ? rules.join(", ") : "Security policy";
-  const where = [request.tool_name, request.target].filter(Boolean).join(" → ");
+  const where = approvalWhere(request);
   return where ? `${what} · ${where}` : what;
 }
 
@@ -163,7 +169,9 @@ export function approvalContextNote(request: ApprovalRequest): string | undefine
     if (risk) return `MCP · ${risk.vendor} ${risk.kind}${cls} — ${risk.note}`;
     if (request.source === "mcp-gateway") return `MCP · ${server}${cls} — no risk profile for this server.`;
   }
-  const hosts = extractHosts(`${request.target ?? ""}\n${request.preview ?? ""}`);
+  // The longer copy when the guard cut the preview: the destination is often
+  // the tail of a long chain.
+  const hosts = extractHosts(`${request.target ?? ""}\n${request.preview_full ?? request.preview ?? ""}`);
   if (hosts.length > 0) {
     const p = classifyDestination(hosts[0]!);
     return `Destination: ${hosts[0]} — ${p.label}. ${p.note}`;

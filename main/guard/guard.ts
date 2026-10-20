@@ -43,7 +43,7 @@ import { customDetectorLabels, isCustomDetectorId } from "./custom-rules.js";
 import { evaluatePrompt, evaluateToolCall, guardSelfWrite, parsePolicy, type ExceptedFinding, type GuardHookInput } from "./decision.js";
 import { decideEnforcement, type GuardFinding } from "./policy.js";
 import { secondOpinion, secondOpinionRawText, type SecondOpinionTelemetry } from "./second-opinion.js";
-import { MAX_COMMAND_CHARS, sanitizeExcerpt, scanWindow, type SecurityDetectorId } from "./security-detect.js";
+import { MAX_COMMAND_CHARS, networkCallName, sanitizeExcerpt, scanWindow, type SecurityDetectorId } from "./security-detect.js";
 import { appListening, presenceTerm, toolCallPreview, writePresence, type ApprovalResolution } from "./handshake.js";
 import { holdForHuman, hostEmit, unattendedOutcome, type HoldTelemetry } from "./hold.js";
 import { priorDecision, writeDedup } from "./dedup.js";
@@ -51,6 +51,29 @@ import { HOOK_TIMEOUT_SLACK_SECONDS } from "./policy.js";
 import { hostForArgv, sourceForPayload } from "./hosts/index.js";
 import type { GuardHostDescriptor } from "./hosts/types.js";
 import { agentFacingReason, remedyFor, type HoldResolution } from "./remedy.js";
+import { dockerSandbox } from "./sandbox.js";
+
+/** The holds whose risky part is where the bytes go: the card names the call
+ * after its network invocation (`curl → webhook.site`), not its first word. */
+const NETWORK_HOLDS: Record<string, true> = { secret_egress: true, unsafe_fetch_exec: true };
+
+/** The card's name for a held shell call, when its first word is not the risky
+ * part: the network invocation behind an egress hold. Built from the REDACTED
+ * command, like everything else on the card. */
+function heldCallName(command: string | undefined, detectors: readonly string[]): string | undefined {
+  if (command === undefined || !detectors.some((d) => NETWORK_HOLDS[d] === true)) return undefined;
+  return networkCallName(redact(command));
+}
+
+/** Whether the agent runs this call without its own permission prompt: the
+ * payload says so (Claude Code's `permission_mode`, which Droid and Qwen
+ * share), or it runs in a Docker Sandbox, where every agent starts with its
+ * prompts off (claude bypassPermissions, codex approval_policy=never, the
+ * rest --yolo). */
+function permissionsBypassed(raw: object): boolean {
+  const mode = "permission_mode" in raw ? raw.permission_mode : undefined;
+  return mode === "bypassPermissions" || dockerSandbox(process.env) !== undefined;
+}
 
 const MAX_STDIN_BYTES = 4 * 1024 * 1024;
 
@@ -435,6 +458,7 @@ async function main(): Promise<void> {
     // The card shows the command (or path, URL, MCP call), not the input's
     // JSON. Built from the redacted input, so the masks carry over.
     const shown = toolCallPreview(toolName, redacted);
+    const callName = heldCallName(command, decision.detectors);
     const held = await holdForHuman(guardDir, policy, decision, {
       host: host.id,
       source,
@@ -444,6 +468,8 @@ async function main(): Promise<void> {
       cwd,
       redacted: shown.preview,
       ...(shown.description === undefined ? {} : { description: shown.description }),
+      ...(callName === undefined ? {} : { call_name: callName }),
+      ...(permissionsBypassed(raw) ? { permissions_bypassed: true } : {}),
       held_keys: heldKeys,
       detector_labels: usedLabels,
     }, {

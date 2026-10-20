@@ -81,8 +81,8 @@ one after the other without stepping on each other:
   a newer version's guard with an older one or reports it as tampered, and
   neither drops settings the other added.
 
-The app keeps the raw evidence behind each finding encrypted in the macOS
-Keychain. The CLI doesn't open it, so `doorman findings show --reveal` reads
+The app keeps the raw evidence behind each sighting encrypted in the macOS
+Keychain. The CLI doesn't open it, so `doorman findings show --evidence` reads
 the masked evidence back from the transcripts instead.
 
 ## Docker Sandboxes
@@ -100,21 +100,33 @@ sbx settings set kit.allowedSources '["docker.io/","git+https://github.com/Pinat
 sbx run --name my-project claude ~/my-project --kit "git+https://github.com/PinataCloud/doorman.git#dir=integrations/sbx-kit"
 ```
 
-The kit installs the CLI, runs `doorman guard install` and lets the sandbox
-download the classifier from Hugging Face. By hand, for a sandbox named
-`my-project`:
-
-```sh
-sbx create --name my-project claude ~/my-project
-sbx exec my-project npm install -g @pinata/doorman
-sbx exec my-project doorman guard install
-sbx policy allow network --sandbox my-project "huggingface.co,**.hf.co"
-```
+The kit installs the CLI (`--kit-arg doorman.version=<version>` pins it), runs
+`doorman guard install`, puts the hook back at every start and lets the
+sandbox download the classifier from Hugging Face. For a sandbox you already
+have, add it with `sbx kit add my-project <kit>`. Don't install the CLI in a
+sandbox by hand: `sbx kit add` and sandboxes created from templates reset the
+agent's configuration, and a hand-installed hook is gone without a word.
 
 The desktop app can't run inside a sandbox. Answer held calls from the host
-with `sbx exec -it my-project doorman watch`. With nobody watching, Claude
-Code, Copilot CLI, Cursor and Factory Droid ask in their own prompt; the
-others deny the call.
+with `sbx exec -it my-project doorman watch`. `sbx` agents run without their
+own permission prompts, so allowing a call there runs it at once. With nobody
+watching, Claude Code, Copilot CLI, Cursor and Factory Droid ask in their own
+prompt; the others deny the call. Closing the host terminal doesn't stop the
+watch inside the sandbox: a new one takes over once the old one has seen no key
+for 10 minutes, or at once with `doorman watch --replace`. A watch stops by
+itself when a held call runs out and no key was pressed since that call
+arrived nor for at least 60 seconds, so the agents go back to their own prompt.
+
+A download the sandbox's network policy blocks shows in `doorman model` and
+`doorman status` as blocked, with the `sbx policy allow network` command to run
+on your computer (approving the request in `sbx` lets only `huggingface.co`
+through, not the CDN). Then run `doorman model download` in the sandbox.
+
+Doorman's data stays inside the sandbox, and `sbx rm` deletes it. Export it
+first with `sbx exec my-project doorman export detections --scan > detections.json`
+(or `doorman report`). The kit's README has an `sbxenv.yaml` that does this on
+`sbx env rm`. Only local sandboxes are supported; cloud sandboxes
+(`sbx --cloud`) are untested.
 
 ## Updates
 
@@ -137,11 +149,14 @@ finds under its data directory. It has no account, no server and no telemetry.
 It makes two requests on its own, and neither carries anything about you or
 your machine: the daily update check above, and the injection-classifier
 model, from Hugging Face with every file pinned by sha256. Like the app, the
-CLI fetches the model on its own: the first command that finds it missing
-starts the download in the background (about 96 MB) and carries on, and
-`doorman model` shows its progress. Until it lands, injection findings come
-from the rules alone. If the download fails, it retries on its own and the
-next command run in a terminal says so once, with the reason. Set
+CLI fetches the model on its own: the first command run in a terminal that
+finds it missing starts the download in the background (about 96 MB) and
+carries on, and `doorman model` shows its progress. Commands under CI or with
+stderr redirected don't start it; `doorman model download` fetches it on
+demand. Until it lands, injection findings come from the rules alone. If the
+download fails, it retries on its own (not when a Docker Sandbox's network
+policy blocked it: that waits for `doorman model download`) and the next
+command run in a terminal says so once, with the reason. Set
 `DOORMAN_INJECTION_CLASSIFIER=off` to turn the classifier, and with it the
 download, off.
 

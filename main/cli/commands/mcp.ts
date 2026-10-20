@@ -35,7 +35,7 @@ function whereText(ctx: CliContext, row: McpServerRow): string {
 
 const listCommand: CliCommand = {
   name: "mcp",
-  summary: "MCP servers on this machine: where they are configured, use, and findings",
+  summary: "MCP servers on this machine: where they are configured, use, and what to review",
   options: { scan: { type: "boolean", default: false } },
   flags: [["--scan", "read new transcripts first (otherwise the store as last saved)"]],
   notes: [
@@ -93,7 +93,7 @@ const listCommand: CliCommand = {
     const text = [
       ctx.ui.section("MCP servers", ctx.ui.list(facts)),
       "",
-      ...ctx.ui.table(["SERVER", "STATE", "USE", "FINDINGS", "CONFIGURED IN"], rows, { indent: 2, keep: [0] }),
+      ...ctx.ui.table(["SERVER", "STATE", "USE", "TO REVIEW", "CONFIGURED IN"], rows, { indent: 2, keep: [0] }),
     ];
     if (unknown > 0) text.push("", ctx.ui.next("`doorman mcp recognize <server>` marks a server you know."));
     return { data: inventory, text };
@@ -141,7 +141,11 @@ const forgetCommand: CliCommand = {
   positionals: { min: 1, max: 1 },
   examples: [["doorman mcp forget github", "github is unknown again"]],
   async run(ctx, args) {
-    const server = args.positionals[0]!.trim();
+    const typed = args.positionals[0]!.trim();
+    // A name copied with a trailing ellipsis: the recognized server it starts, if just one.
+    const stem = typed.replace(/(?:…|\.\.\.)$/, "").toLowerCase();
+    const starts = stem === typed.toLowerCase() ? [] : (ctx.prefs().mcp_recognized ?? []).filter((s) => s.toLowerCase().startsWith(stem));
+    const server = starts.length === 1 ? starts[0]! : typed;
     const was = (ctx.prefs().mcp_recognized ?? []).some((s) => s.toLowerCase() === server.toLowerCase());
     const recognized = recognize(ctx, server, false);
     return {

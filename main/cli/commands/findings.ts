@@ -4,7 +4,7 @@ import { confidenceOf, SEVERITY_RANK, type FindingStatus } from "../../lib/findi
 import { maskFindingRow, maskTurnText } from "../../lib/masking.js";
 import { hiddenConfidenceBands } from "../../state.js";
 import type { CliCommand } from "../command.js";
-import { ago, CliError } from "../output.js";
+import { ago, CliError, localTime } from "../output.js";
 import { plural, type KvRow } from "../ui.js";
 import {
   SEVERITIES,
@@ -86,7 +86,7 @@ function exposureJson(g: ExposureGroup<RadarRow>, labels: Record<string, string>
 
 export const findingsCommand: CliCommand = {
   name: "findings",
-  summary: "Open exposures, grouped like the Radar",
+  summary: "Open exposures to review: one per rule and place, worst first",
   usage: "[--all] [--severity <min>] [--rule <id>] [--session <id>] [--limit <n>] [--scan]",
   options: {
     all: { type: "boolean", default: false },
@@ -100,14 +100,14 @@ export const findingsCommand: CliCommand = {
     ["--all", "include reviewed exposures (and their verdict)"],
     ["--severity <min>", "critical, high, medium or low: that severity and worse"],
     ["--rule <id>", "one rule, by id (secret_file_read) or name"],
-    ["--session <id>", "findings from one session (id or prefix)"],
+    ["--session <id>", "exposures seen in one session (id or prefix)"],
     ["--limit <n>", "at most n exposures (default 25, 0 = all)"],
     ["--scan", "read new transcripts first"],
   ],
   notes: [
-    "One row per exposure (rule x place), worst first, as the Radar's cards. Rows in confidence bands the Radar hides, and false positives unless you show them there, are left out here too.",
-    "So are findings whose transcript is gone or no longer holds them, as of the last scan (the app's, or `--scan`).",
-    "The ID column is the card's newest worst finding: pass it to `doorman findings show`.",
+    "One row per exposure (a rule at a place: a file, a server, a project), worst first, as the app's Radar screen lists them. Sightings in confidence bands the app hides, and false positives unless you show them there, are left out here too.",
+    "So are sightings whose transcript is gone or no longer holds them, as of the last scan (the app's, or `--scan`).",
+    "The ID column is the exposure's newest worst sighting: pass it to `doorman findings show`.",
   ],
   examples: [
     ["doorman findings --scan", "read new transcripts, then list open exposures"],
@@ -178,14 +178,14 @@ export const findingsCommand: CliCommand = {
             header,
             shown.map((g) => [
               paintSeverity(s, g.face.severity),
-              oneLine(cardTitle(g.face, labels), 64),
-              oneLine(g.face.place, 32),
+              oneLine(cardTitle(g.face, labels)),
+              oneLine(g.face.place),
               String(g.rows.length),
               ago(g.latest, ctx.io.now()),
               ...(v.all === true ? [g.bucket === "open" ? "open" : STATUS_WORDS[g.face.status]] : []),
               g.face.finding_id,
             ]),
-            { keep: [0, 3, 4, header.length - 1] },
+            { keep: [0, header.length - 1], drop: [3, 4] },
           ),
         );
       }
@@ -195,8 +195,9 @@ export const findingsCommand: CliCommand = {
           hiddenBands.length > 0 ? `${hiddenBands.join("/")} confidence` : "",
           prefs.show_false_positives === true ? "" : "false positives",
         ].filter(Boolean);
-        text.push(s.dim(`${plural(hiddenRows, "finding")} hidden like on the Radar (${why.join(", ")}).`));
+        text.push(s.dim(`${plural(hiddenRows, "sighting")} hidden, as in the app (${why.join(", ")}).`));
       }
+      if (shown.length > 0) text.push("", ui.next(`\`doorman findings show ${shown[0]!.face.finding_id}\` shows the first in full.`));
       return { data, text };
     });
   },
@@ -204,13 +205,13 @@ export const findingsCommand: CliCommand = {
 
 export const findingsShowCommand: CliCommand = {
   name: "findings show",
-  summary: "One finding in full, as its Radar card reads",
-  usage: "<finding-id> [--reveal]",
+  summary: "One exposure in full: what happened, what the guard did, what to do next",
+  usage: "<finding-id> [--evidence]",
   positionals: { min: 1, max: 1 },
-  options: { reveal: { type: "boolean", default: false } },
-  flags: [["--reveal", "re-read the evidence around it from the transcript (masked: secret values never print)"]],
+  options: { evidence: { type: "boolean", default: false } },
+  flags: [["--evidence", "re-read the transcript around the sighting (masked: secret values never print)"]],
   notes: [
-    "What happened, what the guard did, where, and what to do next, plus the finding's own record. A unique prefix of the id is enough: `doorman findings` lists them.",
+    "What happened, what the guard did, where, and what to do next, plus the sighting's own record. A unique prefix of the id is enough: `doorman findings` lists them.",
   ],
   async run(ctx, args) {
     const labels = ruleLabels(ctx);
@@ -224,7 +225,7 @@ export const findingsShowCommand: CliCommand = {
       const sources = [...new Set(group.rows.map((r) => r.source))];
       const where = `${group.rows.length} sighting${group.rows.length === 1 ? "" : "s"}${group.sessions > 0 ? ` · ${group.sessions} session${group.sessions === 1 ? "" : "s"}` : ""} in ${row.place}`;
       let reveal: Record<string, unknown> | undefined;
-      if (args.values.reveal === true) {
+      if (args.values.evidence === true) {
         const result = engine.revealFinding(row.finding_id);
         reveal = result.ok
           ? {
@@ -255,19 +256,26 @@ export const findingsShowCommand: CliCommand = {
       const field = (k: string, val: string | undefined): KvRow => (val ? [k, val] : false);
       const text = [
         `${paintSeverity(s, row.severity)}  ${ui.section(plain(cardTitle(masked, labels)))}`,
-        s.dim(ui.list([ruleLabel(row, labels), row.place, ...sources])),
+        // A credential read back in a tool's output is recorded under the tool-argument rule; say where it was.
+        s.dim(
+          ui.list([
+            row.detector === "credential_in_tool_arg" && row.account?.source_kind === "tool_output" ? "Credential in tool output" : ruleLabel(row, labels),
+            row.place,
+            ...sources,
+          ]),
+        ),
         "",
         ...ui.kv([field("What", what), field("Action", OUTCOME_WORDS[group.outcome]), field("Where", where), field("Do next", next)]),
         "",
         ...ui.kv([
           field("Status", STATUS_WORDS[row.status]),
           field("Confidence", confidenceOf(row)),
-          field("Seen", `${row.first_seen_at === row.last_seen_at ? row.last_seen_at : `${row.first_seen_at} to ${row.last_seen_at}`} (${row.occurrences}x)`),
+          field("Seen", group.earliest === group.latest ? localTime(group.latest) : `${localTime(group.earliest)} to ${localTime(group.latest)}`),
           field("Session", row.session_id),
           field("Tool", row.tool_name),
-          field("Target", masked.target ? oneLine(masked.target, 120) : undefined),
+          field("Target", masked.target ? oneLine(masked.target, ui.width === undefined ? undefined : 120) : undefined),
           field("Held", row.resolution ? RESOLUTION_WORDS[row.resolution] : undefined),
-          field("Excerpt", oneLine(masked.excerpt, 200)),
+          field("Excerpt", oneLine(masked.excerpt, ui.width === undefined ? undefined : 200)),
           field("ID", row.finding_id),
         ]),
       ];
@@ -282,7 +290,7 @@ export const findingsShowCommand: CliCommand = {
           );
           if (reveal.truncated === true) text.push(s.dim("  (cut to the window around the finding)"));
         } else {
-          text.push(ui.mark("warn", s.warn(`Couldn't reveal the evidence: ${String(reveal.error)}`)));
+          text.push(ui.mark("warn", s.warn(`Couldn't read the evidence: ${String(reveal.error)}`)));
         }
       } else if (row.status === "open") {
         text.push("", ui.next(`\`doorman findings review ${row.finding_id}\` marks it reviewed once handled.`));
@@ -302,9 +310,9 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
     usage: "<finding-id...> [--only]",
     positionals: { min: 1, max: 500 },
     options: { only: { type: "boolean", default: false } },
-    flags: [["--only", "mark just the findings named"]],
+    flags: [["--only", "mark just the sightings named, not their whole exposure"]],
     notes: [
-      "Each id marks its whole exposure (every finding on that Radar card), like the card's button. `doorman findings` lists the ids; a unique prefix is enough.",
+      "Each id marks its whole exposure (every sighting of that rule at that place), like the app's button. `doorman findings` lists the ids; a unique prefix is enough.",
       "Refuses while Doorman is running: do it in the app then.",
     ],
     async run(ctx, args) {
@@ -325,10 +333,12 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
         }
         const updated = engine.setFindingStatuses([...ids], status);
         const data = { status, updated, finding_ids: [...ids] };
+        const exposures = new Set(all.filter((r) => ids.has(r.finding_id)).map((r) => r.exposure_key)).size;
+        const what = `${plural(exposures, "exposure")}${updated === exposures ? "" : ` (${plural(updated, "sighting")})`}`;
         const text = [
           updated === 0
-            ? ctx.ui.mark("off", `Nothing changed: ${ids.size === 1 ? "that finding is" : "those findings are"} already ${STATUS_WORDS[status]}.`)
-            : ctx.ui.mark("ok", `${status === "open" ? "Reopened" : "Marked"} ${plural(updated, "finding")}${status === "open" ? "" : ` ${STATUS_WORDS[status]}`}.`),
+            ? ctx.ui.mark("off", `Nothing changed: ${exposures === 1 ? "that exposure is" : "those exposures are"} already ${STATUS_WORDS[status]}.`)
+            : ctx.ui.mark("ok", `${status === "open" ? "Reopened" : "Marked"} ${what}${status === "open" ? "" : ` ${STATUS_WORDS[status]}`}.`),
         ];
         return { data, text };
       });

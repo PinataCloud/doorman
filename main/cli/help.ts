@@ -1,5 +1,6 @@
 import { homeBanner } from "./art.js";
 import type { CliCommand } from "./command.js";
+import { visibleLength } from "./output.js";
 import type { Ui } from "./ui.js";
 
 /**
@@ -57,7 +58,7 @@ export const HELP_GROUPS: readonly HelpGroup[] = [
     title: "Findings",
     about: "secrets and risky actions your agents exposed",
     families: [
-      ["findings", "Open exposures, grouped like the Radar"],
+      ["findings", "Open exposures, grouped by what was exposed"],
       ["trace", "Where one secret went, across every transcript"],
     ],
     examples: [
@@ -69,13 +70,13 @@ export const HELP_GROUPS: readonly HelpGroup[] = [
     title: "Data",
     about: "sessions, usage and reports",
     families: [
-      ["sessions", "Recent agent sessions, like the Event Ledger"],
+      ["sessions", "Recent agent sessions, newest first"],
       ["session", "One session's turns (masked), with its findings"],
       ["search", "Search every captured turn (masked)"],
       ["usage", "Tokens and time spent with AI"],
-      ["analytics", "What each rule found, like the Analytics screen"],
+      ["analytics", "What each rule found, and how often"],
       ["report", "The security report the app exports (Markdown)"],
-      ["export", "Detections or the Event Ledger as schema-valid JSON"],
+      ["export", "Sightings or sessions as schema-valid JSON bundles"],
     ],
     examples: [
       ["doorman search deploy", "every captured turn that mentions it"],
@@ -117,6 +118,8 @@ const FIRST_STEPS: readonly (readonly [string, string])[] = [
 const GLOBAL_FLAGS: readonly (readonly [string, string])[] = [
   ["--json", "machine-readable output on stdout"],
   ["--verbose", "log what happens to stderr"],
+  ["--quiet, -q", "no progress lines or update notice"],
+  ["--no-color", "plain text, as NO_COLOR=1 does"],
   ["--help, -h", "usage, options and examples for a command"],
   ["--version", "print the version"],
 ];
@@ -130,7 +133,7 @@ function familySummary(family: string, commands: readonly CliCommand[]): string 
 }
 
 /** `$ doorman x  # what`, the comments aligned. When one doesn't fit the
- * terminal, each comment goes on its own line above its command instead. */
+ * terminal, each comment goes above its command instead, wrapped. */
 function exampleLines(ui: Ui, examples: readonly (readonly [string, string])[], indent = 2): string[] {
   const s = ui.style;
   const pad = " ".repeat(indent);
@@ -138,14 +141,17 @@ function exampleLines(ui: Ui, examples: readonly (readonly [string, string])[], 
   const cmd = (command: string) => `${pad}${s.dim("$")} ${ui.decorate ? s.accent(command) : command}`;
   const aligned = ui.width === undefined || examples.every(([, what]) => indent + 2 + width + 4 + what.length <= ui.width!);
   if (aligned) return examples.map(([command, what]) => `${cmd(command)}${" ".repeat(width - command.length)}  ${s.dim(`# ${what}`)}`);
-  return examples.flatMap(([command, what]) => [ui.fit(`${pad}${s.dim(`# ${what}`)}`), cmd(command)]);
+  const room = Math.max(20, ui.width! - indent - 2);
+  return examples.flatMap(([command, what]) => [...ui.wrap(what, room).map((l) => `${pad}${s.dim(`# ${l}`)}`), cmd(command)]);
 }
 
-/** Prose wrapped to the terminal (as written when piped). */
+/** Prose wrapped to the terminal (as written when piped). Commands are
+ * coloured before wrapping, so one broken across lines keeps its colour. */
 function paragraph(ui: Ui, text: string, indent = 0): string[] {
   const pad = " ".repeat(indent);
-  const lines = ui.width === undefined ? [text] : ui.wrap(text, Math.max(20, ui.width - indent));
-  return lines.map((l) => `${pad}${ui.prose(l)}`);
+  const prose = ui.prose(text);
+  const lines = ui.width === undefined ? [prose] : ui.wrap(prose, Math.max(20, ui.width - indent));
+  return lines.map((l) => `${pad}${l}`);
 }
 
 /** Options and other two-column blocks: names bold on a terminal. */
@@ -164,24 +170,39 @@ export function homeHelp(ui: Ui, commands: readonly CliCommand[], version: strin
   if (firstRun) {
     const width = Math.max(...FIRST_STEPS.map(([c]) => c.length));
     out.push(ui.section("Start here"));
-    FIRST_STEPS.forEach(([command, what], i) =>
-      out.push(ui.fit(`  ${s.bold(`${i + 1}`)}  ${ui.decorate ? s.accent(command) : command}${" ".repeat(width - command.length)}  ${s.dim(what)}`)),
+    out.push(
+      ...ui.kv(
+        FIRST_STEPS.map(([command, what], i) => [`${s.bold(`${i + 1}`)}  ${ui.decorate ? s.accent(command) : command}`, what]),
+        { plainKeys: true, keyWidth: 3 + width },
+      ),
     );
     out.push("");
   }
   out.push(`${ui.decorate ? s.dim("Usage") : "Usage:"} doorman <command> [options]`, "");
   const families = new Set(commands.map((c) => familyOf(c.name)));
   const keyWidth = Math.max(...[...families].map((f) => f.length));
-  // The overview keeps each family to its line (cut on a narrow terminal);
-  // `doorman help <family>` has the rest.
-  const room = ui.width === undefined ? undefined : ui.width - keyWidth - 4;
+  // The overview keeps each family to its summary (wrapped on a narrow
+  // terminal); `doorman help <family>` has the rest.
   for (const group of HELP_GROUPS) {
-    out.push(ui.section(group.title, group.about));
+    // The group's aside goes under its title when the line won't hold both.
+    if (ui.width !== undefined && group.title.length + 2 + group.about.length > ui.width) out.push(ui.section(group.title), ...paragraph(ui, group.about).map(s.dim));
+    else out.push(ui.section(group.title, group.about));
     for (const [family, summary] of group.families) {
       if (!families.has(family)) continue;
       const subs = commands.filter((c) => familyOf(c.name) === family && c.name !== family).map((c) => c.name.slice(family.length + 1));
-      out.push(`  ${s.bold(family.padEnd(keyWidth))}  ${room === undefined ? summary : ui.truncate(summary, room)}`);
-      if (subs.length > 0) out.push(...ui.kv([[" ".repeat(keyWidth), ui.list(subs.map(s.dim))]], { plainKeys: true }));
+      out.push(...ui.kv([[s.bold(family), summary]], { plainKeys: true, keyWidth }));
+      if (subs.length > 0) {
+        // Packed whole into lines: a name like `server install` never breaks.
+        const pad = " ".repeat(keyWidth + 4);
+        const room = ui.width === undefined ? Infinity : Math.max(20, ui.width - pad.length);
+        const lines: string[][] = [];
+        for (const sub of subs) {
+          const last = lines.at(-1);
+          if (last && visibleLength(ui.list([...last, sub])) <= room) last.push(sub);
+          else lines.push([sub]);
+        }
+        out.push(...lines.map((l) => `${pad}${ui.list(l.map(s.dim))}`));
+      }
     }
     out.push(...exampleLines(ui, group.examples), "");
   }
@@ -211,7 +232,7 @@ export function commandHelp(ui: Ui, name: string, commands: readonly CliCommand[
   const out: string[] = [];
   out.push(ui.section(`doorman ${name}`), ...paragraph(ui, command?.summary ?? familySummary(family, commands)), "");
   if (command?.notes && command.notes.length > 0) {
-    for (const note of command.notes) out.push(...(/^\s/.test(note) ? [ui.prose(note)] : paragraph(ui, note)));
+    for (const note of command.notes) out.push(...(/^\s/.test(note) ? noteLines(ui, note) : paragraph(ui, note)));
     out.push("");
   }
   if (command) {
@@ -220,29 +241,53 @@ export function commandHelp(ui: Ui, name: string, commands: readonly CliCommand[
     if (command.examples && command.examples.length > 0) out.push(ui.section("Examples"), ...exampleLines(ui, command.examples), "");
   }
   if (siblings.length > 0) {
-    out.push(ui.section("Commands"), ...pairs(ui, siblings.map((c) => [`doorman ${c.name}`, c.summary])), "");
+    // Each with its arguments: in two columns when they're short, else each
+    // usage (broken between arguments) with its summary under it.
+    const usages = siblings.map((c) => usageLine(c));
+    out.push(ui.section("Commands"));
+    if (usages.every((u) => u.length <= 40)) out.push(...pairs(ui, siblings.map((c, i) => [usages[i]!, c.summary])));
+    else for (const c of siblings) out.push(...usageLines(ui, c), ...paragraph(ui, c.summary, 6));
+    out.push("");
     out.push(...paragraph(ui, `Run \`doorman help ${name} <command>\` for one of them.`));
   }
-  out.push(...paragraph(ui, "Every command also takes --json (machine-readable output), --verbose and --help."));
+  out.push(...paragraph(ui, "Every command also takes --json (machine-readable output), --verbose, --quiet, --no-color and --help."));
   return out;
 }
 
+/** An indented note line, like `  a  allow once` or `  key   what it takes`:
+ * as written, or on a narrow terminal wrapped under the text after its
+ * first word (below that word when it leaves too little room). */
+function noteLines(ui: Ui, note: string): string[] {
+  const lead = /^\s+\S+\s+/.exec(note)?.[0] ?? "";
+  if (ui.width === undefined || note.length <= ui.width || lead === "") return [ui.prose(note)];
+  const rest = ui.prose(note.slice(lead.length));
+  if (ui.width - lead.length < 20) return [lead.trimEnd(), ...ui.wrap(rest, Math.max(20, ui.width - 6)).map((l) => `      ${l}`)];
+  const pad = " ".repeat(lead.length);
+  return ui.wrap(rest, ui.width - lead.length).map((l, i) => `${i === 0 ? lead : pad}${l}`);
+}
+
 /** The usage line; on a narrow terminal it breaks between arguments (never
- * inside `[--days <n>]`) and hangs under the first one. */
+ * inside `[--days <n>]`) and hangs under the first one, or, when the
+ * command's name leaves too little room, under the name. */
 function usageLines(ui: Ui, command: CliCommand): string[] {
   const s = ui.style;
   const line = usageLine(command);
   const head = `doorman ${command.name}`;
-  const hang = head.length + 3;
-  if (ui.width === undefined || line.length + 2 <= ui.width || ui.width - hang < 20) return [`  ${ui.decorate ? s.accent(line) : line}`];
+  if (ui.width === undefined || line.length + 2 <= ui.width) return [`  ${ui.decorate ? s.accent(line) : line}`];
+  const args = command.usage?.match(/\[[^\]]*\]|<[^>]*>|\([^)]*\)|\S+/g) ?? [];
+  const besideRoom = ui.width - (head.length + 3);
+  const beside = besideRoom >= 20 && args.every((a) => a.length <= besideRoom);
+  const hang = beside ? head.length + 3 : 6;
   const room = ui.width - hang;
   const lines: string[] = [];
-  for (const arg of command.usage?.match(/\[[^\]]*\]|<[^>]*>|\([^)]*\)|\S+/g) ?? []) {
+  for (const arg of args) {
     const last = lines.length - 1;
     if (last >= 0 && lines[last]!.length + 1 + arg.length <= room) lines[last] += ` ${arg}`;
     else lines.push(arg);
   }
-  return [`  ${ui.decorate ? s.accent(head) : head} ${lines[0] ?? ""}`, ...lines.slice(1).map((l) => `${" ".repeat(hang)}${l}`)];
+  const name = `  ${ui.decorate ? s.accent(head) : head}`;
+  if (!beside) return [name, ...lines.map((l) => `${" ".repeat(hang)}${l}`)];
+  return [`${name} ${lines[0] ?? ""}`, ...lines.slice(1).map((l) => `${" ".repeat(hang)}${l}`)];
 }
 
 /** The families and commands the person may have meant, for an unknown name. */

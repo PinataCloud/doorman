@@ -30,7 +30,7 @@ function describeScope(rule: ScopedIgnoreRule, nowMs: number, home: string): str
 
 const exceptionsList: CliCommand = {
   name: "exceptions",
-  summary: "Exceptions: findings matching one of these are not raised",
+  summary: "Exceptions: sightings matching one of these are not raised",
   notes: ["Numbers in the first column are what `doorman exceptions remove` takes."],
   examples: [
     ["doorman exceptions", "every exception, numbered"],
@@ -76,7 +76,7 @@ const exceptionsAdd: CliCommand = {
   summary: "Add an exception for one rule (or any rule), everywhere or in one project",
   usage: "<rule|any> <pattern> [--project <dir>] [--days <n>] [--note <text>]",
   notes: [
-    "<pattern> is a case-insensitive regex over the finding's visible fields: rule id, key name, tool, target and the masked excerpt. Never the raw value.",
+    "<pattern> is a case-insensitive regex over the sighting's visible fields: rule id, key name, tool, target and the masked excerpt. Never the raw value.",
   ],
   flags: [
     ["--project <dir>", "only for tool calls under this directory (default: everywhere)"],
@@ -124,7 +124,7 @@ const exceptionsAdd: CliCommand = {
       data: { number, exception: prefs.policy.ignore[number - 1], ...(syncError ? { sync_error: syncError } : {}) },
       text: [
         ctx.ui.mark("ok", `Exception ${number}: ${rule.detector ? localDetectorLabel(rule.detector) : "any rule"} matching /${rule.pattern}/i, ${describeScope(rule, ctx.io.now(), ctx.io.home)}.`),
-        ctx.style.dim("It applies from the next scan and the next tool call. Findings already raised stay until you triage them."),
+        ctx.style.dim("It applies from the next scan and the next tool call. Sightings already raised stay until you review them."),
         ...syncNote(ctx, syncError),
       ],
     };

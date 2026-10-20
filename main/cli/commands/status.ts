@@ -47,6 +47,7 @@ export const statusCommand: CliCommand = {
     const level = levelOfModes(policy.modes) ?? "custom";
     // From the last daily check; status itself never waits on the network.
     const update = cachedUpdateStatus(ctx, ctx.io.packageName ?? "@pinata/doorman", ctx.io.version);
+    const sandbox = dockerSandbox(ctx.io.env);
     const data = {
       cli: { version: ctx.io.version, ...(update.latest !== undefined ? { latest: update.latest } : {}), update_available: update.update_available },
       data_dir: ctx.dataDir,
@@ -62,21 +63,21 @@ export const statusCommand: CliCommand = {
         ...(plan.fallback ? { fallback: plan.fallback } : {}),
       },
       exposures: { open: summary.open_exposures, by_severity: summary.by_severity_exposures },
+      ...(sandbox ? { sandbox: { name: sandbox.name, answer_command: sandboxWatchCommand(sandbox) } } : {}),
     };
 
     const sev = summary.by_severity_exposures;
-    const sandbox = dockerSandbox(ctx.io.env);
     const answerer = running ? `${running.version?.startsWith("cli-") ? "doorman watch running" : "running"}${processLabel(ctx.io.env, running.pid)}` : undefined;
     const agents = [...guarded, ...unguarded];
     const guardWord =
       guarded.length === 0
-        ? ui.mark("warn", s.warn(agents.length === 0 ? "no supported agent here" : "not installed"))
+        ? ui.mark("warn", s.warn(agents.length === 0 ? "no supported agent here" : "off"))
         : unguarded.length > 0
           ? ui.mark("warn", s.warn(`on in ${guarded.length} of ${agents.length} agents`))
           : ui.mark("ok", s.ok("on"));
     // Every agent here; the ones without the hook say so once some have it.
     const agentWords = agents.map((label) =>
-      guarded.includes(label) ? ui.mark("ok", label) : ui.mark("warn", guarded.length > 0 ? `${label} ${s.dim("(not guarded)")}` : label),
+      guarded.includes(label) ? ui.mark("ok", label) : ui.mark("warn", guarded.length > 0 ? `${label} ${s.dim("(hook missing)")}` : label),
     );
     const severities = SEVERITIES.map((k) => {
       const words = `${k} ${sev[k]}`;
@@ -94,20 +95,22 @@ export const statusCommand: CliCommand = {
     // One key column for the whole dashboard.
     const keyWidth = "exposures".length;
     const text = [
-      ui.section("Doorman", ui.decorate ? ctx.io.version : ctx.dataDir),
+      ui.section("Doorman", [ui.decorate ? ctx.io.version : ctx.dataDir, sandbox ? `in Docker Sandbox ${sandbox.name}` : ""].filter(Boolean).join("  ")),
       "",
       ui.section("Guard"),
       ...ui.kv(
         [
           ["guard", guardWord],
           agents.length > 0 && ["agents", ui.list(agentWords)],
-          ["app", answerer ? ui.mark("ok", s.ok(answerer)) : s.dim("not running")],
+          sandbox
+            ? ["answers", answerer ? ui.mark("ok", s.ok(answerer)) : ui.mark("warn", ui.prose(`nobody: on the host, run \`${sandboxWatchCommand(sandbox)}\``))]
+            : ["app", answerer ? ui.mark("ok", s.ok(answerer)) : s.dim("not running")],
           ["level", level],
         ],
         { keyWidth },
       ),
       "",
-      ui.section("Findings"),
+      ui.section("Review"),
       ...ui.kv(
         [
           ["exposures", exposures],

@@ -94,8 +94,77 @@ describe("the visual language", () => {
     expect(fitted[1]).toContain("2d787acebaef126b");
     expect(fitted[1]).toContain("…");
     expect(ascii(80).table(header, rows)[1]).toContain("...");
-    // Kept columns give way only when nothing else can.
-    expect(widest(rich(30).table(["ID"], [["x".repeat(60)]], { keep: [0] }))).toBeLessThanOrEqual(30);
+    // Kept columns are never cut: the table becomes records instead.
+    const id = "x".repeat(60);
+    expect(rich(30).table(["ID"], [[id]], { keep: [0] }).join("\n")).toContain(id);
+  });
+
+  // A findings list: ids must paste back whole, titles must stay readable.
+  const findingsHeader = ["SEVERITY", "TITLE", "PLACE", "SIGHTINGS", "LAST SEEN", "ID"];
+  const title = "Credential in transcript: GitHub token in the output of a shell command";
+  const findingsRows = [
+    ["critical", title.slice(0, 64), "repos/pinata/doorman/main/cli/x", "3", "2d ago", "dadb577c0ffee1234567"],
+    ["high", "Credential in transcript: AWS key", "dev/app", "12", "5h ago", "1a2b3c4d5e6f70819"],
+  ];
+  const visibleTitle = (line: string) => stripAnsi(line).slice(10).split("  ")[0]!;
+
+  it("tables: cut columns share the room, rather than the widest losing it all", () => {
+    const fitted = rich(100).table(findingsHeader, findingsRows, { keep: [0, 3, 4, 5] });
+    expect(widest(fitted)).toBeLessThanOrEqual(100);
+    expect(fitted[1]).toContain("dadb577c0ffee1234567");
+    // Was 16: TITLE cut to the floor while PLACE kept all its 31.
+    expect(visibleTitle(fitted[1]!).length).toBeGreaterThanOrEqual(20);
+  });
+
+  it("tables: drop the low-value columns before cutting titles short", () => {
+    const fitted = rich(100).table(findingsHeader, findingsRows, { keep: [0, 5], drop: [3, 4] });
+    expect(widest(fitted)).toBeLessThanOrEqual(100);
+    expect(stripAnsi(fitted[0]!)).not.toContain("SIGHTINGS");
+    expect(stripAnsi(fitted[0]!)).not.toContain("LAST SEEN");
+    expect(visibleTitle(fitted[1]!).length).toBeGreaterThanOrEqual(30);
+    // With room, nothing is dropped.
+    expect(stripAnsi(rich(200).table(findingsHeader, findingsRows, { keep: [0, 5], drop: [3, 4] })[0]!)).toContain("SIGHTINGS");
+    // Piped, nothing is dropped or cut.
+    expect(plain().table(findingsHeader, findingsRows, { keep: [0, 5], drop: [3, 4] })[1]).toContain(title.slice(0, 64));
+  });
+
+  it("tables: too narrow for readable columns, each row prints as a record, nothing cut", () => {
+    for (const width of [40, 60]) {
+      const records = rich(width).table(findingsHeader, findingsRows, { keep: [0, 5], drop: [3, 4] });
+      const text = records.map(stripAnsi).join("\n");
+      expect(text).not.toContain("…");
+      expect(text).toContain("id dadb577c0ffee1234567");
+      expect(text.replace(/\s+/g, " ")).toContain(title.slice(0, 64));
+      expect(text).not.toContain("2d ago");
+      expect(widest(records), `${width} columns`).toBeLessThanOrEqual(width);
+    }
+    // Under 70 columns a table that would need cutting is records, even when
+    // the cut would leave 20 columns.
+    const short = [["high", "GitHub credential pasted into a prompt", "main/cli", "1", "30m ago", "2d787acebaef126b"]];
+    expect(stripAnsi(rich(60).table(findingsHeader, short, { keep: [0, 5], drop: [3, 4] }).join("\n"))).toBe(
+      "high  id 2d787acebaef126b\n  GitHub credential pasted into a prompt · main/cli",
+    );
+    // Server names a command takes back are never cut.
+    const server = "github-enterprise-mcp-server-prod";
+    const mcp = rich(60).table(["SERVER", "STATE", "USE", "FINDINGS", "CONFIGURED IN"], [[server, "recognized", "3 calls, 2d ago", "1 poisoning", "~/.claude.json"]], { indent: 2, keep: [0] });
+    expect(mcp.map(stripAnsi).join("\n")).toContain(server);
+    expect(mcp.join("\n")).not.toContain("…");
+  });
+
+  it("never cuts piped output, whatever the caller asks", () => {
+    const long = "x".repeat(200);
+    expect(plain().truncate(long, 10)).toBe(long);
+    expect(plain().fit(long)).toBe(long);
+    expect(rich(80).truncate(long, 10)).toHaveLength(10);
+  });
+
+  it("follows the terminal's width as the window is resized", () => {
+    const stream = { isTTY: true, columns: 120 };
+    const ui = Ui.for(stream, { TERM: "xterm-256color" }, "darwin");
+    expect(ui.width).toBe(120);
+    stream.columns = 60;
+    expect(ui.width).toBe(60);
+    expect(widest(ui.table(findingsHeader, findingsRows, { keep: [0, 5] }))).toBeLessThanOrEqual(60);
   });
 
   it("key/value blocks wrap long values under themselves on a terminal, never when piped", () => {
@@ -105,6 +174,14 @@ describe("the visual language", () => {
     expect(wrapped.length).toBeGreaterThan(1);
     expect(widest(wrapped)).toBeLessThanOrEqual(60);
     for (const line of wrapped.slice(1)) expect(line.startsWith(" ".repeat(9))).toBe(true);
+  });
+
+  it("key/value blocks put a value under its key when the key leaves it no room", () => {
+    const value = "word ".repeat(12).trim();
+    const lines = rich(40).kv([["a-very-long-option-name <n>", value]]);
+    expect(stripAnsi(lines[0]!)).toBe("  a-very-long-option-name <n>");
+    expect(widest(lines)).toBeLessThanOrEqual(40);
+    expect(lines.slice(1).map((l) => l.trim()).join(" ")).toBe(value);
   });
 
   it("wraps a path or URL only after a separator, and lets one long segment run over", () => {
@@ -176,7 +253,27 @@ describe("help", () => {
     }
   });
 
+  it("wraps descriptions on a narrow terminal, never cuts them", () => {
+    const flat = (lines: readonly string[]) => lines.map(stripAnsi).join(" ").replace(/\s+/g, " ");
+    for (const width of [40, 60]) {
+      const home = homeHelp(rich(width), COMMANDS, "1.2.3", true);
+      expect(flat(home), `${width} columns`).not.toContain("…");
+      for (const [, summary] of HELP_GROUPS.flatMap((g) => g.families)) expect(flat(home), `${width} columns`).toContain(summary);
+      expect(flat(home)).toContain("look for secrets your agents have already seen");
+      for (const command of COMMANDS) {
+        const help = commandHelp(rich(width), command.name, COMMANDS);
+        expect(flat(help), `${command.name} at ${width}`).not.toContain("…");
+        for (const [, what] of command.examples ?? []) expect(flat(help).replace(/ # /g, " "), command.name).toContain(what);
+        for (const [, what] of command.flags ?? []) expect(flat(help), command.name).toContain(stripAnsi(rich(width).prose(what)));
+        // Only a command to type may run past the edge (it stays whole to copy).
+        if (width === 60) expect(widest(help.filter((l) => !stripAnsi(l).trimStart().startsWith("$ "))), command.name).toBeLessThanOrEqual(60);
+      }
+    }
+  });
+
   it("lists a family's commands, and suggests the command a typo meant", () => {
+    // Each of a family's commands with its arguments.
+    expect(commandHelp(plain(), "policy", COMMANDS).join("\n")).toContain("doorman policy level <");
     expect(commandHelp(plain(), "export", COMMANDS).join("\n")).toContain("doorman export ledger");
     expect(suggest("stauts", COMMANDS)).toBe("status");
     expect(suggest("gaurd", COMMANDS)).toBe("guard");
@@ -264,6 +361,22 @@ describe("progress", () => {
     expect(read()).toContain("\r\u001b[2K");
     expect(read().split("\n")).toEqual([expect.stringContaining("\r\u001b[2K"), ""]);
     expect(read().endsWith("\r\u001b[2KDone.\n")).toBe(true);
+  });
+
+  it("gives up the bar, not the percentage, on a narrow terminal, at the width it has now", () => {
+    const { stream, read } = capture();
+    const terminal = { isTTY: true, columns: 120 };
+    let now = 0;
+    const p = startProgress(Ui.for(terminal, { TERM: "xterm-256color" }, "darwin"), stream, { label: "Downloading doorman-1", format: (n) => `${n.toFixed(1)} MB`, now: () => now });
+    now += 100;
+    p.update(4, 12);
+    terminal.columns = 40;
+    now += 100;
+    p.update(6, 12);
+    const [wide, narrow] = read().split("\r\u001b[2K").filter(Boolean);
+    expect(stripAnsi(wide!)).toContain("33%");
+    expect(visibleLength(narrow!)).toBeLessThan(40);
+    expect(stripAnsi(narrow!)).toContain("6.0 MB of 12.0 MB   50%");
   });
 
   it("prints a line per quarter when piped, and every few seconds without a total", () => {
@@ -369,7 +482,7 @@ describe("the dispatcher on a terminal", () => {
     expect(shown.err).toContain("✗");
     expect(shown.err.split("\n")).toHaveLength(3);
     const missing = await run(["findings", "show"], { tty: false });
-    expect(missing.err).toBe("doorman findings show: Missing an argument. Usage: doorman findings show <finding-id> [--reveal]. `doorman findings show --help` has examples.\n");
+    expect(missing.err).toBe("doorman: Missing an argument. Usage: doorman findings show <finding-id> [--evidence]. `doorman findings show --help` has examples.\n");
   });
 });
 

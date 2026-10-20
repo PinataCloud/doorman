@@ -110,3 +110,13 @@ export function ago(iso: string, nowMs: number): string {
   if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86_400)}d ago`;
 }
+
+/** ISO time → this machine's local "2026-10-20 14:02" (with `:11` seconds
+ * when asked): text output reads local time throughout, `--json` keeps ISO. */
+export function localTime(iso: string, seconds = false): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const two = (n: number) => String(n).padStart(2, "0");
+  const clock = `${two(d.getHours())}:${two(d.getMinutes())}${seconds ? `:${two(d.getSeconds())}` : ""}`;
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${clock}`;
+}

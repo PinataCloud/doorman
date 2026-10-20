@@ -27,6 +27,7 @@
  */
 
 import type { GuardPolicy } from "./policy.js";
+import { dockerSandbox, sandboxFindingsCommand, sandboxWatchCommand } from "./sandbox.js";
 
 /** What the agent must not do and what it may do, per detector id. A custom
  * rule (`custom:<id>`) or a flow rule not listed here gets the generic line. */
@@ -126,6 +127,10 @@ export interface AgentReasonInput {
    * is asking the person in Doorman. Absent → assumed listening, for callers
    * that describe a past record rather than a call being decided now. */
   appListening?: boolean;
+  /** Where to look for a Docker Sandbox (sandbox.ts): inside one the app
+   * can't run, so the text names the host-side `sbx exec` command instead of
+   * "Doorman". Default: this process's environment. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -137,26 +142,39 @@ export interface AgentReasonInput {
 export function agentFacingReason(input: AgentReasonInput): string {
   const base = (input.reason ?? "Doorman flagged this tool call.").trim().replace(/\s+$/, "");
   const remedy = remedyFor(input.detectors);
+  const sandbox = dockerSandbox(input.env ?? process.env);
+  // Where the person answers: the app, or — in a sandbox, where it can't run —
+  // `doorman watch` started from their computer.
+  const watch = sandbox ? sandboxWatchCommand(sandbox) : undefined;
   let outcome: string;
   if (input.resolution === "denied") {
     outcome = `The user denied this call in Doorman. ${NO_WORKAROUND} Ask them how to proceed.`;
   } else if (input.resolution === "unavailable") {
     // Not a human decision — say so, and name the one thing that unblocks it.
-    outcome =
-      "Doorman could not reach the user for approval (the app is not running), so the call was not executed. " +
-      `${NO_WORKAROUND} Ask the user to open Doorman and approve it.`;
+    outcome = watch
+      ? "Doorman could not reach the user for approval (nobody is running `doorman watch` for this sandbox), so the call was not executed. " +
+        `${NO_WORKAROUND} Ask the user to run \`${watch}\` on their computer and approve it there.`
+      : "Doorman could not reach the user for approval (the app is not running), so the call was not executed. " +
+        `${NO_WORKAROUND} Ask the user to open Doorman and approve it.`;
   } else if (input.resolution === "timeout") {
     const seconds = input.policy?.confirm.hold_seconds;
-    outcome = `Nobody approved it${seconds ? ` within ${seconds}s` : ""}, so the call was not executed. ${NO_WORKAROUND} Ask the user to approve it in Doorman.`;
+    const where = watch ? `from their computer with \`${watch}\`` : "in Doorman";
+    outcome = `Nobody approved it${seconds ? ` within ${seconds}s` : ""}, so the call was not executed. ${NO_WORKAROUND} Ask the user to approve it ${where}.`;
   } else if (input.decision === "deny") {
-    outcome = `${NO_WORKAROUND} The user can review and allow this call in Doorman (Security Radar) if it is intended.`;
+    outcome = sandbox
+      ? `${NO_WORKAROUND} The user can review it from their computer with \`${sandboxFindingsCommand(sandbox)}\` and add an exception if it is intended.`
+      : `${NO_WORKAROUND} The user can review and allow this call in Doorman (Security Radar) if it is intended.`;
   } else if (input.resolution === "unattended" || input.appListening === false) {
     // An `ask` nobody in Doorman will answer (the app and `doorman watch` are
     // both absent, or the app vanished mid-hold): the host's own permission
     // prompt is what decides now, so don't send the agent waiting on Doorman.
-    outcome =
-      "Doorman is not running, so it cannot ask the user about this call; it needs their OK in your own permission prompt. " +
-      "Wait for their answer rather than working around it.";
+    // The person reads this text too (it is the prompt's explanation), so in a
+    // sandbox it names the command that gets Doorman asking next time.
+    outcome = watch
+      ? "Nobody is running `doorman watch` for this sandbox, so Doorman cannot ask the user about this call; it needs their OK in your own permission prompt. " +
+        `Wait for their answer rather than working around it. (The user answers held calls by running \`${watch}\` on their computer.)`
+      : "Doorman is not running, so it cannot ask the user about this call; it needs their OK in your own permission prompt. " +
+        "Wait for their answer rather than working around it.";
   } else {
     outcome = "The user is being asked in Doorman; wait for their answer rather than working around it.";
   }

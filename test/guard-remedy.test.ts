@@ -114,6 +114,28 @@ describe("agent-facing reason", () => {
     }
   });
 
+  it("inside a Docker Sandbox, names the host-side command instead of the app, which can't run there", () => {
+    // What sbx sets in every sandbox's processes, the agent's hooks included.
+    const env = { SANDBOX_NAME: "proj", SANDBOX_ID: "0f3c9a1e" };
+    const watch = "sbx exec -it proj doorman watch";
+    const policy = { confirm: { interactive: true, hold_seconds: 60, on_timeout: "deny", unattended: "deny" } } as const;
+    const reason = (input: Partial<Parameters<typeof agentFacingReason>[0]>) =>
+      agentFacingReason({ decision: "deny", reason: "R.", detectors: ["destructive_command"], env, ...input });
+    expect(reason({ resolution: "timeout", policy })).toContain(
+      `Nobody approved it within 60s, so the call was not executed. Do not retry it or work around it. Ask the user to approve it from their computer with \`${watch}\`.`,
+    );
+    expect(reason({ resolution: "unavailable" })).toContain(`Ask the user to run \`${watch}\` on their computer and approve it there.`);
+    expect(reason({})).toContain("The user can review it from their computer with `sbx exec proj doorman findings`");
+    const unattended = reason({ decision: "ask", detectors: ["infra_mutation"], appListening: false });
+    expect(unattended).toContain("your own permission prompt");
+    expect(unattended).toContain(watch);
+    for (const text of [reason({ resolution: "timeout", policy }), reason({ resolution: "unavailable" }), reason({}), unattended]) {
+      expect(text).not.toMatch(/in Doorman\b|open Doorman|Security Radar|Doorman is not running/);
+    }
+    // A name without the sandbox's id is not a sandbox: the app's wording stays.
+    expect(reason({ env: { SANDBOX_NAME: "proj" }, resolution: "unavailable" })).toContain("Ask the user to open Doorman and approve it.");
+  });
+
   it("falls back to the generic line for a custom or unknown rule, and never throws", () => {
     expect(remedyFor(["custom:no-prod-deploys"])).toMatch(/^Do not retry the same call/);
     expect(remedyFor([])).toMatch(/^Do not retry the same call/);
@@ -141,8 +163,10 @@ describe("agent-facing text never coaches a way around the guard", () => {
       for (const decision of ["ask", "deny"] as const) {
         for (const resolution of resolutions) {
           for (const appListening of [true, false]) {
-            const text = agentFacingReason({ decision, reason, detectors: [id], resolution, policy, appListening });
-            expectNoBypassCoaching(text, `${id}/${decision}/${resolution}/${appListening}`);
+            for (const env of [{}, { SANDBOX_NAME: "proj", SANDBOX_ID: "0f3c9a1e" }]) {
+              const text = agentFacingReason({ decision, reason, detectors: [id], resolution, policy, appListening, env });
+              expectNoBypassCoaching(text, `${id}/${decision}/${resolution}/${appListening}/${env.SANDBOX_NAME ?? "host"}`);
+            }
           }
         }
       }

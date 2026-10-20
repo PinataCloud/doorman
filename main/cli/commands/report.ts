@@ -27,7 +27,7 @@ export const reportCommand: CliCommand = {
     ["--scan", "read new transcripts first"],
   ],
   notes: [
-    "What Doorman guards on this machine and what it has seen, masked: the report the Analytics screen exports for a security team. Markdown on stdout; --json prints the report's structure.",
+    "What Doorman guards on this machine and what it has seen, masked: a report to hand a security team (the app exports the same one). Markdown on stdout; --json prints the report's structure.",
   ],
   examples: [
     ["doorman report --scan --out report.md", "read new transcripts, then write the report"],
@@ -68,14 +68,14 @@ export const reportCommand: CliCommand = {
 
 export const exportDetectionsCommand: CliCommand = {
   name: "export detections",
-  summary: "Every detection as the schema-valid JSON bundle",
+  summary: "Every sighting as the schema-valid JSON bundle",
   usage: "[--out <file>] [--scan]",
   options: { out: { type: "string" }, scan: { type: "boolean", default: false } },
   flags: [
     ["--out <file>", "write it to a file instead of stdout"],
     ["--scan", "read new transcripts first"],
   ],
-  notes: ["The Analytics screen's detections export (schema urn:doorman:schemas:detections-export.v1). Masked: fingerprints stand in for values."],
+  notes: ["Schema urn:doorman:schemas:detections-export.v1, the same bundle the app exports. Masked: fingerprints stand in for values."],
   examples: [["doorman export detections --out detections.json", "write the bundle to a file"]],
   async run(ctx, args) {
     const policy = ctx.policy();
@@ -86,7 +86,7 @@ export const exportDetectionsCommand: CliCommand = {
       if (typeof out === "string") {
         const path = writeOut(out, `${JSON.stringify(bundle, null, 2)}\n`);
         const count = bundle.detections.length;
-        return { data: { path, count, valid: problems.length === 0 }, text: [ctx.ui.mark("ok", `Wrote ${plural(count, "detection")} to ${path}`)] };
+        return { data: { path, count, valid: problems.length === 0 }, text: [ctx.ui.mark("ok", `Wrote ${plural(count, "sighting")} to ${path}`)] };
       }
       return { data: bundle, text: JSON.stringify(bundle, null, 2).split("\n"), raw: true };
     });
@@ -95,7 +95,7 @@ export const exportDetectionsCommand: CliCommand = {
 
 export const exportLedgerCommand: CliCommand = {
   name: "export ledger",
-  summary: "The Event Ledger (every session, or one) as the schema-valid JSON bundle",
+  summary: "Every session (or one) with its turns, as the schema-valid JSON bundle",
   usage: "[--session <id>] [--out <file>] [--scan]",
   options: { session: { type: "string" }, out: { type: "string" }, scan: { type: "boolean", default: false } },
   flags: [
@@ -103,7 +103,7 @@ export const exportLedgerCommand: CliCommand = {
     ["--out <file>", "write it to a file instead of stdout"],
     ["--scan", "read new transcripts first"],
   ],
-  notes: ["The Ledger's export (schema urn:doorman:schemas:ledger-export.v1): sessions with their turns, text masked."],
+  notes: ["Schema urn:doorman:schemas:ledger-export.v1, the same bundle the app exports: sessions with their turns, text masked."],
   examples: [["doorman export ledger --out ledger.json", "every session to a file"]],
   async run(ctx, args) {
     return withEngine(ctx, args.values.scan === true, ({ engine }) => {

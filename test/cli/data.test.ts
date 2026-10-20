@@ -151,7 +151,7 @@ describe("doorman data commands", () => {
     const second = await json(["scan"]);
     expect(second).toMatchObject({ turns_added: 0, sessions_added: 0, new_findings: 0 });
     const text = await run(["scan"]);
-    expect(text.out).toContain("No new findings.");
+    expect(text.out).toContain("Nothing new to review.");
   });
 
   it("findings groups exposures like the Radar, filters, and never prints the token", async () => {
@@ -175,21 +175,30 @@ describe("doorman data commands", () => {
     const text = await run(["findings"]);
     expect(text.out).toContain("open exposure");
     expect(text.out).not.toContain(TOKEN);
+    expect(text.out.trimEnd().split("\n").pop()).toMatch(/^Next: `doorman findings show [0-9a-f]+` shows the first in full\.$/);
     expect((await run(["findings", "--severity", "huge"])).code).toBe(2);
+    expect((await run(["findings", "--limit", "x"])).err).toBe("doorman: --limit takes a whole number of 0 or more.\n");
   });
 
-  it("findings show tells the card's story, masked, and --reveal stays masked", async () => {
+  it("findings show tells the card's story, masked, and --evidence stays masked", async () => {
     await run(["scan"]);
     const list = await json<FindingsJson>(["findings", "--rule", "credential_in_prompt"]);
     const id = list.exposures[0]!.id;
-    const shown = await run(["findings", "show", id.slice(0, 8), "--reveal"]);
+    const shown = await run(["findings", "show", id.slice(0, 8), "--evidence"]);
     expect(shown.code).toBe(0);
     expect(shown.out).toContain("What");
     expect(shown.out).toContain("Action");
     expect(shown.out).toContain("Do next");
     expect(shown.out).toContain(id);
     expect(shown.out).not.toContain(TOKEN);
-    const data = await json(["findings", "show", id, "--reveal"]);
+    // Seen in local time, its count left to Where: the two can't disagree.
+    const seen = /Seen\s+(.+)/.exec(shown.out)?.[1] ?? "";
+    expect(seen).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d/);
+    expect(seen).not.toMatch(/T|Z|\dx\)/);
+    // An id copied from a cut table cell, ellipsis and all.
+    expect((await run(["findings", "show", `${id.slice(0, 8)}…`])).code).toBe(0);
+    expect((await run(["findings", "show", `${id.slice(0, 8)}...`])).code).toBe(0);
+    const data = await json(["findings", "show", id, "--evidence"]);
     expect(data).toMatchObject({ finding: { finding_id: id } });
     expect(JSON.stringify(data)).not.toContain(TOKEN);
     expect((await run(["findings", "show", "nope"])).code).toBe(1);
@@ -200,6 +209,8 @@ describe("doorman data commands", () => {
     const env = envOf(await json<FindingsJson>(["findings"]))!;
     const reviewed = await json(["findings", "review", env.id]);
     expect(reviewed.updated).toBe(env.finding_ids.length);
+    await json(["findings", "reopen", env.id]);
+    expect((await run(["findings", "review", env.id])).out).toMatch(/^Marked 1 exposure( \(\d+ sightings\))? reviewed\.$/m);
     expect(envOf(await json<FindingsJson>(["findings"]))).toBeUndefined();
     expect(envOf(await json<FindingsJson>(["findings", "--all"]))?.status).toBe("resolved");
     await json(["findings", "reopen", env.id]);
@@ -272,14 +283,26 @@ describe("doorman data commands", () => {
     const one = await run(["session", SESSION.slice(0, 6)]);
     expect(one.code).toBe(0);
     expect(one.out).toContain("push the release with");
-    expect(one.out).toContain("finding");
+    expect(one.out).toContain("sighting");
     expect(one.out).not.toContain(TOKEN);
-    const detail = await json<{ turns: unknown[]; total_turns: number; findings: unknown[] }>(["session", SESSION]);
+    // A turn that only ran a tool says which, instead of an empty body.
+    expect(one.out).toMatch(/assistant · claude-opus-5 · [\d.k]+ tokens\n {2}ran Bash\n/);
+    const detail = await json<{ turns: Array<{ at: string }>; total_turns: number; findings: unknown[] }>(["session", SESSION]);
     expect(detail.turns.length).toBe(detail.total_turns);
     expect(detail.findings.length).toBeGreaterThan(0);
+    // Text times are local; ISO stays in --json.
+    const at = new Date(detail.turns[0]!.at);
+    const two = (n: number) => String(n).padStart(2, "0");
+    const local = `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}:${two(at.getMinutes())}:${two(at.getSeconds())}`;
+    expect(one.out).toContain(`${local}  user`);
+    expect(one.out).not.toMatch(/\d\dT\d\d:\d\d/);
+    expect((await run(["session", `${SESSION.slice(0, 8)}…`])).code).toBe(0);
     const hits = await json<{ turns: unknown[] }>(["search", "release"]);
     expect(hits.turns.length).toBeGreaterThan(0);
     expect(JSON.stringify(hits)).not.toContain(TOKEN);
+    // Right after a scan, nothing new to read: no advice to scan again.
+    const none = await run(["search", "zzzunmatched"]);
+    expect(none.out).toBe('Nothing matches "zzzunmatched".\n');
   });
 
   it("usage and analytics give the screens' numbers, tokens only", async () => {
