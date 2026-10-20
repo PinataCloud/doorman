@@ -69,10 +69,13 @@ the masked evidence back from the transcripts instead.
 To run Claude Code in a [Docker Sandbox](https://docs.docker.com/ai/sandboxes/)
 with Doorman guarding it, add the
 [Doorman kit](https://github.com/PinataCloud/doorman/tree/main/integrations/sbx-kit)
-(kits are experimental in `sbx`). From a checkout of the repository:
+(kits are experimental in `sbx`). `sbx` only accepts kits from sources you
+allow, so allow this one once (keep any sources you already allow in the
+list):
 
 ```sh
-sbx run claude ~/my-project --kit ./integrations/sbx-kit
+sbx settings set kit.allowedSources '["docker.io/","git+https://github.com/PinataCloud/doorman.git"]'
+sbx run --name my-project claude ~/my-project --kit "git+https://github.com/PinataCloud/doorman.git#dir=integrations/sbx-kit"
 ```
 
 The kit installs the CLI, runs `doorman guard install` and lets the sandbox
