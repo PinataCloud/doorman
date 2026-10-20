@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -23,7 +24,9 @@ const copilot = MCP_REGISTRATION_TARGETS.find((t) => t.host === "copilot-cli")!;
  */
 describe("MCP registration surgery", () => {
   it("knows VS Code's mcp.json and Copilot CLI's mcp-config.json, with COPILOT_HOME honoured", () => {
-    expect(vscode.path("/Users/dev", {})).toBe("/Users/dev/Library/Application Support/Code/User/mcp.json");
+    // VS Code's user data per platform: macOS, Windows (%APPDATA%), Linux.
+    const appData = process.platform === "darwin" ? "Library/Application Support" : process.platform === "win32" ? "AppData/Roaming" : ".config";
+    expect(vscode.path("/Users/dev", {})).toBe(join("/Users/dev", appData, "Code", "User", "mcp.json"));
     expect(copilot.path("/Users/dev", {})).toBe("/Users/dev/.copilot/mcp-config.json");
     expect(copilot.path("/Users/dev", { COPILOT_HOME: "/tmp/ch/" })).toBe("/tmp/ch/mcp-config.json");
     for (const t of MCP_REGISTRATION_TARGETS) expect(t.presencePaths.length).toBeGreaterThan(0);

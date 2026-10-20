@@ -4,7 +4,7 @@ import {
   extractMcpServers,
   mcpConfigHost,
   riskProfileFor,
-  USER_MCP_CONFIGS,
+  userMcpConfigs,
 } from "../main/lib/mcp-inventory.js";
 import type { FindingRow } from "../main/lib/findings.js";
 import type { LedgerTurn } from "../main/lib/turns.js";
@@ -165,10 +165,15 @@ describe("config roots beyond Claude Code", () => {
     expect(mcpConfigHost("C:\\Users\\dev\\.cursor\\mcp.json")?.label).toBe("Cursor");
     expect(mcpConfigHost("C:\\Users\\dev\\.codeium\\windsurf\\mcp_config.json")?.host).toBe("windsurf");
     expect(mcpConfigHost("C:\\Users\\dev\\repos\\thing\\.mcp.json")).toBeUndefined();
+    // Claude Desktop and VS Code where Windows and Linux keep them.
+    expect(mcpConfigHost("C:\\Users\\dev\\AppData\\Roaming\\Claude\\claude_desktop_config.json")?.host).toBe("claude-desktop");
+    expect(mcpConfigHost("C:\\Users\\dev\\AppData\\Roaming\\Code\\User\\mcp.json")?.label).toBe("VS Code");
+    expect(mcpConfigHost("/home/dev/.config/Code - Insiders/User/mcp.json")?.label).toBe("VS Code Insiders");
+    expect(mcpConfigHost("/home/dev/.config/VSCodium/User/mcp.json")?.label).toBe("VSCodium");
   });
 
   it("lists no config path we cannot actually parse", () => {
-    for (const entry of USER_MCP_CONFIGS) {
+    for (const entry of (["darwin", "win32", "linux"] as const).flatMap((platform) => userMcpConfigs(platform))) {
       // Everything downstream is JSON.parse; a .toml here would be read every
       // sweep and contribute nothing.
       expect(entry.rel.endsWith(".json")).toBe(true);

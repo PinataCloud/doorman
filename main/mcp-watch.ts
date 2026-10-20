@@ -3,7 +3,7 @@
  * transcript-side half rides CaptureEngine's tool_output scan).
  *
  * Watches every USER-LEVEL agent config (lib/mcp-inventory.ts
- * `USER_MCP_CONFIGS` — Claude Code, Claude Desktop, Cursor, Windsurf, VS Code,
+ * `userMcpConfigs` — Claude Code, Claude Desktop, Cursor, Windsurf, VS Code,
  * Zed, Gemini CLI) plus each known project's `.mcp.json` (cwds come from the
  * capture engine's turns — the projects this machine actually runs agents in)
  * and re-scans on change, SpoolWatcher's shape: fs.watch where the file exists,
@@ -43,7 +43,7 @@ export class McpConfigWatcher {
       /** The user-level Claude config — `~/.claude.json` in production. */
       claudeConfigPath: string;
       /** The other hosts' user-level configs, absolute. Production passes
-       * `USER_MCP_CONFIGS` joined to home; tests pass whatever they wrote. */
+       * `mcpConfigPaths(home)`; tests pass whatever they wrote. */
       hostConfigPaths?: string[];
       /** Distinct project cwds seen in captured turns. Re-read every sweep,
        * so a session in a new repo starts covering its `.mcp.json`. */

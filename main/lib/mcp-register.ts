@@ -11,7 +11,8 @@
  * older install is replaced and a user-renamed copy is left alone.
  *
  * Verified 2026-09-08 (docs + VS Code 1.136.2 / Copilot CLI 1.0.83 bundles):
- *  · VS Code: `~/Library/Application Support/Code/User/mcp.json`, root key
+ *  · VS Code: `<user data>/User/mcp.json` (`~/Library/Application Support/Code`
+ *    on macOS, `%APPDATA%\Code` on Windows, `~/.config/Code` on Linux), root key
  *    `servers`, stdio entry `{ type: "stdio", command, args }`. First start
  *    shows "Trust and run MCP server doorman?"; `chat.mcp.access` (default
  *    `all`) gates the feature.
@@ -32,8 +33,9 @@
  * written into a location whose owner is not installed.
  */
 
+import { join } from "node:path";
 import { nodeProgramForScript } from "./node-launcher.js";
-import { DEFAULT_VARIANT, VSCODE_VARIANTS, profiles } from "./vscode.js";
+import { DEFAULT_VARIANT, VSCODE_VARIANTS, profiles, userDir } from "./vscode.js";
 
 export const MCP_SERVER_KEY = "doorman";
 export const MCP_SCRIPT_BASENAME = "doorman-mcp.js";
@@ -88,7 +90,7 @@ export const MCP_REGISTRATION_TARGETS: readonly McpRegistrationTarget[] = [
   {
     host: "vscode-copilot",
     label: "VS Code",
-    path: (home) => `${trimSlash(home)}/Library/Application Support/Code/User/mcp.json`,
+    path: (home) => join(userDir(DEFAULT_VARIANT, home), "mcp.json"),
     root: "servers",
     entry: (script) => ({ type: "stdio", command: nodeProgramForScript(script), args: [script] }),
     // The whole family, so a machine on Insiders or VSCodium is not reported
@@ -104,7 +106,7 @@ export const MCP_REGISTRATION_TARGETS: readonly McpRegistrationTarget[] = [
           .filter((profile) => !(variant.id === DEFAULT_VARIANT.id && profile.default))
           .map((profile) => ({
             label: profile.default ? variant.label : `${variant.label} · ${profile.id}`,
-            path: `${profile.dir}/mcp.json`,
+            path: join(profile.dir, "mcp.json"),
           })),
       ),
   },
@@ -123,7 +125,7 @@ export const MCP_REGISTRATION_TARGETS: readonly McpRegistrationTarget[] = [
 
 /** Whether a target's host is on this Mac at all. */
 export function targetPresent(target: McpRegistrationTarget, home: string, io: RegistrationIo): boolean {
-  return target.presencePaths.some((rel) => io.exists(`${trimSlash(home)}/${rel}`));
+  return target.presencePaths.some((rel) => io.exists(join(home, rel)));
 }
 
 /**
