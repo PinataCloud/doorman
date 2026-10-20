@@ -304,7 +304,7 @@ describe("context building (the privacy boundary)", () => {
 
 describe("the whole-machine subject", () => {
   it("folds posture, spend, the newest sessions and setup health into one masked context", () => {
-    const ctx = machineContext({
+    const facts: Parameters<typeof machineContext>[0] = {
       posture: {
         guard_installed: true,
         guard_wanted: true,
@@ -365,9 +365,14 @@ describe("the whole-machine subject", () => {
       ],
       setup: { ok: 5, warn: 1, fail: 0, headline: "One thing to look at" },
       app_version: "0.17.1",
-    });
+      platform: "macos",
+    };
+    const ctx = machineContext(facts);
     expect(ctx.kind).toBe("machine");
     expect(ctx.title).toBe("This Mac");
+    // Anywhere else the subject is the computer, not a Mac.
+    expect(machineContext({ ...facts, platform: "linux" }).title).toBe("This computer");
+    expect(machineContext({ ...facts, platform: "windows" }).title).toBe("This computer");
     expect(ctx.text).toContain("local only — nothing leaves this computer");
     expect(ctx.text).toContain("Setup health: One thing to look at (5 ok, 1 warning(s), 0 failing)");
     expect(ctx.text).toContain("Held right now, waiting for a decision: 1");
@@ -393,8 +398,9 @@ describe("the whole-machine subject", () => {
         ],
       },
       app_version: "0.17.1",
+      platform: "linux",
     });
-    expect(ctx.text).toContain("AI TOOLS ON THIS MAC (3 found of 4 looked for)");
+    expect(ctx.text).toContain("AI TOOLS ON THIS COMPUTER (3 found of 4 looked for)");
     expect(ctx.text).toContain("Claude Code (agent-cli) · metered + guarded");
     expect(ctx.text).toContain("Grok Build (agent-cli) · NOT covered — the guard has an adapter, one switch wires it in");
     expect(ctx.text).toContain("Claude Desktop (desktop-app) · NOT covered — no adapter and nothing readable on disk");
@@ -409,6 +415,7 @@ describe("the whole-machine subject", () => {
       spend: { today_cost: 0, window_cost: 0, prev_window_cost: 0, covered_cost: 0, overage_cost: 0, billed_cost: 0, unknown_cost: 0, unpriced_turns: 0, by_task: [], time_days: [], time_tasks: [], time_rails: [], window_seconds: 0, prev_window_seconds: 0, today_seconds: 0, window_sessions: 0, window_tokens: 0, model_rows: [], cost_days: [], days: 7 } as never,
       sessions: [],
       app_version: "0.17.1",
+      platform: "macos",
     });
     expect(ctx.text).toContain("Setup health: not checked yet");
     expect(ctx.text).toContain("(no sessions yet)");
@@ -449,7 +456,7 @@ describe("integrating a tool", () => {
     // No network rail is offered: the app reads disk and holds calls, nothing else.
     expect(ctx.text).not.toMatch(/https?:\/\//);
     // The coverage map rides along, so "is X covered?" and "how do I cover X?" agree.
-    expect(ctx.text).toContain("AI TOOLS ON THIS MAC (1 found of 1 looked for)");
+    expect(ctx.text).toContain("AI TOOLS ON THIS COMPUTER (1 found of 1 looked for)");
   });
 
   it("says so when nothing is on this Mac yet", () => {
@@ -462,6 +469,6 @@ describe("integrating a tool", () => {
     });
     expect(ctx.text).toContain("(none of the readable hosts is on this computer)");
     expect(ctx.text).toContain("Wired in on this computer: none");
-    expect(ctx.text).not.toContain("AI TOOLS ON THIS MAC");
+    expect(ctx.text).not.toContain("AI TOOLS ON THIS COMPUTER");
   });
 });

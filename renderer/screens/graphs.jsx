@@ -455,7 +455,7 @@ function GraphsScreen({ state, onOpenTask }) {
               </div>
               <div className="cardnote">
                 Deterministic heuristic, not a label you set — a session that both refactors and
-                tests lands in whichever signal was strongest. No model, nothing leaves the Mac.
+                tests lands in whichever signal was strongest. No model, nothing leaves {thisMachine(state.platform)}.
                 Click a row to read those sessions in the Event Ledger.
               </div>
             </Card>

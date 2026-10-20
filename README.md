@@ -257,11 +257,15 @@ turn a feature on, and every write keeps a `.bak` beside the file:
   so it survives app updates. `node-runtime` is a small launcher Doorman
   writes (`main/lib/node-launcher.ts`) that runs the guard on a Node.js runtime
   known to be on the machine: the CLI's, else the app's own (its executable
-  with `ELECTRON_RUN_AS_NODE`), and only then `node` from the PATH. So the
-  guard runs on machines without Node.js, where agents such as Claude Code's
-  native install and Codex don't need it — a hook that can't start is one
-  every agent lets through. Doorman's MCP server and the MCP gateway start the
-  same way. (Windows still runs a bare `node` for now.)
+  with `ELECTRON_RUN_AS_NODE`; on Linux the AppImage file), and only then
+  `node` from the PATH. So the guard runs on machines without Node.js, where
+  agents such as Claude Code's native install and Codex don't need it — a hook
+  that can't start is one every agent lets through. Doorman runs each recorded
+  runtime once on a test script whenever it changes (recorded in
+  `runtimes.json`) and leaves out any that fails; when none works, Settings,
+  `doorman doctor` and `doorman guard status` say the guard can't start.
+  Doorman's MCP server and the MCP gateway start the same way. (Windows still
+  runs a bare `node` for now.)
 - **The MCP server**: an entry in each MCP host's config that points at
   `<userData>/doorman/mcp/doorman-mcp.js` (`main/mcp-install.ts`).
 - **The VS Code extension** (`pinata.doorman`): installed through

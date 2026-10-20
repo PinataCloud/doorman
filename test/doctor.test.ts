@@ -140,6 +140,31 @@ describe("the guard", () => {
     expect(report.headline).toBe("Everything is wired");
   });
 
+  it("a guard wired everywhere that can't start is a failure, not \"Everything is wired\"", () => {
+    const home = freshMachine();
+    const guardDir = guardDirFor(home);
+    guardBoth(home, guardDir);
+    const ok = diagnose(input(home, { guardWanted: true, guardDir, guardRuntime: { ok: true, runsOn: "the Doorman app at /x/Doorman.AppImage" } }));
+    expect(byId(ok, "guard.runtime").status).toBe("ok");
+    expect(ok.headline).toBe("Everything is wired");
+
+    // No runtime on the machine runs it: nothing the app can repair, say what to do.
+    const error = "The guard can't start on this computer, so agents run their tools unguarded (the Doorman app at /x/Doorman.AppImage: bad option: --no-sandbox (exit 9))";
+    const dead = diagnose(input(home, { guardWanted: true, guardDir, guardRuntime: { ok: false, error, repairable: false } }));
+    const row = byId(dead, "guard.runtime");
+    expect(row.status).toBe("fail");
+    expect(row.detail).toBe(error);
+    expect(row.fix).toBeUndefined();
+    expect(row.manual).toContain("Install Node.js");
+    expect(dead.headline).not.toBe("Everything is wired");
+    expect(planRepairs(dead, "auto")).toEqual([]);
+
+    // A runtime works but the launcher still starts a broken one: a reinstall rewrites it.
+    const stale = diagnose(input(home, { guardWanted: true, guardDir, guardRuntime: { ok: false, error, repairable: true } }));
+    expect(byId(stale, "guard.runtime").fix).toBe("install-guard");
+    expect(planRepairs(stale, "auto").map((r) => r.checks)).toEqual([["guard.runtime"]]);
+  });
+
   it("an entry an agent dropped on a settings rewrite is a lossless re-wire", () => {
     const home = freshMachine();
     const guardDir = guardDirFor(home);

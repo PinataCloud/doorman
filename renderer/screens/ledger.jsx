@@ -1121,7 +1121,7 @@ function InlineRadar({ finding, state, onGoRadar }) {
           The Radar card asks for no such thing: there the strip is a masked
           line with one placeholder revealable at a time. */}
       {finding.excerpt ? (
-        <Evidence excerpt={finding.excerpt} keyName={finding.key_name} findingId={finding.finding_id} row={finding} raw />
+        <Evidence excerpt={finding.excerpt} keyName={finding.key_name} findingId={finding.finding_id} row={finding} raw platform={state && state.platform} />
       ) : null}
     </div>
   );

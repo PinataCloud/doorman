@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import type { CliEnvironment } from "../../main/cli/context.js";
 import { main } from "../../main/cli/index.js";
 import { guardDir } from "../../main/enforcement.js";
 import { heartbeatPath } from "../../main/guard/handshake.js";
+import { renderLauncher } from "../../main/lib/node-launcher.js";
 
 /**
  * Guardrails from the terminal: policy, rules, packs, exceptions and custom
@@ -258,6 +259,32 @@ describe("doorman guard and policy commands", () => {
       expect((await run(["guard", "uninstall"], cli)).code).toBe(0);
       expect(readFileSync(settings(), "utf8")).not.toContain("doorman/guard");
       expect(prefs().guard_wanted).toBe(false);
+    });
+
+    // Windows runs a bare `node`, no launcher to probe.
+    it.skipIf(process.platform === "win32")("status says the guard is not working when its runtime can't start it, and install fixes that", async () => {
+      const cli = builtMain();
+      expect((await run(["guard", "install"], cli)).code).toBe(0);
+      // What a 0.5.2 AppImage left on Ubuntu: a recorded runtime that exits 9 at once.
+      const dir = guardDir(dataDir);
+      const broken = join(root, "Doorman.AppImage");
+      writeFileSync(broken, '#!/bin/sh\necho "$0: bad option: --no-sandbox" >&2\nexit 9\n');
+      chmodSync(broken, 0o755);
+      writeFileSync(join(dir, "runtimes.json"), `${JSON.stringify({ cli: broken })}\n`);
+      writeFileSync(join(dir, "node-runtime"), renderLauncher({ cli: broken }), { mode: 0o755 });
+
+      const status = await run(["guard", "status"], cli);
+      expect(status.code).toBe(1);
+      expect(status.out).toContain("not working");
+      expect(status.out).toContain("bad option: --no-sandbox (exit 9)");
+      const json = JSON.parse((await run(["guard", "status", "--json"], cli)).out) as { runtime: { working: boolean } };
+      expect(json.runtime.working).toBe(false);
+
+      // An install records the CLI's own Node.js again and probes it.
+      expect((await run(["guard", "install"], cli)).code).toBe(0);
+      const healthy = await run(["guard", "status"], cli);
+      expect(healthy.code, healthy.out).toBe(0);
+      expect(healthy.out).not.toContain("not working");
     });
 
     /** Run the installed guard on one call; resolves with what it printed. */

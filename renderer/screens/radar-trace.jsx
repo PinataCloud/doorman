@@ -432,7 +432,7 @@ function TraceReportView({ report, state, onOpenSession, onCopy, copied }) {
                 </button>
               ) : null}
               <button className="link" onClick={() => window.doorman.showTraceFile(f.path)}>
-                show in Finder →
+                {REVEAL_LINKS[state && state.platform] || "show in folder"} →
               </button>
             </div>
           ))}

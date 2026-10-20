@@ -14,7 +14,7 @@ const main = read("../main/index.ts");
 const preload = read("../main/preload.ts");
 
 let aiContextFacts: (text: string) => Array<{ kind: string; label?: string; text: string }>;
-let aiAgentPrompt: (input: { kind: string; title?: string; question?: string; context?: string }) => string;
+let aiAgentPrompt: (input: { kind: string; title?: string; question?: string; context?: string; platform?: string }) => string;
 let AI_KIND_LABELS: Record<string, string>;
 let AI_SUGGESTIONS: Record<string, string[]>;
 
@@ -113,9 +113,15 @@ describe("the prompt for the person's own agent", () => {
   });
 
   it("says the subject once when the kind is the title, and falls back to the kind's first starter question", () => {
-    const prompt = aiAgentPrompt({ kind: "machine", title: "This Mac", context: "SECURITY POSTURE\nGuard: installed" });
+    const prompt = aiAgentPrompt({ kind: "machine", title: "This Mac", context: "SECURITY POSTURE\nGuard: installed", platform: "macos" });
     expect(prompt).toContain("SUBJECT: This Mac\n");
     expect(prompt).not.toContain("This Mac · This Mac");
+    // Off macOS the machine is "This computer", and main titles it the same.
+    for (const platform of ["linux", "windows"]) {
+      const other = aiAgentPrompt({ kind: "machine", title: "This computer", context: "x", platform });
+      expect(other).toContain("SUBJECT: This computer\n");
+      expect(other).not.toContain("Mac");
+    }
     expect(prompt).toContain("QUESTION: " + AI_SUGGESTIONS.machine![0]);
   });
 

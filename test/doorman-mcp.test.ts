@@ -106,7 +106,7 @@ describe("doorman_check_tool_call", () => {
     const answer = text(handleMessage(call(5, "doorman_check_tool_call", { command: CRED_CMD }), PATHS, io({})));
     expect(answer).toMatch(/^Decision: ask — the guard would hold this call/);
     expect(answer).toContain("Rules: Credential in tool argument.");
-    expect(answer).toContain(`Instead: ${AGENT_REMEDIES.credential_in_tool_arg}`);
+    expect(answer).toContain(`What to do: ${AGENT_REMEDIES.credential_in_tool_arg} If you make this call, the user is asked first; do not work around the hold.`);
     expect(answer).not.toContain("ghp_9747444363esztrbftaqcdztcqaekxuxfd");
   });
 
@@ -114,6 +114,7 @@ describe("doorman_check_tool_call", () => {
     const policy = (mode: string) => ({ [`${PATHS.guardDir}/policy.json`]: JSON.stringify({ version: 1, modes: { credential_in_tool_arg: mode } }) });
     const deny = text(handleMessage(call(6, "doorman_check_tool_call", { command: CRED_CMD }), PATHS, io(policy("block"))));
     expect(deny).toMatch(/^Decision: deny/);
+    expect(deny).toContain("Do not make this call or work around it; ask the user how to proceed.");
     const allow = text(handleMessage(call(7, "doorman_check_tool_call", { command: CRED_CMD }), PATHS, io(policy("observe"))));
     expect(allow).toMatch(/^Decision: allow/);
     expect(allow).toContain("Recorded, not held: Credential in tool argument.");

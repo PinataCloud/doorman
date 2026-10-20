@@ -48,6 +48,13 @@ export const GO_SCREENS: ReadonlyArray<{ id: string; label: string }> = [
   { id: "integrations", label: "Integrations" },
 ];
 
+/** The File menu's reveal item, named for the platform's file browser. */
+export function revealDataFolderLabel(platform: NodeJS.Platform = process.platform): string {
+  if (platform === "darwin") return "Reveal Data Folder in Finder";
+  if (platform === "win32") return "Show Data Folder in Explorer";
+  return "Open Data Folder";
+}
+
 export function installAppMenu(callbacks: MenuCallbacks, view: MenuView = { guardOn: false }): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
@@ -95,7 +102,7 @@ export function installAppMenu(callbacks: MenuCallbacks, view: MenuView = { guar
     {
       label: "File",
       submenu: [
-        { label: "Reveal Data Folder in Finder", click: () => callbacks.onOpenDataDir() },
+        { label: revealDataFolderLabel(), click: () => callbacks.onOpenDataDir() },
         { type: "separator" },
         { role: "close" },
       ],

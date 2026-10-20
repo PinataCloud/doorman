@@ -136,6 +136,11 @@ export interface DoctorInput {
    * guardCommand), used to verify a host's companion document carries our
    * exact consent entry. Defaults to the same rule derived from `guardDir`. */
   guardCommandFor?: ((hostId: string) => string) | undefined;
+  /** Whether the hook starts at all on this machine (enforcement.ts
+   * checkGuardRuntime): `repairable` when some runtime works and only the
+   * launcher has to be rewritten to use it. Absent = nothing to check
+   * (Windows, or no launcher written yet). */
+  guardRuntime?: { ok: true; runsOn: string } | { ok: false; error: string; repairable: boolean } | undefined;
   /** The process environment the registry resolves host homes against
    * (`HERMES_HOME`, `OPENCLAW_STATE_DIR`, …); `codexHome`/`grokHome` above
    * take precedence. Without it the doctor sees only the default locations
@@ -412,6 +417,16 @@ function guardChecks(input: DoctorInput): DoctorCheck[] {
       ? { id: "guard.bundle", host, title: "Guard bundle", status: "ok", detail: `All ${input.guardFiles.length} guard modules present.` }
       : { id: "guard.bundle", host, title: "Guard bundle", status: "fail", detail: `${missingFiles.length} guard module(s) missing (${missingFiles.slice(0, 3).join(", ")}) — the hook errors and fails open.`, fix: "install-guard", auto: true },
   );
+  // The hook can be wired everywhere and still never start: a runtime that
+  // exits at once is a hook every agent lets through, with nothing logged.
+  const runtime = input.guardRuntime;
+  if (runtime?.ok) {
+    out.push({ id: "guard.runtime", host, title: "Guard runtime", status: "ok", detail: `The guard starts on ${runtime.runsOn}.` });
+  } else if (runtime && runtime.repairable) {
+    out.push({ id: "guard.runtime", host, title: "Guard runtime", status: "fail", detail: runtime.error, fix: "install-guard", auto: true });
+  } else if (runtime) {
+    out.push({ id: "guard.runtime", host, title: "Guard runtime", status: "fail", detail: runtime.error, manual: "Install Node.js or reinstall Doorman, then check again." });
+  }
   return out;
 }
 

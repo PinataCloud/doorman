@@ -630,7 +630,7 @@ function RadarScreen({
           <Empty>
             {narrowed
               ? "Nothing matches these filters."
-              : emptyFeedSentence(status, hiddenFp, hiddenLeads)}
+              : emptyFeedSentence(status, hiddenFp, hiddenLeads, state.platform)}
             {/* The way out lives in the dead end: the reset the reader needs is
                 otherwise back up in a row of six controls, one of which did it. */}
             {narrowed ? (
@@ -712,12 +712,12 @@ function HeldCallsLine({ held }) {
  *), each as the number of CARDS its control would add. Pure, so a
  * test can ask it directly.
  */
-function emptyFeedSentence(status, hiddenFp, hiddenLeads) {
+function emptyFeedSentence(status, hiddenFp, hiddenLeads, platform) {
   const leads = hiddenLeads > 0 ? hiddenLeads + " exposure" + (hiddenLeads === 1 ? "" : "s") + " in an unticked confidence band" : null;
   if (status === "open") {
     return leads
       ? "Nothing needs review in the confidence bands ticked. " + leads + (hiddenLeads === 1 ? " is" : " are") + " folded away — tick the band under Confidence to read " + (hiddenLeads === 1 ? "it" : "them") + "."
-      : "Nothing needs review. New findings appear here as sessions run — and as macOS notifications.";
+      : "Nothing needs review. New findings appear here as sessions run, and as " + (PLATFORM_LABELS[platform] || "system") + " notifications.";
   }
   const fps = hiddenFp > 0 ? hiddenFp + " false positive" + (hiddenFp === 1 ? "" : "s") : null;
   const parts = [fps, leads].filter(Boolean);
@@ -797,7 +797,7 @@ const THINGS_SHOWN = 6;
 /** How many sightings a thing lists before the rest fold behind "Show N more". */
 const SIGHTINGS_SHOWN = 5;
 
-function ThingRecord({ thing: t, open, onToggle, onOpenSession }) {
+function ThingRecord({ thing: t, open, onToggle, onOpenSession, platform }) {
   const tOutcomes = [...new Set(t.rows.map(findingOutcome))];
   const tOutcome = tOutcomes.length === 1 ? tOutcomes[0] : "mixed";
   const [more, setMore] = useState(false);
@@ -852,7 +852,7 @@ function ThingRecord({ thing: t, open, onToggle, onOpenSession }) {
               the match, capped per detector), so VIEW RAW is offered here as
               on the Ledger: a deliberate click reads the transcript on this
               Mac and swaps the fuller window into the same box. */}
-          <Evidence excerpt={t.face.excerpt} findingId={t.face.finding_id} row={t.face} raw />
+          <Evidence excerpt={t.face.excerpt} findingId={t.face.finding_id} row={t.face} raw platform={platform} />
         </div>
       ) : null}
     </div>
@@ -1099,6 +1099,7 @@ function FindingGroup({ group, policy, state, focused, expanded, onToggle, onGoS
                     thing={t}
                     open={t.key === openThing}
                     onOpenSession={onOpenSession}
+                    platform={state && state.platform}
                   />
                 ))}
                 {!selectedThing && things.length > THINGS_SHOWN ? (
@@ -1368,7 +1369,7 @@ function valueFromRaw(raw, parts, markIndex) {
  * you go precisely to read what actually happened, next to the turn it
  * happened in and beside that turn's own REDACTED · VIEW RAW toggle.
  */
-function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row }) {
+function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row, platform }) {
   const text = String(excerpt || "");
   // A call that never ran: the masked line the guard saw is the
   // whole record. It is shown as usual, but nothing behind it can be
@@ -1476,8 +1477,8 @@ function Evidence({ excerpt, keyName, findingId, raw: rawAllowed, row }) {
           title={
             (raw.truncated ? "A window of the raw text, centred on the match. " : "") +
             (raw.from === "vault"
-              ? "Kept on this Mac when the finding fired, encrypted by your Keychain — never synced or exported; the saved finding stays masked. "
-              : "Read from the transcript on this computer just now — never synced or exported; the saved finding stays masked. ") +
+              ? "Kept on " + thisMachine(platform) + " when the finding fired, encrypted by " + keyStoreName(platform) + ". Never synced or exported; the saved finding stays masked. "
+              : "Read from the transcript on " + thisMachine(platform) + " just now. Never synced or exported; the saved finding stays masked. ") +
             "The value this finding is about is highlighted."
           }
         >

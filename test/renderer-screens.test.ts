@@ -3566,4 +3566,172 @@ describe("Trace a secret (renderer/screens/radar-trace.jsx)", () => {
     expect(ledger).toContain("looksLikeSecret(query)");
     expect(ledger).toContain("onTraceSecret(query.trim())");
   });
+
+  it("points a transcript at the platform's own file browser", () => {
+    ctx.__report = report(true);
+    const links = (platform: string) => {
+      ctx.__state = { ...populatedState(), platform };
+      return runInContext(
+        `__nodes(TraceReportView({ report: __report, state: __state, onOpenSession: ${noop}, onCopy: ${noop}, copied: false }), "button", [], 0)
+          .map(function (n) { return (n.kids || []).join(""); }).join(" | ")`,
+        ctx as object,
+        { filename: "trace reveal " + platform },
+      ) as string;
+    };
+    expect(links("macos")).toContain("show in Finder →");
+    expect(links("windows")).toContain("show in Explorer →");
+    expect(links("linux")).toContain("show in folder →");
+    expect(links("linux")).not.toContain("Finder");
+  });
+});
+
+/* Mac words on Linux and Windows (found on Ubuntu with v0.5.2). The platform
+   reaches every screen as `state.platform`; these strings were literals that
+   never read it. Every screen, the notice stack and the shared helpers are
+   rendered as Linux and as Windows, and every visible string (text and the
+   string props a person reads: titles, tooltips, labels, ask questions) is
+   checked for the Mac's own names. macOS keeps them. */
+describe("no Mac wording off macOS (renderer)", () => {
+  const ctx = loadApp();
+  const noop = "function () {}";
+  const MAC_ONLY: RegExp[] = [
+    /\bMac\b/,
+    /Notification Center/,
+    /menu bar/i,
+    /Finder/,
+    /your Keychain/,
+    /⌘/,
+    /System Settings/,
+    /\bDock\b/,
+    /macOS notifications/,
+  ];
+  const calls: Array<[string, string]> = [
+    ["Overview", `OverviewScreen({ state: __state, onGoRadar: ${noop}, onOpenSession: ${noop}, onTraceSecret: ${noop} })`],
+    [
+      "Radar",
+      `RadarScreen({ state: __state, onOpenSession: ${noop}, onGoRules: ${noop}, onGoIntegrations: ${noop},
+        onGoSettings: ${noop}, ruleFilter: "all", ruleNonce: 0 })`,
+    ],
+    ["Analytics", `AnalyticsScreen({ state: __state, onOpenRule: ${noop}, onGoRules: ${noop} })`],
+    ["Rules", `RulesScreen({ state: __state, onGoSettings: ${noop} })`],
+    ["Settings", `SettingsScreen({ state: __state, onGoRules: ${noop} })`],
+    ["Integrations", "IntegrationsScreen({ state: __state })"],
+    ["Onboarding", "OnboardingScreen({ state: __state })"],
+    ["Usage", `GraphsScreen({ state: __state, onOpenTask: ${noop} })`],
+    [
+      "Ledger",
+      `LedgerScreen({ state: __state, focusSessionId: null, onFocusHandled: ${noop}, focusFindingId: null,
+        onFocusFindingHandled: ${noop}, focusNonce: 0, focusTask: null, onFocusTaskHandled: ${noop} })`,
+    ],
+    ["Notices", `NoticeStack({ notices: __state.notices, onNav: ${noop}, state: __state, onGoSettings: ${noop} })`],
+  ];
+
+  /** Every string a person can read in a rendered tree: text children and
+   * string props (Card titles, tooltips, aria labels, ask questions). */
+  const words = (expression: string): string =>
+    runInContext(
+      `(function () {
+        var out = [];
+        var walk = function (n, depth) {
+          if (n == null || typeof n === "boolean" || depth > 24) return;
+          if (typeof n === "string" || typeof n === "number") { out.push(String(n)); return; }
+          if (Array.isArray(n)) { n.forEach(function (k) { walk(k, depth); }); return; }
+          var p = n.props || {};
+          for (var key in p) if (key !== "className" && typeof p[key] === "string") out.push(p[key]);
+          if (n.fn) return walk(n.fn(__propsOf(n)), depth + 1);
+          if (n.kids) n.kids.forEach(function (k) { walk(k, depth + 1); });
+        };
+        walk(${expression}, 0);
+        // Pieces join with a space; one before punctuation is the join's, not the copy's.
+        return out.join(" ").replace(/\\s+/g, " ").replace(/ ([,.;:])/g, "$1");
+      })()`,
+      ctx as object,
+      { filename: "words" },
+    ) as string;
+
+  /** A machine in every state that prints machine or OS wording: the
+   * notification check failed (Settings' callout, the notice's ask), and the
+   * classifier and MCP rows are on. */
+  const on = (platform: string, base: AppState) => ({
+    ...base,
+    platform,
+    notifications_blocked: true,
+    notification_check: { status: "blocked", error: "no response from the system's notification service" },
+    notices: [
+      {
+        id: "notifications-blocked",
+        kind: "warn",
+        sticky: true,
+        title: "System notifications aren't reaching you",
+        body: "The OS is dropping Doorman's banners.",
+        action: "open-notification-settings",
+        at: new Date().toISOString(),
+      },
+    ],
+    prefs: { ...base.prefs, mcp_answers: true },
+  });
+
+  for (const platform of ["linux", "windows"]) {
+    for (const [name, call] of calls) {
+      it(`${name} on ${platform} names no Mac-only thing`, () => {
+        for (const base of [blankState(), populatedState()]) {
+          ctx.__state = on(platform, base);
+          const text = words(call);
+          expect(text.length, `${name} rendered text`).toBeGreaterThan(0);
+          for (const term of MAC_ONLY) expect(text, `${name} on ${platform}`).not.toMatch(term);
+        }
+      });
+    }
+  }
+
+  it("says the five v0.5.2 sentences the platform's way", () => {
+    const settings = (platform: string) => {
+      ctx.__state = on(platform, populatedState());
+      return words(`SettingsScreen({ state: __state, onGoRules: ${noop} })`);
+    };
+    const usage = (platform: string) => {
+      // The use-case card (and its "nothing leaves" note) needs a week with time in it.
+      const base = populatedState();
+      ctx.__state = on(platform, {
+        ...base,
+        graphs: {
+          ...base.graphs,
+          window_seconds: 3600,
+          window_tokens: 1000,
+          by_task: [{ task: "coding", seconds: 3600, prev_seconds: 0, sessions: 1, tokens: 1000 }],
+        } as AppState["graphs"],
+      });
+      return words(`GraphsScreen({ state: __state, onOpenTask: ${noop} })`);
+    };
+    const linux = settings("linux");
+    expect(linux).toContain("It runs inside this app on this computer, and nothing it reads leaves the machine.");
+    expect(linux).toContain("read what this computer has metered");
+    expect(linux).toContain("only silences the duplicate in the desktop's notification list");
+    expect(settings("windows")).toContain("only silences the duplicate in the Windows notification center");
+    // The number beside the tray icon is drawn by macOS only: no card elsewhere.
+    expect(linux).not.toContain("Show beside the icon");
+    expect(settings("windows")).not.toContain("Show beside the icon");
+    expect(usage("linux")).toContain("nothing leaves this computer");
+    // macOS keeps its own names.
+    const mac = settings("macos");
+    expect(mac).toContain("It runs inside this app on this Mac");
+    expect(mac).toContain("read what this Mac has metered");
+    expect(mac).toContain("the duplicate in Notification Center");
+    expect(mac).toContain("Menu bar");
+    expect(mac).toContain("Show beside the icon");
+    expect(usage("macos")).toContain("nothing leaves this Mac");
+  });
+
+  it("words the shared helpers per platform, and never as a Mac when the platform is unknown", () => {
+    const run = (expr: string) => runInContext(expr, ctx as object) as string;
+    expect(run(`thisMachine("macos")`)).toBe("this Mac");
+    expect(run(`thisMachine("linux")`)).toBe("this computer");
+    expect(run(`thisMachine("windows")`)).toBe("this computer");
+    expect(run(`thisMachine(undefined)`)).toBe("this computer");
+    expect(run(`keyStoreName("macos")`)).toBe("your Keychain");
+    expect(run(`keyStoreName("linux")`)).toBe("your system keyring");
+    expect(run(`emptyFeedSentence("open", 0, 0, "linux")`)).toContain("as Linux notifications");
+    expect(run(`emptyFeedSentence("open", 0, 0, "macos")`)).toContain("as macOS notifications");
+    expect(run(`emptyFeedSentence("open", 0, 0, undefined)`)).toContain("as system notifications");
+  });
 });
