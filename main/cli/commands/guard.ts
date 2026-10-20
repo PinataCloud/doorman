@@ -5,7 +5,7 @@ import type { UnattendedPolicy } from "../../guard/policy.js";
 import { describeIntegrity } from "../../lib/guard-integrity.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
-import { dockerSandbox, sandboxWatchCommand, type DockerSandbox } from "../docker-sandbox.js";
+import { dockerSandbox, processLabel, sandboxWatchCommand, type DockerSandbox } from "../docker-sandbox.js";
 import { CliError, table, type CommandResult } from "../output.js";
 import { customRulesCommands } from "./custom-rules.js";
 import { exceptionsCommands } from "./exceptions.js";
@@ -67,7 +67,7 @@ function guardReport(ctx: CliContext, all: boolean): CommandResult {
     ...(integrity.status === "tampered" || (installed && integrity.status !== "healthy") ? [`  ${s.red(describeIntegrity(integrity))}`] : []),
     `  bundle   ${tilde(ctx.guardDir, ctx.io.home)}${data.policy_file ? "" : s.yellow("  (no policy.json yet)")}`,
     `  holds    ${confirmSentence(policy.confirm)}`,
-    `  answers  ${answering ? s.green(`${answering.by}${answering.pid !== undefined ? ` (pid ${answering.pid})` : ""}`) : nobodyAnswers(hosts, policy.confirm.unattended, dockerSandbox(ctx.io.env))}`,
+    `  answers  ${answering ? s.green(`${answering.by}${processLabel(ctx.io.env, answering.pid)}`) : nobodyAnswers(hosts, policy.confirm.unattended, dockerSandbox(ctx.io.env))}`,
   ];
   return { data, text };
 }

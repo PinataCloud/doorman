@@ -7,7 +7,7 @@ import { appOwner } from "../../lib/data-owner.js";
 import { HOSTS } from "../../guard/hosts/index.js";
 import { approvalContextNote, approvalPolicyChange, approvalSummary } from "../../lib/approvals.js";
 import { localDetectorLabel } from "../../lib/findings.js";
-import { dockerSandbox } from "../docker-sandbox.js";
+import { dockerSandbox, processLabel } from "../docker-sandbox.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError } from "../output.js";
@@ -74,7 +74,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
   const other = ctx.running();
   if (other) {
     const who = other.version?.startsWith("cli-") ? "`doorman watch`" : "Doorman";
-    throw new CliError(`${who}${other.pid !== undefined ? ` (pid ${other.pid})` : ""} is already answering held calls.`);
+    throw new CliError(`${who}${processLabel(ctx.io.env, other.pid)} is already answering held calls.`);
   }
   // Watch writes the store (the guard's spool) and the policy for as long as
   // it runs: it needs the data to itself, not a copy.
@@ -347,7 +347,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
   tick = setInterval(() => {
     const beat = readHeartbeat();
     if (beat?.fresh && beat.pid !== undefined && beat.pid !== process.pid) {
-      say(s.yellow(`Doorman (pid ${beat.pid}) took over answering held calls. Stopping.`));
+      say(s.yellow(`Doorman${processLabel(ctx.io.env, beat.pid)} took over answering held calls. Stopping.`));
       stop("taken over by Doorman", true);
       return;
     }
@@ -355,7 +355,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     // before it writes anything, then answers held calls itself.
     const starting = appOwner(ctx.dataDir);
     if (starting) {
-      say(s.yellow(`Doorman (pid ${starting.pid}) is starting and takes over answering held calls. Stopping.`));
+      say(s.yellow(`Doorman${processLabel(ctx.io.env, starting.pid)} is starting and takes over answering held calls. Stopping.`));
       stop("taken over by Doorman", true);
       return;
     }

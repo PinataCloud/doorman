@@ -115,20 +115,24 @@ The full command reference is in [cli/README.md](cli/README.md).
 
 ### Docker Sandboxes (`sbx`)
 
-The CLI also guards Claude Code inside [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/).
-The kit in [`integrations/sbx-kit/`](integrations/sbx-kit/) installs it, adds
-the guard before Claude starts and lets that sandbox reach Hugging Face for
-the model. `sbx` only accepts kits from sources you allow, so allow this one
-once (keep any sources you already allow in the list), then start Claude Code
-with it:
+The CLI also guards coding agents inside [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/):
+Claude Code, Codex, Copilot CLI, Cursor, Factory Droid, Gemini CLI and
+OpenCode (`sbx` agents `claude`, `codex`, `copilot`, `cursor`, `droid`,
+`gemini`, `opencode`). The kit in [`integrations/sbx-kit/`](integrations/sbx-kit/)
+installs it, adds the guard before the agent starts and lets that sandbox
+reach Hugging Face for the model. `sbx` only accepts kits from sources you
+allow, so allow this one once (keep any sources you already allow in the
+list), then start your agent with it (Claude Code here; put another agent
+name in place of `claude`):
 
 ```sh
 sbx settings set kit.allowedSources '["docker.io/","git+https://github.com/PinataCloud/doorman.git"]'
 sbx run --name doorman claude . --kit "git+https://github.com/PinataCloud/doorman.git#dir=integrations/sbx-kit"
 ```
 
-- Held calls are asked in Claude Code's own prompt. To answer them in Doorman
-  instead, run `sbx exec -it doorman doorman watch` in a second terminal.
+- To answer held calls in Doorman, run `sbx exec -it doorman doorman watch`
+  in a second terminal. With nobody watching, Claude Code, Copilot CLI,
+  Cursor and Factory Droid ask in their own prompt; the others deny the call.
 - Add it to a sandbox you already have: `sbx kit add <name> <kit>`.
 - Without the kit (kits are experimental in `sbx`):
 

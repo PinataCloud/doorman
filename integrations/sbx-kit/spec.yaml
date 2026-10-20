@@ -2,11 +2,11 @@ schemaVersion: "2"
 kind: mixin
 name: doorman
 displayName: Doorman
-description: Doorman watches what Claude Code reads and runs, flags exposed secrets, and guards risky tool calls.
+description: Doorman watches what your coding agent reads and runs, flags exposed secrets, and guards risky tool calls.
 sourceURL: https://github.com/PinataCloud/doorman
 licenses: [Apache-2.0]
-requires:
-  agent: claude
+# No `requires`: the kit works with any agent sbx runs. `requires.agent` takes
+# one agent name only, and `doorman guard install` finds the agent itself.
 
 permissions:
   network:
@@ -24,6 +24,6 @@ setup:
     - description: Install the Doorman CLI
       user: "1000"
       command: npm install -g --no-audit --no-fund @pinata/doorman
-    - description: Add the Doorman guard to Claude Code's hooks
+    - description: Add the Doorman guard to the agent's hooks
       user: "1000"
       command: doorman guard install

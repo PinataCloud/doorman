@@ -24,6 +24,15 @@ export function dockerSandbox(env: NodeJS.ProcessEnv): DockerSandbox | undefined
   return { name };
 }
 
+/** How a message names another Doorman process, with a leading space: its
+ * pid on this machine, the sandbox inside one (a container's pid means
+ * nothing to a person on the host). Empty when there is nothing to name. */
+export function processLabel(env: NodeJS.ProcessEnv, pid: number | undefined): string {
+  const sandbox = dockerSandbox(env);
+  if (sandbox) return ` in sandbox ${sandbox.name}`;
+  return pid !== undefined ? ` (pid ${pid})` : "";
+}
+
 /** Whether outbound HTTP goes through the sandbox's policy proxy. */
 export function sandboxProxied(env: NodeJS.ProcessEnv): boolean {
   const proxy = env.HTTPS_PROXY ?? env.https_proxy ?? "";

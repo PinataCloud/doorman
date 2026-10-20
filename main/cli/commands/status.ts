@@ -6,6 +6,7 @@ import { injectionModelManifest, modelStatus } from "../../lib/model-assets.js";
 import { hiddenConfidenceBands } from "../../state.js";
 import { modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
 import type { CliCommand } from "../command.js";
+import { processLabel } from "../docker-sandbox.js";
 import { runningModel } from "./model.js";
 import { cachedUpdateStatus } from "../update-check.js";
 
@@ -55,7 +56,7 @@ export const statusCommand: CliCommand = {
     const sev = summary.by_severity_exposures;
     const text = [
       `${s.bold("Doorman")}  ${s.dim(ctx.dataDir)}`,
-      `  app        ${running ? s.green(`${running.version?.startsWith("cli-") ? "doorman watch running" : "running"}${running.pid !== undefined ? ` (pid ${running.pid})` : ""}`) : s.dim("not running")}`,
+      `  app        ${running ? s.green(`${running.version?.startsWith("cli-") ? "doorman watch running" : "running"}${processLabel(ctx.io.env, running.pid)}`) : s.dim("not running")}`,
       `  cli        ${ctx.io.version}${update.update_available ? s.yellow(`  (${update.latest} available: doorman update)`) : ""}`,
       `  guard      ${guarded.length > 0 ? s.green(guarded.join(", ")) : s.yellow("not installed")}${unguarded.length > 0 ? s.dim(`  · not guarded: ${unguarded.join(", ")}`) : ""}`,
       `  level      ${level}`,
