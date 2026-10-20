@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -153,5 +153,21 @@ describe("doorman watch", () => {
     expect(outside.seen.err).toContain(`Answering held calls as Doorman (pid ${process.pid}). Ctrl-C to stop.`);
     outside.stdin.write("\u0003");
     expect(await outside.done).toBe(0);
+  }, 20_000);
+
+  it("names who took over by the sandbox inside one, by pid outside", async () => {
+    const takeOver = () =>
+      writeFileSync(heartbeatPath(guardDir(dataDir)), `${JSON.stringify({ at: new Date().toISOString(), pid: process.ppid, version: "0.2.0" })}\n`);
+    const w = await watching({ tty: false, env: { SANDBOX_NAME: "doorman", SANDBOX_ID: "sbx-123" } });
+    takeOver();
+    expect(await w.done).toBe(0);
+    expect(w.seen.err).toContain("Doorman in sandbox doorman took over answering held calls. Stopping.");
+    expect(w.seen.err).not.toContain(`pid ${process.ppid}`);
+
+    rmSync(heartbeatPath(guardDir(dataDir)));
+    const outside = await watching({ tty: false });
+    takeOver();
+    expect(await outside.done).toBe(0);
+    expect(outside.seen.err).toContain(`Doorman (pid ${process.ppid}) took over answering held calls. Stopping.`);
   }, 20_000);
 });

@@ -335,10 +335,33 @@ describe("the classifier model downloads on its own", () => {
     const check = await dm(["model", "check", "hello"]);
     expect(check.code).toBe(1);
     expect(check.err).toContain("still downloading in the background");
-    // A download the person asks for doesn't race it over the same files.
+    // A download the person asks for doesn't race it over the same files: it
+    // waits for it, showing its progress, and once it ends (here: its lock
+    // goes, with nothing fetched) fetches what is still missing.
+    const asked: string[] = [];
+    let ended = false;
+    ioExtra.fetch = async (url: string) => {
+      asked.push(ended ? url : `while the other ran: ${url}`);
+      return { ok: false, status: 503, body: null };
+    };
+    const stderr = new PassThrough();
+    let err = "";
+    stderr.on("data", (c) => {
+      err += String(c);
+      if (!ended && err.includes("(0%)")) {
+        ended = true;
+        rmSync(lock());
+      }
+    });
+    ioExtra.stderr = stderr;
     const manual = await dm(["model", "download"]);
+    expect(err).toContain("The model is already downloading in the background. Waiting for it to finish (Ctrl-C stops waiting, not the download).");
+    expect(err).toMatch(/Downloading \S+: 0 B of 96\.0 MB \(0%\)/);
+    expect(err).not.toContain(`pid ${child}`);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.filter((u) => u.startsWith("while"))).toEqual([]);
+    expect(err).toContain("HTTP 503");
     expect(manual.code).toBe(1);
-    expect(manual.err).toContain(`Another doorman command is already downloading the model (pid ${child})`);
   });
 
   it("starts nothing with the classifier off, while the app owns the data, or for the model commands", async () => {

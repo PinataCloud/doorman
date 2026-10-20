@@ -14,10 +14,10 @@ import {
   type ModelManifest,
 } from "../../lib/model-assets.js";
 import { injectionModelSourceFromEnv } from "../../lib/policy-env.js";
-import { releaseLock, takeLock, type LockRecord } from "../../lib/data-owner.js";
+import { releaseLock, takeLock } from "../../lib/data-owner.js";
 import { activeDownload, autoDownloadView, downloadRefusal, runAutoDownload, type AutoDownloadView, type DownloadRefusal } from "../auto-download.js";
 import { doormanSource, loadClassifier, modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
-import { dockerSandbox, MODEL_HOSTS, sandboxAllowCommand, sandboxProxied } from "../docker-sandbox.js";
+import { dockerSandbox, MODEL_HOSTS, processLabel, sandboxAllowCommand, sandboxProxied } from "../docker-sandbox.js";
 import type { CliCommand, ParsedArgs } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError, type CommandResult, type Styles } from "../output.js";
@@ -152,9 +152,15 @@ const statusCommand: CliCommand = {
   run: statusRun,
 };
 
+/** Shows a download's progress as it goes. */
+interface ProgressReporter {
+  update(p: DownloadProgress): void;
+  done(): void;
+}
+
 /** One progress line on stderr: rewritten in place on a terminal, a line per
  * quarter otherwise (so logs stay short). */
-function progressReporter(ctx: CliContext, manifest: ModelManifest): { update(p: DownloadProgress): void; done(): void } {
+function progressReporter(ctx: CliContext, manifest: ModelManifest): ProgressReporter {
   const stderr = ctx.io.stderr as NodeJS.WritableStream & { isTTY?: boolean };
   const tty = stderr.isTTY === true;
   let lastAt = 0;
@@ -193,7 +199,8 @@ const downloadCommand: CliCommand = {
     "against its pinned size and sha256 before it is kept. Progress goes to stderr.",
     "",
     "You rarely need this: while the classifier is on, the first command that finds its model missing",
-    "starts this download in the background (DOORMAN_INJECTION_CLASSIFIER=off stops that).",
+    "starts this download in the background (DOORMAN_INJECTION_CLASSIFIER=off stops that). Run while",
+    "that one is going, this waits for it with its progress, then fetches only what it didn't.",
     "--auto  what that background download runs: whatever the plan needs (doorman-1, else the stock",
     "        model it falls back to), quietly, recording the outcome so failed attempts are spaced out",
   ],
@@ -203,34 +210,84 @@ const downloadCommand: CliCommand = {
       return { data: r, text: r.ok ? [] : [`Couldn't download: ${r.error}`], exitCode: r.ok ? 0 : 1 };
     }
     // Never two downloads into the same folder: the app (which fetches its
-    // own while it runs), the background one, or another command's.
+    // own while it runs), the background one, or another command's. Another
+    // command's download (usually the background one) is waited out, and
+    // then only what it didn't finish is fetched.
     refuseWhileOwned(ctx, "download it");
-    if (!takeLock(ctx.dataDir, "model-download", { pid: process.pid, by: "cli", command: "model download" }, ctx.io.now())) {
-      throw new CliError(alreadyDownloading(activeDownload(ctx)));
+    let waited = false;
+    while (!takeLock(ctx.dataDir, "model-download", { pid: process.pid, by: "cli", command: "model download" }, ctx.io.now())) {
+      if (activeDownload(ctx)?.by === "app") throw new CliError("The app is already downloading the model; `doorman model` shows its progress.");
+      if (!(await waitForDownload(ctx))) {
+        return {
+          data: { stopped_waiting: true },
+          text: ["Stopped waiting. The download goes on in the background; `doorman model` shows its progress."],
+          exitCode: 130,
+        };
+      }
+      waited = true;
+      refuseWhileOwned(ctx, "download it");
     }
     try {
-      return await downloadNow(ctx, args);
+      return await downloadNow(ctx, args, waited);
     } finally {
       releaseLock(ctx.dataDir, "model-download", process.pid);
     }
   },
 };
 
+/** How often a download that waits for another looks at its progress. */
+const WAIT_POLL_MS = 500;
+
+/**
+ * Wait for another command's model download to end, showing its progress
+ * (read off its part files, as `doorman model` does). Ctrl-C stops the
+ * waiting, not that download: false then.
+ */
+async function waitForDownload(ctx: CliContext): Promise<boolean> {
+  let view = autoDownloadView(ctx);
+  if (view.status !== "running") return true;
+  ctx.io.stderr.write("The model is already downloading in the background. Waiting for it to finish (Ctrl-C stops waiting, not the download).\n");
+  let stopped = false;
+  let wake: (() => void) | undefined;
+  const onInterrupt = () => {
+    stopped = true;
+    wake?.();
+  };
+  process.on("SIGINT", onInterrupt);
+  let shown: { model: InjectionModelId; progress: ProgressReporter } | undefined;
+  try {
+    while (view.status === "running" && !stopped) {
+      if (shown?.model !== view.model) {
+        shown?.progress.done();
+        shown = { model: view.model, progress: progressReporter(ctx, injectionModelManifest(view.model)) };
+      }
+      shown.progress.update({ file: "", bytes_done: view.bytes_done, bytes_total: view.bytes_total });
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, WAIT_POLL_MS);
+        wake = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      view = autoDownloadView(ctx);
+    }
+  } finally {
+    process.off("SIGINT", onInterrupt);
+    shown?.progress.done();
+  }
+  return !stopped;
+}
+
 /** While the app (or `doorman watch`) runs it owns the models folder too. */
 function refuseWhileOwned(ctx: CliContext, action: string): void {
   const other = ctx.running();
   if (!other) return;
-  const who = other.pid !== undefined ? ` (pid ${other.pid})` : "";
-  throw new CliError(`Doorman is running${who}, and it keeps the classifier's model itself; ${action} in the app, or quit it and run this again.`);
+  throw new CliError(`Doorman is running${processLabel(ctx.io.env, other.pid)}, and it keeps the classifier's model itself; ${action} in the app, or quit it and run this again.`);
 }
 
-function alreadyDownloading(lock: LockRecord | undefined): string {
-  const who = lock?.by === "app" ? "The app is" : "Another doorman command is";
-  return `${who} already downloading the model${lock ? ` (pid ${lock.pid})` : ""}; \`doorman model\` shows its progress.`;
-}
-
-/** The download the person asked for, with progress on stderr. */
-async function downloadNow(ctx: CliContext, args: ParsedArgs): Promise<CommandResult> {
+/** The download the person asked for, with progress on stderr. `waited`: it
+ * waited out another download first, which may have fetched the model. */
+async function downloadNow(ctx: CliContext, args: ParsedArgs, waited: boolean): Promise<CommandResult> {
   const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).selected;
   const manifest = injectionModelManifest(model);
   // doorman-1 comes from the environment's source when one is named;
@@ -260,7 +317,13 @@ async function downloadNow(ctx: CliContext, args: ParsedArgs): Promise<CommandRe
   if (!view.installed) throw new CliError(`${model} downloaded but didn't verify; run it again.`);
   return {
     data: view,
-    text: [before ? `${model} was already installed and verified.` : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`],
+    text: [
+      before
+        ? waited
+          ? `The background download finished: ${model} is installed and verified.`
+          : `${model} was already installed and verified.`
+        : `Downloaded and verified ${model} (${megabytes(view.bytes_total)}) in ${view.dir}.`,
+    ],
   };
 }
 
@@ -272,7 +335,10 @@ const removeCommand: CliCommand = {
   async run(ctx, args) {
     refuseWhileOwned(ctx, "remove it");
     const download = activeDownload(ctx);
-    if (download) throw new CliError(alreadyDownloading(download).replace("; `doorman model` shows its progress.", ": remove it once that finishes."));
+    if (download) {
+      const who = download.by === "app" ? "The app is downloading the model" : "The model is downloading in the background";
+      throw new CliError(`${who}; remove it once that finishes (\`doorman model\` shows its progress).`);
+    }
     const model = parseModel(args.values.model) ?? modelPlan(ctx.dataDir, ctx.policy(), ctx.io.env).effective;
     const manifest = injectionModelManifest(model);
     const root = modelsRoot(ctx.dataDir);

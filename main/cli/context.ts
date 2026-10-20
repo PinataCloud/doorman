@@ -16,6 +16,7 @@ import type { FetchLike } from "../lib/model-assets.js";
 import { readPrefsFile, writePrefsFile } from "../lib/prefs-file.js";
 import { Store, type Prefs } from "../state.js";
 import { loadClassifier, modelPlan } from "./classifier.js";
+import { processLabel } from "./docker-sandbox.js";
 import { CliError, styles, type Styles } from "./output.js";
 import type { NpmRunner } from "./commands/update.js";
 
@@ -165,9 +166,9 @@ export class CliContext {
     if (claim.ok) return;
     if (claim.cli) {
       const what = claim.cli.command ? `\`doorman ${claim.cli.command}\`` : "Another doorman command";
-      throw new CliError(`${what} (pid ${claim.cli.pid}) is changing this data right now. Run this again when it finishes.`);
+      throw new CliError(`${what}${processLabel(this.io.env, claim.cli.pid)} is changing this data right now. Run this again when it finishes.`);
     }
-    const who = claim.app?.pid !== undefined ? ` (pid ${claim.app.pid})` : "";
+    const who = processLabel(this.io.env, claim.app?.pid);
     throw new CliError(
       `Doorman is running${who}, so it owns this data. ${action} in the app, or quit it (or stop \`doorman watch\`) and run this again.`,
     );
