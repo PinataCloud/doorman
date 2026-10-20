@@ -149,7 +149,7 @@
         },
         "text": {
           "type": "string",
-          "description": "The turn's text, redacted: a removed value reads `[redacted:<family>]`."
+          "description": "The turn's text, redacted: a removed value reads `[redacted:<family>]`. `[redacted:cut]` is the final word of a turn cut at the 4,000-character cap, masked in case the cut went through a secret; it is not a detection."
         },
         "text_redacted": {
           "type": "boolean",
@@ -185,7 +185,7 @@
               }
             }
           },
-          "description": "The values redaction removed, as fingerprints."
+          "description": "The values redaction removed, as fingerprints. A `[redacted:cut]` word is not listed."
         },
         "tools": {
           "type": "array",

@@ -70,9 +70,11 @@ const TURN: JsonSchema = {
     reported_cost: usd("A provider-reported charge."),
     usage_incomplete: { type: "boolean" },
     settlement: { type: "string", enum: ["subscription", "credits", "billed", "unknown"] },
-    text: str("The turn's text, redacted: a removed value reads `[redacted:<family>]`."),
+    text: str(
+      "The turn's text, redacted: a removed value reads `[redacted:<family>]`. `[redacted:cut]` is the final word of a turn cut at the 4,000-character cap, masked in case the cut went through a secret; it is not a detection.",
+    ),
     text_redacted: { type: "boolean", description: "Redaction changed this turn's text." },
-    secrets: { type: "array", items: FINGERPRINT, description: "The values redaction removed, as fingerprints." },
+    secrets: { type: "array", items: FINGERPRINT, description: "The values redaction removed, as fingerprints. A `[redacted:cut]` word is not listed." },
     tools: { type: "array", items: { type: "string" } },
     cwd: str("Working directory."),
     git_branch: str("Git branch."),

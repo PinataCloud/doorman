@@ -18,6 +18,13 @@ import { TURN_TEXT_MAX_CHARS } from "./turns.js";
 
 const PLACEHOLDER = "[redacted]";
 
+/** The family of the cap's own mask over a cut final token (maskTurnText): a
+ * precaution, not a detection — most cut tokens are ordinary words. Consumers
+ * that list or count SECRETS (ledger-export fingerprints, the detectors on a
+ * pasted placeholder) skip it. */
+export const CUT_LABEL = "cut";
+const CUT_PLACEHOLDER = `[redacted:${CUT_LABEL}]`;
+
 /** Everything any rule here would call secret, masked. */
 export function maskText(text: string): string {
   if (text === "") return text;
@@ -62,7 +69,9 @@ function maskOptional(text: string | undefined): string | undefined {
  * without its END line, the AWS secret cut to 25 characters. So a text that
  * reached the cap is treated as cut: an unterminated PEM block is masked to
  * the end, and so is the final token, which is by construction the one the cut
- * went through.
+ * went through. That token is masked as `[redacted:cut]`, not `[redacted]`:
+ * nothing matched it, and a ledger export listed eleven ordinary words cut at
+ * the cap (1–8 characters each) among one session's secrets.
  */
 export function maskTurnText(text: string): string {
   let masked = maskText(text);
@@ -70,7 +79,7 @@ export function maskTurnText(text: string): string {
   const begin = masked.lastIndexOf("-----BEGIN");
   if (begin >= 0 && begin > masked.lastIndexOf("-----END")) return `${masked.slice(0, begin)}${PLACEHOLDER}`;
   const tail = /\S+$/.exec(masked);
-  if (tail && !/^\[redacted(?::[a-z0-9_]+)?\]$/.test(tail[0])) masked = `${masked.slice(0, tail.index)}${PLACEHOLDER}`;
+  if (tail && !/^\[redacted(?::[a-z0-9_]+)?\]$/.test(tail[0])) masked = `${masked.slice(0, tail.index)}${CUT_PLACEHOLDER}`;
   return masked;
 }
 

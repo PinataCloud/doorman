@@ -57,7 +57,7 @@ import { ruleShown } from "./guard/rule-scope.js";
 import { accountForFlow, accountForUnit, accountable } from "./lib/account.js";
 import { alignRedactedValues, extractRedactedSecrets } from "./lib/reveal.js";
 import { validateDetection } from "./lib/detection-schema.js";
-import { maskText, maskTurnText } from "./lib/masking.js";
+import { CUT_LABEL, maskText, maskTurnText } from "./lib/masking.js";
 import type { EvidenceVault } from "./lib/evidence-vault.js";
 import type { FlowOptions } from "./lib/flow-rules.js";
 import { applicableIgnoreRules, defaultInjectionClassifierConfig, selectedInjectionModel, type GuardPolicy, type InjectionModelId } from "./guard/policy.js";
@@ -2214,11 +2214,12 @@ export class CaptureEngine {
 
   /** Fingerprints of the values redaction removes from `raw` — the vault's
    * keyed hashes, so a ledger export and a detection name one value alike.
+   * The cap's `[redacted:cut]` word is not one: nothing matched it.
    * Empty without a vault. */
   fingerprintsOf(raw: string, masked: string = maskTurnText(raw)): SecretFingerprint[] {
     const vault = this.deps.vault;
     if (!vault) return [];
-    const secrets = alignRedactedValues(raw, masked);
+    const secrets = alignRedactedValues(raw, masked).filter((s) => s.label !== CUT_LABEL);
     return secrets.length === 0 ? [] : vault.fingerprints(secrets);
   }
 

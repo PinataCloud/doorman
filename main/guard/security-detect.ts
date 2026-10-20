@@ -248,9 +248,11 @@ const MASK = "[redacted]";
  * `[redacted:email]` fires on every address in every prompt — it is a privacy
  * measure, not a leak. Treating it as one would bury nine real findings under a
  * hundred mentions of somebody's work address on day one, which is how a
- * security screen gets ignored.
+ * security screen gets ignored. `[redacted:cut]` is the turn cap's mask over a
+ * cut final token (lib/masking.ts CUT_LABEL); it reaches a transcript only when
+ * someone pastes a Doorman export back into an agent.
  */
-const NON_CREDENTIAL_LABELS: ReadonlySet<string> = new Set(["email"]);
+const NON_CREDENTIAL_LABELS: Record<string, true> = { email: true, cut: true };
 
 /** A named placeholder, capturing the family. Mirrors redact.ts's emitted shape. */
 const NAMED_PLACEHOLDER_RE = /\[redacted:([a-z0-9_]+)\]/g;
@@ -2147,7 +2149,7 @@ function detectNamedPlaceholders(text: string, kind: DetectInput["kind"], raise:
   let match: RegExpExecArray | null;
   while ((match = NAMED_PLACEHOLDER_RE.exec(text)) !== null) {
     const label = match[1] ?? "";
-    if (NON_CREDENTIAL_LABELS.has(label)) continue;
+    if (Object.hasOwn(NON_CREDENTIAL_LABELS, label)) continue;
     const end = match.index + match[0].length;
     // A URL credential whose authority is local (`postgres://…@localhost:5433`)
     // secures a service on the developer's own machine — setup, not exposure.

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CaptureEngine } from "../main/capture.js";
 import { findingContext } from "../main/ai-assistant.js";
 import { defaultPolicy, type GuardPolicy } from "../main/guard/policy.js";
+import { detectSecurityFindings } from "../main/guard/security-detect.js";
 import {
   DETECTION_SCHEMA,
   DETECTION_SCHEMA_ID,
@@ -470,6 +471,21 @@ describe("capture engine × vault", () => {
     }
   });
 
+  it("a turn cut by the cap masks its last word as [redacted:cut], which is no secret: not fingerprinted, never a finding", () => {
+    const storeDir = join(root, "store");
+    mkdirSync(storeDir, { recursive: true });
+    const engine = engineFor(new EvidenceVault(storeDir, fakeKeychain()));
+    // What the user report's export looked like: prose cut mid-word by the cap.
+    const prose = "Granaries: D in 4-02, B in 4-03, A and C in neighbouring tiles. ".repeat(80).slice(0, TURN_TEXT_MAX_CHARS);
+    expect(maskTurnText(prose).endsWith(" [redacted:cut]")).toBe(true);
+    expect(engine.fingerprintsOf(prose)).toEqual([]);
+    // A real secret in the same capped turn is still fingerprinted, once.
+    const withToken = `use GITHUB_TOKEN=${TOKEN} to push. ${prose}`.slice(0, TURN_TEXT_MAX_CHARS);
+    expect(engine.fingerprintsOf(withToken)).toHaveLength(1);
+    // The placeholder pasted back into an agent (an export shared in a prompt) raises nothing.
+    expect(detectSecurityFindings({ kind: "prompt", text: `the export ends "…in [redacted:cut]"` })).toEqual([]);
+  });
+
   it("a re-scan of an OLD sighting keeps the rule mode it fired under", async () => {
     const storeDir = join(root, "store");
     mkdirSync(storeDir, { recursive: true });
@@ -666,7 +682,7 @@ describe("masking — nothing a record or an export carries holds a value (revie
     // cut token is masked because it is the cut token.
     const cut = ("y ".repeat(1990) + "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY").slice(0, TURN_TEXT_MAX_CHARS);
     expect(maskTurnText(cut)).not.toContain("wJalrXUtnFEMIK7MDENG");
-    expect(maskTurnText(cut).endsWith("[redacted]")).toBe(true);
+    expect(maskTurnText(cut).endsWith("[redacted:cut]")).toBe(true);
     // Under the cap nothing extra is masked.
     expect(maskTurnText("hello world")).toBe("hello world");
   });
