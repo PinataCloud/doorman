@@ -30,21 +30,88 @@ files from disk and keeps its store under its own data directory. It has no
 account, no server and no telemetry. The one thing it downloads is described
 under [Network](#network).
 
-**Install.** Download the latest build from
-[Releases](https://github.com/PinataCloud/doorman/releases): the `.dmg` for
-macOS (Apple silicon or Intel), the `.AppImage` for Linux, or the `.exe` for
-Windows. Installed apps update themselves from the same page.
-
-**Command line.** The same Doorman runs in a terminal, with no window:
-`npm install -g @pinata/doorman` (Node 22+), then `doorman status`. It
-covers the app's features (scan, findings, the guard and a terminal approver,
-policy and rules, MCP and the gateway, the doctor, the classifier) and shares
-the app's data directory. See [cli/README.md](cli/README.md).
+**Two ways to run it**, sharing one data directory: the
+[desktop app](#desktop-app), or the [command line](#command-line) for
+terminals, servers and scripts. See [Get started](#get-started).
 
 **The model.** Doorman's on-device injection check runs
 [Llama-Doorman-22M](https://huggingface.co/PinataCloud/Llama-Doorman-22M), a
 fine-tune of Llama Prompt Guard 2 (22M) for agent tool output, published on
 Hugging Face with its benchmark and file fingerprints. Built with Llama.
+
+## Get started
+
+### Desktop app
+
+Download the build for your machine from the
+[latest release](https://github.com/PinataCloud/doorman/releases/latest):
+
+| Machine | File | To install |
+| --- | --- | --- |
+| Mac with Apple silicon | `Doorman-<version>-arm64.dmg` | Open it and drag Doorman into Applications. Signed and notarized, so it opens like any app. |
+| Mac with Intel | `Doorman-<version>.dmg` | The same. |
+| Windows 10 or 11 (x64 or Arm) | `Doorman-Setup-<version>.exe` | Run the installer. It is unsigned, so SmartScreen may say "Windows protected your PC": choose **More info**, then **Run anyway**. It installs for your user only, with no admin prompt. |
+| Linux (x64) | `Doorman-<version>.AppImage` | `chmod +x Doorman-*.AppImage`, then run it. No libfuse2 needed. |
+| Linux (arm64) | `Doorman-<version>-arm64.AppImage` | The same. |
+
+On first launch, a short setup:
+
+1. **Finds your AI tools.** Doorman looks for the agents on this computer
+   (Claude Code, Codex, Cursor and the others under
+   [What it does](#what-it-does)) and starts reading their transcripts,
+   history included, so usage and findings fill in from what they have
+   already done.
+2. **Asks about the guard.** *Pause risky actions and ask me first* is off
+   until you turn it on, here or later in Settings → Real time protection.
+   With it on, a risky tool call waits for your answer in a floating prompt
+   before it runs. On Windows the guard needs [Node.js](https://nodejs.org)
+   on the PATH for now; on macOS and Linux it runs on the app's own runtime.
+3. **Downloads the on-device model** (about 96 MB) in the background, the
+   one download described under [Network](#network).
+
+The app checks for updates when it starts and every hour after, and installs
+them itself.
+
+**To remove it**, turn Real time protection off first (Settings), which takes
+the guard's hook out of every agent, then delete the app. Its data stays in
+the [data directory](#layout) until you delete that too.
+
+### Command line
+
+The same Doorman, in a terminal and with no window, for servers, scripts and
+anyone who prefers it. It needs [Node.js](https://nodejs.org) 22 or later.
+
+```sh
+npm install -g @pinata/doorman
+doorman status      # where the data lives, what is guarded, what needs review
+doorman scan        # read new agent transcripts and report what they exposed
+doorman findings    # open exposures, grouped like the Security Radar
+```
+
+The guard works from the terminal too:
+
+```sh
+doorman guard install     # add the hook to every agent on this machine
+doorman watch             # answer held tool calls here while the app is closed
+doorman guard uninstall   # take the hook out again
+```
+
+- `doorman --help` lists every command, and each one takes `--help` and
+  `--json`.
+- Like the app, the first command that finds the model missing downloads it
+  in the background (about 96 MB) and carries on. Set
+  `DOORMAN_INJECTION_CLASSIFIER=off` to skip the model.
+- It looks for a new version once a day and says so after a command's output;
+  `doorman update` installs it.
+- Without a global install: `npx @pinata/doorman status`.
+- **With the desktop app** on the same machine, both use the same store,
+  policy and guard. While the app is running, the CLI reads a copy and asks
+  you to make changes in the app; they can run at the same time, one after
+  the other, or at different versions.
+- To remove it: `doorman guard uninstall` (if the app isn't installed), then
+  `npm uninstall -g @pinata/doorman`.
+
+The full command reference is in [cli/README.md](cli/README.md).
 
 ## What it does
 
@@ -351,12 +418,20 @@ Every brand asset derives from one master, `assets/doorman-logo.png`.
 outputs are committed) writes:
 
 - `assets/doorman-mark-512.png`
-- `assets/doorman-app-icon.png`
+- `assets/doorman-app-icon.png`, the mark on a white tile (macOS before 26,
+  and Linux)
+- `assets/doorman-app-icon-win.png`, the mark ringed in white with no tile
+  (Windows, which draws app icons as shapes)
+- `assets/mac/Doorman.icon`, the Icon Composer document for macOS 26 and later,
+  with a Dark variant
 - the menu-bar silhouette mask, `main/lib/tray-mask.ts`
 - the VS Code status-bar glyph font, `vscode-extension/doorman-icons.woff`
 
-`scripts/make-icons.mjs` then slices the `.icns` and the Linux/Windows PNG
-from the app icon on every build.
+`scripts/make-icons.mjs` then slices the `.icns`, the Linux PNG and the
+Windows PNG on every build. `npm run icons:mac` (`scripts/make-mac-icon.mjs`)
+compiles `Doorman.icon` into `assets/mac/Assets.car`. It needs Xcode 26 or
+later, so it is run by hand after the mark changes and its output is
+committed: the release runner's Xcode is older.
 
 **Fonts.** Hanken Grotesk ships under the SIL OFL (`assets/fonts/HankenGrotesk-OFL.txt`)
 and is the only bundled typeface. Monospace text uses the platform's own
