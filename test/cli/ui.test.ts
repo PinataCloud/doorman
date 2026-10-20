@@ -290,6 +290,7 @@ describe("the dispatcher on a terminal", () => {
   let root: string;
   let home: string;
   let appData: string;
+  const savedHome = process.env.HOME;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "doorman-cli-ui-"));
@@ -297,9 +298,16 @@ describe("the dispatcher on a terminal", () => {
     appData = join(root, "appdata");
     mkdirSync(join(home, ".claude"), { recursive: true });
     mkdirSync(appData, { recursive: true });
+    // The guard's agent detection reads the real HOME (os.homedir()), not the
+    // CLI's injected env: without this the test saw the machine's own ~/.claude.
+    process.env.HOME = home;
   });
 
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+    rmSync(root, { recursive: true, force: true });
+  });
 
   async function run(argv: string[], opts: { tty: boolean; env?: Record<string, string> }) {
     const stdout = Object.assign(new PassThrough(), opts.tty ? { isTTY: true, columns: 80 } : {});
