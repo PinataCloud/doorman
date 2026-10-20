@@ -64,6 +64,32 @@ The app keeps the raw evidence behind each finding encrypted in the macOS
 Keychain. The CLI doesn't open it, so `doorman findings show --reveal` reads
 the masked evidence back from the transcripts instead.
 
+## Docker Sandboxes
+
+To run Claude Code in a [Docker Sandbox](https://docs.docker.com/ai/sandboxes/)
+with Doorman guarding it, add the
+[Doorman kit](https://github.com/PinataCloud/doorman/tree/main/integrations/sbx-kit)
+(kits are experimental in `sbx`). From a checkout of the repository:
+
+```sh
+sbx run claude ~/my-project --kit ./integrations/sbx-kit
+```
+
+The kit installs the CLI, runs `doorman guard install` and lets the sandbox
+download the classifier from Hugging Face. By hand, for a sandbox named
+`my-project`:
+
+```sh
+sbx create --name my-project claude ~/my-project
+sbx exec my-project npm install -g @pinata/doorman
+sbx exec my-project doorman guard install
+sbx policy allow network --sandbox my-project "huggingface.co,**.hf.co"
+```
+
+The desktop app can't run inside a sandbox. Answer held calls from the host
+with `sbx exec -it my-project doorman watch`; with nobody watching, Claude
+Code asks in its own prompt.
+
 ## Updates
 
 Like the app, the CLI looks for a newer version on its own: at most once a

@@ -1885,6 +1885,14 @@ function maskedExcerpt(text: string, start: number, end: number, mask = MASK): s
  * detector wants to be sure, a sanitizer wants to be safe.
  */
 function looksLikeSecretToken(token: string, minLength: number, minEntropy: number): boolean {
+  // `NAME=value`, which the token charset swallows whole (`=` and `_` are in
+  // it for base64): only the value can be a secret, so judge the value alone.
+  // Without this, `WAYLAND_DISPLAY=wayland-0` and `SANDBOX_ID=<uuid>` looked
+  // like credentials in every `env` an agent printed. Base64 only ever has `=`
+  // as trailing padding, so a value that is empty or starts with `=`
+  // (`JBSWY3DPEHPK3PXP====`) means the token is padded data, judged whole.
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=([^=][\s\S]*)$/.exec(token);
+  if (assignment) return looksLikeSecretToken(assignment[1]!, minLength, minEntropy);
   if (token.length < minLength) return false;
   if (!/[a-z]/.test(token) || !/[A-Z]/.test(token) || !/[0-9]/.test(token)) return false;
   if (/^[a-f0-9]+$/i.test(token)) return false;
@@ -2631,13 +2639,107 @@ function detectInfraMutation(command: string, raise: Raise): void {
 /** A candidate token for unrecognized_secret — shared with maskDetectedValues. */
 const UNRECOGNIZED_TOKEN_SOURCE = "[A-Za-z0-9+_=-]{24,120}";
 
+// ── Public PEM blocks carried as base64 ──
+//
+// A base64-encoded PEM certificate is high-entropy, mixed-case and long, so
+// the charset rule above calls every chunk of it a credential. It is not one:
+// a certificate, CRL or public key is public by definition. Docker Sandboxes
+// put the proxy's CA certificate in every sandbox's environment as
+// `PROXY_CA_CERT_B64=LS0t...`, so before this exemption every `env` an agent ran
+// in a sandbox raised a finding. The base64 of `-----BEGIN ` is always
+// `LS0tLS1CRUdJTi`, which makes the check cheap: only a run starting with it is
+// decoded, and only its first 64 characters until the label says public.
+// PRIVATE KEY blocks never match the label, so they raise exactly as before.
+
+/** The base64 of `-----BEGIN ` plus the run of base64 (and line breaks) after it. */
+const PEM_BASE64_RUN_SOURCE = "LS0tLS1CRUdJTi[A-Za-z0-9+/=\\r\\n]*";
+const PUBLIC_PEM_HEADER_RE = /^-----BEGIN (CERTIFICATE|TRUSTED CERTIFICATE|X509 CRL|PUBLIC KEY|RSA PUBLIC KEY)-----/;
+
+function decodeBase64Group(group: string): string | undefined {
+  try {
+    return atob(group);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * How many characters of `run` (which starts at a public PEM header) belong to
+ * the encoded block: up to its `-----END <label>-----` line. A run with no END
+ * in it was cut short (a truncated dump); it counts to its first line break,
+ * so a wrapped run never swallows the next line unchecked.
+ */
+function publicPemBase64Length(run: string, label: string): number {
+  const end = `-----END ${label}-----`;
+  let decoded = "";
+  let group = "";
+  let groupsEndAt = 0;
+  for (let i = 0; i < run.length; i++) {
+    const ch = run[i]!;
+    if (ch === "\r" || ch === "\n") continue;
+    group += ch;
+    if (group.length < 4) continue;
+    const bytes = decodeBase64Group(group);
+    if (bytes === undefined) break;
+    decoded += bytes;
+    group = "";
+    groupsEndAt = i + 1;
+    const at = decoded.indexOf(end, Math.max(0, decoded.length - bytes.length - end.length));
+    if (at !== -1) {
+      // Include padding that closes the final group.
+      let stop = groupsEndAt;
+      while (run[stop] === "=") stop++;
+      return stop;
+    }
+  }
+  const lineBreak = run.search(/[\r\n]/);
+  return lineBreak === -1 ? run.length : lineBreak;
+}
+
+/** [start, end) spans of `text` holding a base64-encoded public PEM block. */
+function publicPemBase64Spans(text: string): Array<[number, number]> {
+  if (!text.includes("LS0tLS1CRUdJTi")) return [];
+  const spans: Array<[number, number]> = [];
+  for (const m of text.matchAll(new RegExp(PEM_BASE64_RUN_SOURCE, "g"))) {
+    const run = m[0];
+    const head = decodeBase64Group(run.replace(/[\r\n]/g, "").slice(0, 64));
+    const label = head === undefined ? undefined : PUBLIC_PEM_HEADER_RE.exec(head)?.[1];
+    if (label === undefined) continue;
+    spans.push([m.index, m.index + publicPemBase64Length(run, label)]);
+  }
+  return spans;
+}
+
+/**
+ * The parts of `token` (at `start`) outside every span, or undefined when the
+ * token touches none of them.
+ */
+function outsideSpans(token: string, start: number, spans: Array<[number, number]>): string[] | undefined {
+  const end = start + token.length;
+  const hits = spans.filter(([s, e]) => s < end && e > start);
+  if (hits.length === 0) return undefined;
+  const pieces: string[] = [];
+  let cursor = start;
+  for (const [s, e] of hits) {
+    if (s > cursor) pieces.push(token.slice(cursor - start, s - start));
+    cursor = Math.max(cursor, e);
+  }
+  if (cursor < end) pieces.push(token.slice(cursor - start));
+  return pieces;
+}
+
 function detectUnrecognizedSecret(text: string, raise: Raise): void {
   const TOKEN_RE = new RegExp(UNRECOGNIZED_TOKEN_SOURCE, "g");
   TOKEN_RE.lastIndex = 0;
+  const publicPem = publicPemBase64Spans(text);
   let match: RegExpExecArray | null;
   while ((match = TOKEN_RE.exec(text)) !== null) {
     const token = match[0];
     if (!looksLikeSecretToken(token, 24, 4.0)) continue;
+    // A chunk of a base64 public certificate is public; judge only what lies
+    // outside it (the `NAME=` before it, say).
+    const rest = outsideSpans(token, match.index, publicPem);
+    if (rest !== undefined && !rest.some((piece) => looksLikeSecretToken(piece, 24, 4.0))) continue;
     // A checksum-valid wallet address (or a 0x-prefixed EVM one) is a public
     // identifier, not a secret: the wallet detector owns it, and before this
     // line every address in every web3 repo was also a "possible credential".

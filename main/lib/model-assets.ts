@@ -318,12 +318,28 @@ export async function reverifyModel(modelsRoot: string, manifest: ModelManifest)
   return bad;
 }
 
-/** The slice of fetch the downloader needs — injectable for tests. */
+/** The slice of fetch the downloader needs — injectable for tests. `url` is
+ * where the response came from after redirects (fetch's `Response.url`). */
 export type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
+  url?: string;
   body: ReadableStream<Uint8Array> | null;
 }>;
+
+/** A file the server would not hand over. `url` is the one that answered,
+ * which after a redirect is not the one asked for (the Hub sends model files
+ * on to its CDN), so a caller can say which host refused. */
+export class ModelDownloadHttpError extends Error {
+  constructor(
+    readonly file: string,
+    readonly status: number,
+    readonly url: string,
+  ) {
+    super(`${file}: HTTP ${status}`);
+    this.name = "ModelDownloadHttpError";
+  }
+}
 
 export interface DownloadProgress {
   file: string;
@@ -417,8 +433,12 @@ export async function downloadModel(
     const target = join(dir, file.name);
     const part = `${target}.part`;
     rmSync(part, { force: true });
-    const res = await fetchImpl(source.kind === "dir" ? join(source.dir, file.name) : source.base + file.name, options.signal ? { signal: options.signal } : {});
-    if (!res.ok || !res.body) throw new Error(`${file.name}: ${source.kind === "dir" ? "not in the source directory" : `HTTP ${res.status}`}`);
+    const asked = source.kind === "dir" ? join(source.dir, file.name) : source.base + file.name;
+    const res = await fetchImpl(asked, options.signal ? { signal: options.signal } : {});
+    if (!res.ok || !res.body) {
+      if (source.kind === "dir") throw new Error(`${file.name}: not in the source directory`);
+      throw new ModelDownloadHttpError(file.name, res.status, res.url || asked);
+    }
     const hash = createHash("sha256");
     const handle = await open(part, "w");
     let written = 0;

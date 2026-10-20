@@ -7,6 +7,7 @@ import { appOwner } from "../../lib/data-owner.js";
 import { HOSTS } from "../../guard/hosts/index.js";
 import { approvalContextNote, approvalPolicyChange, approvalSummary } from "../../lib/approvals.js";
 import { localDetectorLabel } from "../../lib/findings.js";
+import { dockerSandbox } from "../docker-sandbox.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError } from "../output.js";
@@ -36,6 +37,13 @@ export interface WatchSession {
 }
 
 const CLEAR_LINE = "\r\u001b[2K";
+const BELL = "\u0007";
+/** OSC 0: set the window and tab title. Invisible, moves no cursor. */
+const setTitle = (title: string) => `\u001b]0;${title.replace(/[\u0000-\u001f\u007f]/g, "")}\u0007`;
+/** xterm's title stack: keep the person's title, put it back on the way out.
+ * Terminals without the stack ignore both. */
+const PUSH_TITLE = "\u001b[22;0t";
+const POP_TITLE = "\u001b[23;0t";
 
 /** The agent a held call came from, and whether it shows its own prompt
  * when the guard prints `ask` (the approval card's wording, approvals.jsx). */
@@ -75,6 +83,22 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
   const out = ctx.io.stderr;
   const tty = "isTTY" in out && out.isTTY === true;
   const auto = options.auto;
+  const sandbox = dockerSandbox(ctx.io.env);
+  // A held call waits a minute in a terminal nobody may be looking at: ring
+  // and retitle it. Only on a terminal, and not under --auto (nobody answers).
+  const attention = tty && !auto;
+  const bell = attention && ctx.io.env.DOORMAN_NO_BELL !== "1";
+  const where = sandbox ? ` (${sandbox.name})` : "";
+  const idleTitle = `doorman watch${where}`;
+  let shownTitle: string | undefined;
+  const retitle = (waiting: number) => {
+    if (!attention) return;
+    const title = waiting > 0 ? `doorman${where}: ${waiting} call${waiting === 1 ? "" : "s"} waiting` : idleTitle;
+    if (title === shownTitle) return;
+    shownTitle = title;
+    out.write(setTitle(title));
+  };
+  const rung = new Set<string>();
   const decisions: WatchDecision[] = [];
   const answered = new Set<string>();
   let current: ApprovalRequest | undefined;
@@ -186,6 +210,9 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
     scheduled = false;
     if (stopped) return;
     const list = approvals.list();
+    const fresh = list.filter((r) => !answered.has(r.id) && !rung.has(r.id));
+    for (const r of fresh) rung.add(r.id);
+    if (bell && fresh.length > 0) out.write(BELL);
     if (current && !list.some((r) => r.id === current!.id)) {
       if (!answered.has(current.id)) {
         const expired = secondsLeft(current) === 0;
@@ -195,6 +222,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
       }
       current = undefined;
     }
+    retitle(list.filter((r) => !answered.has(r.id)).length);
     if (current) return;
     const next = list.find((r) => !answered.has(r.id));
     if (!next) {
@@ -290,6 +318,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
       stdin.pause();
     }
     clearPrompt();
+    if (shownTitle !== undefined) out.write(`${setTitle("")}${POP_TITLE}`);
     resolveDone({ stopped: reason, takeover, decisions });
   };
 
@@ -306,7 +335,12 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; tick
   }
 
   const policy = ctx.policy();
-  say(`${s.bold("Answering held calls")} as Doorman ${s.dim(`(pid ${process.pid})`)}. ${auto ? "Denying every held call (--auto deny)." : "Ctrl-C to stop."}`);
+  if (attention) {
+    out.write(PUSH_TITLE);
+    retitle(0);
+  }
+  const who = sandbox ? `in sandbox ${sandbox.name}` : `as Doorman ${s.dim(`(pid ${process.pid})`)}`;
+  say(`${s.bold("Answering held calls")} ${who}. ${auto ? "Denying every held call (--auto deny)." : "Ctrl-C to stop."}`);
   if (!guardHostStates(ctx.io.env).some((h) => h.installed)) say(s.yellow("The guard is not installed, so nothing will be held. Run `doorman guard install`."));
   if (!policy.confirm.interactive) say(s.yellow("Holds are off, so nothing will be held. Turn them on with `doorman policy confirm --interactive on`."));
 
@@ -346,6 +380,7 @@ export const watchCommand: CliCommand = {
     "Needs a terminal. --auto deny answers every held call with deny instead (for scripts).",
     "Refuses to start while the app (or another watch) answers; stops when the app starts.",
     "Prompts go to stderr; stdout gets the summary when it stops.",
+    "On a terminal it rings once per held call and shows waiting calls in the window title (DOORMAN_NO_BELL=1 turns the bell off).",
   ],
   options: { auto: { type: "string" } },
   async run(ctx, args) {
@@ -359,12 +394,15 @@ export const watchCommand: CliCommand = {
     const onSignal = () => session.stop("interrupted");
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
+    // A closed terminal window (or `sbx exec -it` session) sends SIGHUP.
+    process.on("SIGHUP", onSignal);
     let summary: WatchSummary;
     try {
       summary = await session.done;
     } finally {
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
+      process.off("SIGHUP", onSignal);
     }
     const counts = { allowed: 0, denied: 0, expired: 0, too_late: 0 };
     for (const d of summary.decisions) counts[d.outcome] += 1;

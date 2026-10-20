@@ -15,8 +15,9 @@ import {
 } from "../../lib/model-assets.js";
 import { injectionModelSourceFromEnv } from "../../lib/policy-env.js";
 import { releaseLock, takeLock, type LockRecord } from "../../lib/data-owner.js";
-import { activeDownload, autoDownloadView, runAutoDownload, type AutoDownloadView } from "../auto-download.js";
+import { activeDownload, autoDownloadView, downloadRefusal, runAutoDownload, type AutoDownloadView, type DownloadRefusal } from "../auto-download.js";
 import { doormanSource, loadClassifier, modelPlan, modelsRoot, runtimeDir } from "../classifier.js";
+import { dockerSandbox, MODEL_HOSTS, sandboxAllowCommand, sandboxProxied } from "../docker-sandbox.js";
 import type { CliCommand, ParsedArgs } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError, type CommandResult, type Styles } from "../output.js";
@@ -81,9 +82,28 @@ export function runningModel(
       : download.status === "running"
         ? `${download.by === "app" ? "the app is downloading" : "downloading"} ${download.model}${download.by === "app" ? "" : " in the background"}, ${megabytes(download.bytes_done)} of ${megabytes(download.bytes_total)}`
         : download.status === "failed"
-          ? `the background download failed (${download.error}); retry now: doorman model download`
+          ? failedWhy(ctx, download)
           : "no model downloaded yet: doorman model download";
   return { active: null, download, text: `none  ${s.yellow(`(${why})`)}` };
+}
+
+/** Why the last background download failed, and what to do about it. */
+function failedWhy(ctx: CliContext, download: Extract<AutoDownloadView, { status: "failed" }>): string {
+  const blocked = sandboxBlock(ctx, download.refused);
+  if (!blocked) return `the background download failed (${download.error}); retry now: doorman model download`;
+  return `the sandbox's network policy blocked ${blocked.host}; on your computer run ${blocked.allow}, then here: doorman model download`;
+}
+
+/**
+ * A download the Docker Sandbox's policy proxy refused (it answers a blocked
+ * request with HTTP 403): the host it blocked, which after a redirect is the
+ * CDN rather than the Hub, and the host-side command that lets the model's
+ * downloads through. Undefined outside a sandbox and for any other failure.
+ */
+function sandboxBlock(ctx: CliContext, refused: DownloadRefusal | undefined): { host: string; allow: string } | undefined {
+  const sandbox = dockerSandbox(ctx.io.env);
+  if (!sandbox || refused?.status !== 403 || !sandboxProxied(ctx.io.env)) return undefined;
+  return { host: refused.host, allow: sandboxAllowCommand(sandbox, MODEL_HOSTS) };
 }
 
 const statusRun: CliCommand["run"] = async (ctx) => {
@@ -219,10 +239,21 @@ async function downloadNow(ctx: CliContext, args: ParsedArgs): Promise<CommandRe
   const before = modelStatus(modelsRoot(ctx.dataDir), manifest).present;
   const progress = progressReporter(ctx, manifest);
   try {
-    await downloadModel(modelsRoot(ctx.dataDir), manifest, { ...(source === undefined ? {} : { source }), onProgress: (p) => progress.update(p) });
+    await downloadModel(modelsRoot(ctx.dataDir), manifest, {
+      ...(source === undefined ? {} : { source }),
+      ...(ctx.io.fetch ? { fetchImpl: ctx.io.fetch } : {}),
+      onProgress: (p) => progress.update(p),
+    });
   } catch (err) {
     progress.done();
-    throw new CliError(`Couldn't download ${model}: ${err instanceof Error ? err.message : String(err)}`);
+    const why = err instanceof Error ? err.message : String(err);
+    const blocked = sandboxBlock(ctx, downloadRefusal(err));
+    if (blocked) {
+      throw new CliError(
+        `Couldn't download ${model}: the sandbox's network policy blocked ${blocked.host} (${why}).\nOn your computer, run:\n  ${blocked.allow}\nThen run doorman model download here again.`,
+      );
+    }
+    throw new CliError(`Couldn't download ${model}: ${why}`);
   }
   progress.done();
   const view = modelView(ctx, model);

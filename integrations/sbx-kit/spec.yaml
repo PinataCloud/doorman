@@ -1,0 +1,29 @@
+schemaVersion: "2"
+kind: mixin
+name: doorman
+displayName: Doorman
+description: Doorman watches what Claude Code reads and runs, flags exposed secrets, and guards risky tool calls.
+sourceURL: https://github.com/PinataCloud/doorman
+licenses: [Apache-2.0]
+requires:
+  agent: claude
+
+permissions:
+  network:
+    allow:
+      # The on-device injection classifier. Model files redirect to CDN hosts
+      # such as us.aws.cdn.hf.co, so one wildcard label (*.hf.co) is not enough.
+      - huggingface.co
+      - "**.hf.co"
+
+setup:
+  # Install commands run once, when the sandbox is created (or on sbx kit add).
+  # A stopped and restarted sandbox keeps its files, so the CLI and the hooks
+  # are still there and nothing needs to run at every start.
+  install:
+    - description: Install the Doorman CLI
+      user: "1000"
+      command: npm install -g --no-audit --no-fund @pinata/doorman
+    - description: Add the Doorman guard to Claude Code's hooks
+      user: "1000"
+      command: doorman guard install
