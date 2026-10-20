@@ -48,6 +48,12 @@ const mocked = vi.hoisted(() => {
     popUpContextMenu(menu: unknown): void {
       popped.push(menu);
     }
+    contextMenu: { items: Item[] } | null = null;
+    contextMenuSets = 0;
+    setContextMenu(menu: { items: Item[] } | null): void {
+      this.contextMenu = menu;
+      this.contextMenuSets++;
+    }
     click(event: string): void {
       this.handlers.get(event)?.();
     }
@@ -104,7 +110,9 @@ function snapshot(over: Record<string, unknown> = {}) {
   return store.snapshot();
 }
 
-function controller() {
+/** macOS unless said otherwise: the clicks differ by platform, and CI runs
+ * these on Linux. */
+function controller(platform: NodeJS.Platform = "darwin") {
   const calls: string[] = [];
   const c = new TrayController({
     onOpen: () => calls.push("open"),
@@ -113,7 +121,7 @@ function controller() {
     onToggleGuard: (on) => calls.push(on ? "guard:on" : "guard:off"),
     onAsk: () => calls.push("ask"),
     onTrace: () => calls.push("trace"),
-  });
+  }, platform);
   return { c, calls };
 }
 
@@ -211,6 +219,39 @@ describe("TrayController clicks", () => {
     const labels = built[built.length - 1]!.map((i) => i.label ?? "");
     expect(labels.some((l) => l.startsWith("Rescan") || l.startsWith("Scanning"))).toBe(false);
     expect(labels[0]).toBe("Open Doorman");
+  });
+});
+
+describe("the tray on Linux", () => {
+  // Electron's popUpContextMenu is a silent no-op on Linux and there is no
+  // right-click event: the StatusNotifierItem host draws the menu set with
+  // setContextMenu. Without one, the item exported an empty dbusmenu and no
+  // click on the icon did anything.
+  it("hands the host the menu, and opens the window on activation", () => {
+    const { c, calls } = controller("linux");
+    c.create(snapshot());
+    const tray = FakeTray.instances[0]!;
+    expect(tray.contextMenu?.items[0]!.label).toBe("Open Doorman");
+    tray.click("click");
+    expect(calls).toEqual(["open"]);
+    expect(popped).toHaveLength(0);
+  });
+
+  it("keeps the menu current, without re-exporting an identical one", () => {
+    const { c, calls } = controller("linux");
+    c.create(snapshot());
+    const tray = FakeTray.instances[0]!;
+    const sets = tray.contextMenuSets;
+    c.render(snapshot());
+    expect(tray.contextMenuSets).toBe(sets);
+    c.render(snapshot({ graphs: { ...snapshot().graphs, today_tokens: 12_400, window_tokens: 30_000 } }));
+    expect(tray.contextMenuSets).toBe(sets + 1);
+    const labels = tray.contextMenu!.items.map((i) => i.label ?? "");
+    expect(labels).toContain("Today 12.4k · 7d 30.0k tokens");
+    // The guard switch acts on the state the menu shows.
+    c.render(snapshot({ prefs: { guard_wanted: true }, radar: { ...snapshot().radar, guard_installed: true } } as never));
+    tray.contextMenu!.items.find((i) => (i.label ?? "").startsWith("Real time protection"))!.click?.();
+    expect(calls).toEqual(["guard:off"]);
   });
 });
 

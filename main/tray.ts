@@ -5,7 +5,7 @@
  * by returning an EMPTY image.
  */
 
-import { Menu, Tray, nativeImage, nativeTheme, systemPreferences, type NativeImage } from "electron";
+import { Menu, Tray, nativeImage, nativeTheme, systemPreferences, type MenuItemConstructorOptions, type NativeImage } from "electron";
 import { liveSummaryLine } from "./lib/live-sessions.js";
 import { ALL_DETECTORS } from "./guard/policy.js";
 import { formatTokens } from "./lib/format.js";
@@ -118,8 +118,15 @@ export class TrayController {
   /** The icon variant currently shown, so a snapshot every few seconds does
    * not rebuild an identical image. */
   private iconKey = "";
+  /** Linux: the content of the menu last handed to setContextMenu, so a
+   * snapshot every few seconds does not re-export an identical dbusmenu (which
+   * would close it under the pointer). */
+  private menuKey = "";
 
-  constructor(private readonly callbacks: TrayCallbacks) {}
+  constructor(
+    private readonly callbacks: TrayCallbacks,
+    private readonly platform: NodeJS.Platform = process.platform,
+  ) {}
 
   create(state: AppState): void {
     this.latest = state;
@@ -140,17 +147,42 @@ export class TrayController {
     // glanceable numbers and Rescan were reachable only by right-clicking —
     // a menu most people never discovered was there. "Open Doorman" is the
     // menu's first action, so the window is still one click further.
-    this.tray.on("click", () => this.showMenu());
-    this.tray.on("right-click", () => this.showMenu());
+    //
+    // Linux has no popUpContextMenu (a silent no-op there) and no right-click
+    // event: the StatusNotifierItem host draws the menu itself from the one
+    // set with setContextMenu (render keeps it current). Without it the item
+    // exported an EMPTY dbusmenu and no click did anything. "click" there is
+    // the SNI Activate call — a double click in GNOME's AppIndicator
+    // extension, a left click on KDE — so it opens the window.
+    if (this.platform === "linux") {
+      this.tray.on("click", () => this.callbacks.onOpen());
+    } else {
+      this.tray.on("click", () => this.showMenu());
+      this.tray.on("right-click", () => this.showMenu());
+    }
     this.render(state);
   }
 
   /** Pop the menu, built from the NEWEST snapshot at click time. */
   private showMenu(): void {
-    if (this.tray && this.latest) this.tray.popUpContextMenu(this.menu(this.latest));
+    if (this.tray && this.latest) this.tray.popUpContextMenu(Menu.buildFromTemplate(this.template(this.latest)));
   }
 
-  private menu(state: AppState): Menu {
+  /** Linux: hand the host a menu built from this snapshot, when it says
+   * something different from the last one. The rows' click handlers close
+   * over the state they were built from, and that state (the guard switch) is
+   * part of what is compared, so a kept menu never acts on a stale reading. */
+  private syncContextMenu(state: AppState): void {
+    if (!this.tray) return;
+    const template = this.template(state);
+    // JSON drops the click functions: the key is what the menu shows.
+    const key = JSON.stringify(template);
+    if (key === this.menuKey) return;
+    this.menuKey = key;
+    this.tray.setContextMenu(Menu.buildFromTemplate(template));
+  }
+
+  private template(state: AppState): MenuItemConstructorOptions[] {
     // Exposures, matching the sidebar badge and the tray title — see
     // lib/exposures.ts: one rule in one place is one thing to decide.
     const open =
@@ -168,7 +200,7 @@ export class TrayController {
     // it sits beside "N turns from M files · last scan 2m ago", so pressing it
     // answers "is this stuck, or is there genuinely nothing new?".
     const glance = guardGlance(state);
-    return Menu.buildFromTemplate([
+    return [
       { label: "Open Doorman", click: () => this.callbacks.onOpen() },
       { label: "Ask Doorman AI…", click: () => this.callbacks.onAsk() },
       { label: "Trace a Secret…", click: () => this.callbacks.onTrace() },
@@ -216,7 +248,7 @@ export class TrayController {
         ? [{ label: state.updater.message ?? "Updating…", enabled: false }]
         : []),
       { role: "quit", label: "Quit Doorman", click: () => this.callbacks.onQuit() },
-    ]);
+    ];
   }
 
   render(state: AppState): void {
@@ -231,6 +263,7 @@ export class TrayController {
     }
     this.tray.setTitle(this.title(state), { fontType: "monospacedDigit" });
     this.tray.setToolTip(this.tooltip(state));
+    if (this.platform === "linux") this.syncContextMenu(state);
   }
 
   private icon(state: AppState): NativeImage {
