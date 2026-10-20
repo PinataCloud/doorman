@@ -87,7 +87,7 @@ export const TOOLS = [
   {
     name: "doorman_check_tool_call",
     description:
-      "Ask Doorman's security guard, before making a tool call, whether it would allow, hold or block it — the same rules and policy the PreToolUse guard applies. Returns the decision, the rules by name and what to do instead. Use it before a shell command that touches credentials, the network or infrastructure, and before writing a file that may contain a secret.",
+      "Ask Doorman's security guard, before making a tool call, whether it would allow, hold or block it — the same rules and policy the PreToolUse guard applies. Returns the decision, the rules by name and what to do. Use it before a shell command that touches credentials, the network or infrastructure, and before writing a file that may contain a secret. If the answer is hold or block, ask the user; do not reword the call until it passes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -105,7 +105,7 @@ export const TOOLS = [
   {
     name: "doorman_explain_last_block",
     description:
-      "Why Doorman held or blocked recent tool calls: which rule fired, on which tool, how it was resolved, and what to do instead. Call this instead of retrying a blocked call.",
+      "Why Doorman held or blocked recent tool calls: which rule fired, on which tool, how it was resolved, and what to do next. Call this rather than retrying a blocked call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -136,7 +136,7 @@ export const TOOLS = [
 ] as const;
 
 export const SERVER_INSTRUCTIONS =
-  "Doorman guards tool calls on this computer. Before a shell command that reads credentials, reaches the network or changes infrastructure, and before writing a file that may hold a secret, call doorman_check_tool_call and follow its remedy. If a tool call was blocked or held, call doorman_explain_last_block instead of retrying or working around it; the person decides in the Doorman app.";
+  "Doorman guards tool calls on this computer. Before a shell command that reads credentials, reaches the network or changes infrastructure, and before writing a file that may hold a secret, call doorman_check_tool_call and follow its answer. If a tool call was blocked or held, call doorman_explain_last_block rather than retrying or working around it; the person decides in the Doorman app.";
 
 type ToolResult = { text: string; isError?: boolean };
 
@@ -186,11 +186,15 @@ export function checkToolCall(args: Record<string, unknown>, paths: McpPaths, io
     return { text: lines.join("\n") };
   }
   const verb = decision.decision === "deny" ? "deny — the guard would block this call" : "ask — the guard would hold this call for the person to approve";
+  const next =
+    decision.decision === "deny"
+      ? "Do not make this call or work around it; ask the user how to proceed."
+      : "If you make this call, the user is asked first; do not work around the hold.";
   return {
     text: [
       `Decision: ${verb}.`,
       `Rules: ${decision.detectors.map((id) => labelOf(id)).join(", ")}.`,
-      `Instead: ${remedyFor(decision.detectors)}`,
+      `What to do: ${remedyFor(decision.detectors)} ${next}`,
     ].join("\n"),
   };
 }
