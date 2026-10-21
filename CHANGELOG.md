@@ -10,11 +10,15 @@ under `## Unreleased`; a release renames its part of it.
 
 ## Unreleased
 
-### CLI
-- New `doorman completion <zsh|bash|fish>`: Tab completion for every command, subcommand and flag, and exposure ids.
-- New `doorman changelog [--since <version>] [--all]`, and `doorman update` shows what changed after installing.
+## CLI 0.7.0 — 2026-10-21
+
+### New
+- `doorman completion <zsh|bash|fish>`: Tab completion for every command, subcommand and flag, and exposure ids.
+- `doorman changelog [--since <version>] [--all]`, and `doorman update` shows what changed after installing.
 - `doorman watch` shows the agents running on this machine now (held · working · waiting for you · quiet), on macOS and Linux.
 - `doorman findings resolve` marks exposures resolved, as the app's button does; `review` still works.
+
+### Changed
 - `doorman findings` and `findings show` name the project the way the app does ("acme-api"), the agent by name, and how a held call ended ("Held — denied by you after 9s"); a command excerpt reads as the command.
 - `doorman analytics` counts outcomes the way the app does: Stopped (blocked or denied), Allowed, Warned, Observed, with held calls and the median time to decide; the `items` row is gone.
 
