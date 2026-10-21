@@ -17,6 +17,24 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const build = join(__dirname, "..", "..", "build", "main");
 const { main } = require(join(build, "cli", "index.js")) as { main(argv: string[], io: unknown): Promise<number> };
 const { defaultPrefs } = require(join(build, "state.js")) as { defaultPrefs(): Record<string, unknown> };
+const { VSCODE_VARIANTS, userDir } = require(join(build, "lib", "vscode.js")) as {
+  VSCODE_VARIANTS: Array<{ id: string; cliName: string }>;
+  userDir(variant: unknown, home: string): string;
+};
+
+/** A VS Code the doctor can see, with a `code` CLI that lists no extensions.
+ * Linux reads both from the scratch HOME; macOS only from /Applications, so
+ * there the test needs the real app. False when this machine can't have one. */
+function vsCodeInScratchHome(): boolean {
+  if (process.platform === "darwin") return existsSync("/Applications/Visual Studio Code.app");
+  if (process.platform === "win32") return false;
+  const code = VSCODE_VARIANTS.find((v) => v.id === "vscode")!;
+  mkdirSync(userDir(code, home), { recursive: true });
+  const bin = join(home, ".local", "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, code.cliName), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  return true;
+}
 
 const SHOT_MODEL = "/tmp/dm-shot/appdata/Doorman/models/Llama-Prompt-Guard-2-22M-doorman-1";
 
@@ -239,7 +257,8 @@ describe("doorman doctor", () => {
     expect((await dm(["doctor", "--repair", "everything"])).code).toBe(2);
   });
 
-  it("on a fresh install the companion is a warning with a CLI step, never installed by --repair auto", async () => {
+  it("on a fresh install the companion is a warning with a CLI step, never installed by --repair auto", async ({ skip }) => {
+    if (!vsCodeInScratchHome()) skip();
     writeFileSync(join(dataDir, "prefs.json"), JSON.stringify({ ...defaultPrefs(), vscode_extension: true, guard_wanted: false }));
     const text = await dm(["doctor"]);
     expect(text.out).toMatch(/warn\s+Editor companion/);
