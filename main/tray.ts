@@ -18,8 +18,6 @@ export interface TrayCallbacks {
   onQuit(): void;
   /** The Guardrails switch, the same one Settings carries. */
   onToggleGuard(on: boolean): void;
-  /** Open the window on Doorman AI with this Mac as the subject. */
-  onAsk(): void;
   /** Open the window on Security Radar's Trace a secret section. */
   onTrace(): void;
 }
@@ -209,7 +207,6 @@ export class TrayController {
     const glance = guardGlance(state);
     return [
       { label: "Open Doorman", click: () => this.callbacks.onOpen() },
-      { label: "Ask Doorman AI…", click: () => this.callbacks.onAsk() },
       { label: "Trace a Secret…", click: () => this.callbacks.onTrace() },
       { type: "separator" },
       // The guard's switch, where the eye already is when the dot on the icon

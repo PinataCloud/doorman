@@ -119,7 +119,6 @@ function controller(platform: NodeJS.Platform = "darwin") {
     onRescan: () => calls.push("rescan"),
     onQuit: () => calls.push("quit"),
     onToggleGuard: (on) => calls.push(on ? "guard:on" : "guard:off"),
-    onAsk: () => calls.push("ask"),
     onTrace: () => calls.push("trace"),
   }, platform);
   return { c, calls };
@@ -322,15 +321,15 @@ describe("the guard on the menu-bar mark", () => {
     expect(calls).toContain("guard:off");
   });
 
-  it("offers Ask Doorman AI beside Open", () => {
+  it("opens with Open Doorman, then Trace a Secret — no Doorman AI entry", () => {
     const { c, calls } = controller();
     c.create(snapshot());
     FakeTray.instances[0]!.click("click");
     const items = built.at(-1)!;
-    expect(items[0]!.label).toBe("Open Doorman");
-    expect(items[1]!.label).toBe("Ask Doorman AI…");
+    expect(items.slice(0, 2).map((i) => i.label)).toEqual(["Open Doorman", "Trace a Secret…"]);
+    expect(items.some((i) => /Doorman AI/.test(String(i.label ?? "")))).toBe(false);
     items[1]!.click?.();
-    expect(calls).toContain("ask");
+    expect(calls).toContain("trace");
   });
 });
 

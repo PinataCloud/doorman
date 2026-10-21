@@ -2974,10 +2974,6 @@ if (!app.requestSingleInstanceLock()) {
       onRescan: () => void engine.scan(),
       onQuit: () => app.quit(),
       onToggleGuard: (on) => void setGuardWanted(on),
-      onAsk: () => {
-        showWindow();
-        window?.webContents.send("nav:go", "ai");
-      },
       onTrace: () => {
         showWindow();
         window?.webContents.send("nav:go", "trace");
