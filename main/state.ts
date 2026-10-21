@@ -786,6 +786,7 @@ function emptyGraphs(days: number): SpendGraphs {
     prev_window_seconds: 0,
     today_seconds: 0,
     window_sessions: 0,
+    punchcard: [],
     days,
   };
 }

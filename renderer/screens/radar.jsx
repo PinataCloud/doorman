@@ -449,6 +449,18 @@ function RadarScreen({
   const summary = (state.radar && state.radar.summary) || {};
   const headlineOpen = summary.open_exposures != null ? summary.open_exposures : summary.open_groups;
   const showFeedCount = narrowed || status !== "open" || viewTotal !== headlineOpen;
+  /* ALL CLEAR: the queue empty with nothing narrowing it or folding a band
+     away — the moment worth marking. Its sparkle is for the queue EMPTYING
+     while the screen is up (some open → none), not for every visit to an
+     already-empty one; it clears itself once played. */
+  const allClear = rows.length === 0 && status === "open" && !narrowed && hiddenLeads === 0 && !headlineOpen;
+  const queueOpen = headlineOpen != null ? headlineOpen : openRows.length;
+  const prevQueueOpen = useRef(queueOpen);
+  const [justCleared, setJustCleared] = useState(false);
+  useEffect(() => {
+    if (prevQueueOpen.current > 0 && queueOpen === 0) setJustCleared(true);
+    prevQueueOpen.current = queueOpen;
+  }, [queueOpen]);
 
   /* The decided card leaves the list only when main's next snapshot lands —
      after the next card has already scrolled itself to the top — so the
@@ -678,7 +690,11 @@ function RadarScreen({
       </div>
       ) : null}
 
-      {rows.length === 0 ? (
+      {allClear ? (
+        <Card>
+          <RadarAllClear state={state} celebrate={justCleared} onCelebrated={() => setJustCleared(false)} />
+        </Card>
+      ) : rows.length === 0 ? (
         <Card>
           <Empty>
             {narrowed
@@ -850,6 +866,50 @@ function emptyFeedSentence(status, hiddenFp, hiddenLeads, platform) {
   const fps = hiddenFp > 0 ? hiddenFp + " false positive" + (hiddenFp === 1 ? "" : "s") : null;
   const parts = [fps, leads].filter(Boolean);
   return parts.length > 0 ? "Nothing here but " + parts.join(" and ") + ", hidden." : "No findings here.";
+}
+
+/**
+ * The empty queue as an occasion: the mark, "All clear", and the window's own
+ * number — every exposure `rule_stats[14]` saw, none of them left open (the
+ * same 14-day stats ActiveExposures draws its spark from). The line is left
+ * out when the snapshot carries no stats. `celebrate` plays the one-time pop
+ * and sparks (CSS, off under reduced motion); the sparks finishing hand it
+ * back so a later remount (switching tabs) is quiet.
+ */
+function RadarAllClear({ state, celebrate, onCelebrated }) {
+  const stats = ((state.radar && state.radar.rule_stats) || {})[14];
+  const seen = stats ? (stats.exposures != null ? stats.exposures : stats.things) : null;
+  return (
+    <div className={"allclear" + (celebrate ? " celebrate" : "")}>
+      <span
+        className="allclear-mark"
+        aria-hidden="true"
+        onAnimationEnd={(e) => {
+          if (e.animationName === "allclear-spark") onCelebrated();
+        }}
+      >
+        <img src="_asset/doorman-mark-512.png" alt="" />
+        {celebrate ? (
+          <span className="allclear-sparks">
+            {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+              <i key={i} style={{ "--spark-a": i * 45 + "deg" }} />
+            ))}
+          </span>
+        ) : null}
+      </span>
+      <h3 className="allclear-h">All clear</h3>
+      {typeof seen === "number" ? (
+        <p className="allclear-n">
+          {seen > 0
+            ? plural(seen, "exposure") + " seen in the last 14 days, none left to review."
+            : "No exposures in the last 14 days."}
+        </p>
+      ) : null}
+      <p className="allclear-hint">
+        New findings appear here as sessions run, and as {PLATFORM_LABELS[state.platform] || "system"} notifications.
+      </p>
+    </div>
+  );
 }
 
 /**

@@ -611,7 +611,6 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
   const orphanFindings = findings.filter((f) => !f.turn_id || !loadedIds.has(f.turn_id));
 
   const totalTokens = summary ? summary.input_tokens + summary.output_tokens : 0;
-  const tokensByTurn = turns.map((t) => (t.usage ? (t.usage.input_tokens || 0) + (t.usage.output_tokens || 0) : 0));
   const folded = rows.filter((r) => r.kind === "run").reduce((n, r) => n + r.turns.length, 0);
 
   // Assistant turns are numbered across the WHOLE timeline, folded ones
@@ -689,6 +688,25 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
   // Repeated clicks on the header's exposure count walk the inline cards.
   const radarCycle = useRef(0);
 
+  // Strip → timeline: open the turn's folded run if it sits in one, then
+  // scroll to the turn once it has rendered (same pane helper as the radar
+  // jumps — scrollIntoView would move the wrong scrollport).
+  const [jumpTo, setJumpTo] = useState(null);
+  useEffect(() => {
+    if (!jumpTo) return;
+    const run = rows.find((r) => r.kind === "run" && r.turns.some((t) => t.id === jumpTo));
+    if (run && !openRuns[run.id]) {
+      setOpenRuns((o) => ({ ...o, [run.id]: true }));
+      return;
+    }
+    setJumpTo(null);
+    const el = document.getElementById("turn-" + jumpTo);
+    if (!el) return;
+    placeInPane(el);
+    el.classList.add("just-focused");
+    setTimeout(() => el.classList.remove("just-focused"), 2200);
+  }, [jumpTo, rows, openRuns]);
+
   return (
     <div>
       <div className="detail-head">
@@ -730,6 +748,17 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
             </React.Fragment>
           ) : null}
         </div>
+        {turns.length > 1 ? (
+          <TurnStrip
+            turns={turns}
+            findingsByTurn={findingsByTurn}
+            ordinals={ordinals}
+            more={Math.max(0, total - turns.length)}
+            loading={loading}
+            onMore={() => load(turns.length, 200)}
+            onPick={setJumpTo}
+          />
+        ) : null}
         <LiveHandoff
           row={((state.live && state.live.sessions) || []).find((r) => r.session_id === sessionId) || null}
           summary={summary}
@@ -820,20 +849,88 @@ function SessionDetail({ sessionId, summary, focusFindingId, onFocusFindingConsu
           ) : null}
         </div>
       )}
-      {/* The session's footer, pinned to the pane's bottom: the cost-per-turn
-          chart and the Doorman AI door, together — the two things you reach
-          for after reading, not before. The subject of the question is the
-          session summary plus every finding that fired in it
-          (main/ai-assistant.ts sessionContext). */}
-      {summary && tokensByTurn.filter((c) => c > 0).length > 2 ? (
-        <div className="detail-foot">
-          <span className="sparkwrap" title="Tokens per turn across this session">
-            <MicroSpark data={tokensByTurn} color="var(--c1)" width={180} height={28} />
-            <span className="sparklabel">tokens per turn</span>
-          </span>
-          <span className="spacer" />
+    </div>
+  );
+}
+
+/** A turn's input+output tokens; 0 when the host reported no usage. */
+function turnTokens(t) {
+  return t.usage ? (t.usage.input_tokens || 0) + (t.usage.output_tokens || 0) : 0;
+}
+
+/**
+ * The session at a glance: one tick per LOADED turn, in order. Tone says who
+ * spoke (you / a reply with prose / tool-only), height is the turn's tokens
+ * (the session's tokens-per-turn chart), and a red notch marks a turn
+ * the Radar inlined a card under — the same turn_id mapping the timeline uses.
+ * Clicking a tick jumps the pane to that turn. Unloaded turns are counted, not
+ * drawn: "+N more" pages them in like the timeline's own "show more".
+ */
+function TurnStrip({ turns, findingsByTurn, ordinals, more, loading, onMore, onPick }) {
+  const [ref, width] = useChartWidth(480);
+  const H = 30;
+  const NOTCH = 3;
+  const BASE = NOTCH + 2; // ticks never reach the notch lane
+  const MIN_H = 3; // a zero-token turn (most prompts) still reads as a tick
+  const kindOf = (t) =>
+    t.role === "user" ? "user" : typeof t.text === "string" && t.text.trim() !== "" ? "reply" : "tool";
+  const tokens = turns.map(turnTokens);
+  const peak = Math.max(0, ...tokens);
+  const peakAt = tokens.indexOf(peak);
+  const counts = { user: 0, reply: 0, tool: 0 };
+  for (const t of turns) counts[kindOf(t)] += 1;
+  const flagged = turns.filter((t) => findingsByTurn.has(t.id)).length;
+  const slot = width / Math.max(1, turns.length);
+  const tickW = Math.max(1, Math.min(8, slot - (slot >= 3 ? 1 : 0)));
+  const span = H - BASE - MIN_H;
+  const label = (t) =>
+    t.role === "user" ? "YOU · " + clockTime(t.at) : "TURN " + (ordinals.get(t.id) || "–") + " · " + clockTime(t.at);
+  const summary =
+    plural(turns.length, "loaded turn") + ": " + counts.user + " from you, " +
+    pluralAs(counts.reply, "reply", "replies") + ", " + counts.tool + " tool-only" +
+    (peak > 0 ? "; peak " + fmtTokens(peak) + " tokens at " + label(turns[peakAt]).toLowerCase() : "") +
+    (flagged > 0 ? "; " + plural(flagged, "turn") + " with Radar findings" : "") +
+    (more > 0 ? "; " + more + " more not loaded" : "");
+  return (
+    <div className="turnstrip">
+      <div className="ts-row">
+        <div className="ts-plot" ref={ref}>
+          <svg width={width} height={H} role="img" aria-label={summary} style={{ display: "block" }}>
+            {turns.map((t, i) => {
+              const x = slot * i + (slot - tickW) / 2;
+              const h = MIN_H + (peak > 0 ? (tokens[i] / peak) * span : 0);
+              const hits = (findingsByTurn.get(t.id) || []).length;
+              return (
+                <g className="ts-slot" key={t.id} onClick={() => onPick(t.id)}>
+                  <rect className={"ts-tick " + kindOf(t)} x={x} y={H - h} width={tickW} height={h} rx={tickW >= 4 ? 1 : 0} />
+                  {hits > 0 ? <rect className="ts-notch" x={x} y={0} width={Math.max(2, tickW)} height={NOTCH} /> : null}
+                  <rect x={slot * i} y={0} width={slot} height={H} fill="transparent">
+                    <title>
+                      {label(t) +
+                        (tokens[i] > 0 ? " · " + fmtTokens(tokens[i]) + " tokens" : "") +
+                        (kindOf(t) === "tool" ? " · tools only" : "") +
+                        (hits > 0 ? " · " + plural(hits, "Radar finding") : "")}
+                    </title>
+                  </rect>
+                </g>
+              );
+            })}
+          </svg>
         </div>
-      ) : null}
+        {more > 0 ? (
+          <button type="button" className="ts-more" disabled={loading} onClick={onMore} title="Load more turns">
+            +{more} more
+          </button>
+        ) : null}
+      </div>
+      <div className="ts-cap" aria-hidden="true">
+        <span className="ts-key"><i className="user" />you {counts.user}</span>
+        <span className="ts-key"><i className="reply" />replies {counts.reply}</span>
+        <span className="ts-key"><i className="tool" />tools only {counts.tool}</span>
+        {flagged > 0 ? <span className="ts-key"><i className="notch" />Radar {flagged}</span> : null}
+        <span className="spacer" />
+        <span>height = tokens per turn{peak > 0 ? " · peak " + fmtTokens(peak) : ""}</span>
+      </div>
     </div>
   );
 }
@@ -937,7 +1034,7 @@ function TurnBubble({ turn, ordinal, inRun }) {
   } else if (t.role !== "user") {
     // Tool-only turn: one compact line instead of an empty card.
     return (
-      <div className={"toolturn" + (inRun ? " in-run" : "")}>
+      <div className={"toolturn" + (inRun ? " in-run" : "")} id={"turn-" + t.id}>
         <ModelMark model={t.model} />
         <span className="tt-label">{label}</span>
         <span className="er-chips">
@@ -952,7 +1049,7 @@ function TurnBubble({ turn, ordinal, inRun }) {
   }
 
   return (
-    <div className={"bubble " + t.role + (inRun ? " in-run" : "")}>
+    <div className={"bubble " + t.role + (inRun ? " in-run" : "")} id={"turn-" + t.id}>
       <div className="turnlabel">
         {/* The model's own mark, where one is known — the label is a mono
             string, and the logo is the one part of it the eye finds without

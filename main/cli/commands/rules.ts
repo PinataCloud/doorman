@@ -6,7 +6,7 @@ import { DETECTOR_GUIDANCE } from "../../lib/ai-guidance.js";
 import { localDetectorLabel, ruleModeOf } from "../../lib/findings.js";
 import type { CliCommand } from "../command.js";
 import { CliError } from "../output.js";
-import { currentLevel, savePrefs, syncNote } from "./policy.js";
+import { LEVEL_NAMES, currentLevel, savePrefs, syncNote } from "./policy.js";
 
 const MODES: readonly EnforcementMode[] = ["observe", "warn", "ask", "block"];
 
@@ -55,7 +55,7 @@ const rulesList: CliCommand = {
     return {
       data: { level, rules: rows },
       text: [
-        ctx.ui.section("Rules", `level ${level}`),
+        ctx.ui.section("Rules", `level ${LEVEL_NAMES[level]}`),
         ...ctx.ui.table(
           ["Rule", "Mode", "What it catches"],
           rows.map((r) => [r.id, `${paint(r.mode)}${r.hand_edited ? "*" : ""}`, r.label]),

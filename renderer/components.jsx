@@ -518,7 +518,7 @@ const SECURITY_LEVELS = [
   },
   {
     id: "protective",
-    name: "Protective",
+    name: "Balanced",
     recommended: true,
     blurb: "A secret leaving this computer, in a prompt or a tool call, and personal data on its way out — held until you answer. Reading or writing credentials gets a heads-up.",
   },
@@ -529,7 +529,7 @@ const SECURITY_LEVELS = [
   },
 ];
 
-/** The stop a level id names, or Protective's index for anything unknown. */
+/** The stop a level id names, or Balanced's index for anything unknown. */
 function levelIndex(id) {
   const i = SECURITY_LEVELS.findIndex((l) => l.id === id);
   return i < 0 ? 2 : i;

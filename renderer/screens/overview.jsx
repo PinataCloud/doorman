@@ -3,19 +3,20 @@
 
    Security opened on the Radar: a list that is either empty or overwhelming,
    with no route from "something happened in a session" to "here is the
-   session". This screen is that route, and nothing else. It holds THREE
-   things and deliberately no third — Trace a secret is the Radar's:
+   session". This screen is that route. Trace a secret is the Radar's. Top to
+   bottom it holds:
 
-     1. the agents running RIGHT NOW, each with the exposures currently open
+     1. a hero: protection as the sidebar reads it (protectionState), drawn
+        as a ring filled to the security level around that level's shield;
+        the agents running right now as dots; and, at its side, main's count
+        of exposures still open — the number the sidebar badge and the menu
+        bar carry, so the three cannot disagree;
+     2. the agents running RIGHT NOW, each with the exposures currently open
         against it — the Ledger's live rail, read for what it means rather
         than what it costs;
-     2. recent sessions that had something flagged, each opening to its own
+     3. recent sessions that had something flagged, each opening to its own
         exposures — plus a quiet line for the sessions that had nothing, which
         is the part that says the quiet is real rather than unmeasured.
-
-   The canvas draws a third: a hero counting the backlog. Left out for now —
-   that count is already on the sidebar badge and the menu bar, and a third
-   copy is a third thing that can disagree with the other two.
 
    It owns NO list of its own. Everything it shows is a view onto the Radar's
    data, and every "review" route lands there: a second list of exposures,
@@ -26,7 +27,7 @@ function OverviewScreen({ state, onGoRadar, onOpenSession }) {
   const live = liveRows(state);
   return (
     <div>
-      <PostureLine state={state} noLive={live.length === 0} />
+      <OverviewHero state={state} live={live} onGoRadar={onGoRadar} onOpenSession={onOpenSession} />
 
       {live.length > 0 ? <ActiveSessions state={state} live={live} onGoRadar={onGoRadar} onOpenSession={onOpenSession} /> : null}
 
@@ -40,34 +41,167 @@ function liveRows(state) {
   return ((state.live && state.live.sessions) || []).filter((r) => r.state !== "idle" || r.session_id);
 }
 
-const POSTURE_DAYS = 7;
+/**
+ * The page's answer before any card: is protection on, at what level, who is
+ * running, and how much is left to review. The words are the sidebar badge's
+ * reading (protectionState, enforcingCount), so they cannot disagree.
+ */
+function OverviewHero({ state, live, onGoRadar, onOpenSession }) {
+  const enforcing = enforcingCount(state);
+  const p = protectionState(state, enforcing);
+  const held = (state.approvals || []).length;
+  // Off, the level is a setting nothing applies — the ring still shows it.
+  const title = p.kind === "off" ? p.word : p.word + " · " + (p.level ? p.level.name : "Custom rules");
+  const agents = plural(p.guarded, "agent") + " guarded";
+  const sub =
+    p.kind === "protected"
+      ? agents + " · " + enforcing.acting + " of " + enforcing.total + " rules act before a call runs"
+      : p.kind === "watch"
+        ? agents + " · no rule is set to Ask or Block, so every rule only watches"
+        : p.why;
+  return (
+    <Card className={"ovr-hero " + p.kind}>
+      <div className="ovr-hero-row">
+        <OvrRing protection={p} held={held} />
+        <div className="ovr-hero-said">
+          <h2 className="ovr-hero-t">{title}</h2>
+          <div className="ovr-hero-sub">{sub}</div>
+          <OvrLiveDots state={state} live={live} onOpenSession={onOpenSession} />
+        </div>
+        <OvrOpenCount state={state} onGoRadar={onGoRadar} />
+      </div>
+    </Card>
+  );
+}
+
+/* The ring: one arc per security level, filled up to the one the rules are
+   at, in the protection kind's colour, around that level's shield (the one
+   Guardrails draws). Custom rules sit at no level, so the ring is drawn whole
+   with a full shield and the caption says Custom. */
+const OVR_RING_SIZE = 110;
+const OVR_RING_R = 49;
+const OVR_RING_C = 2 * Math.PI * OVR_RING_R;
+const OVR_RING_GAP = 7;
+
+function OvrRing({ protection, held }) {
+  const p = protection;
+  const n = SECURITY_LEVELS.length;
+  const at = p.level ? SECURITY_LEVELS.indexOf(p.level) + 1 : null;
+  const seg = OVR_RING_C / n;
+  const mid = OVR_RING_SIZE / 2;
+  const label =
+    p.word +
+    " — " +
+    (at ? p.level.name + " level, " + at + " of " + n : "custom rules, at no level") +
+    (held > 0 ? " — " + plural(held, "call") + " held for your answer" : "");
+  return (
+    <div className={"ovr-ring " + p.kind + (at ? "" : " custom")} role="img" aria-label={label}>
+      <div className="ovr-ring-dial">
+        <svg width={OVR_RING_SIZE} height={OVR_RING_SIZE} viewBox={"0 0 " + OVR_RING_SIZE + " " + OVR_RING_SIZE} aria-hidden="true">
+          <g transform={"rotate(-90 " + mid + " " + mid + ")"}>
+            {SECURITY_LEVELS.map((level, i) => (
+              <circle
+                key={level.id}
+                className={"ovr-ring-seg" + (at == null || i < at ? " on" : "")}
+                cx={mid}
+                cy={mid}
+                r={OVR_RING_R}
+                strokeDasharray={seg - OVR_RING_GAP + " " + (OVR_RING_C - seg + OVR_RING_GAP)}
+                strokeDashoffset={-(i * seg + OVR_RING_GAP / 2)}
+              />
+            ))}
+          </g>
+        </svg>
+        <span className="ovr-ring-core">
+          <LevelShield step={at ? at - 1 : n - 1} of={n - 1} />
+          {held > 0 ? <span className="ovr-ring-held">{held}</span> : null}
+        </span>
+      </div>
+      <span className="ovr-ring-cap">{at ? p.level.name + " · " + at + "/" + n : "Custom"}</span>
+    </div>
+  );
+}
 
 /**
- * The page's answer before any card: is protection on, at what level, how
- * many exposures are open, and how many calls the guard stopped lately. Only
- * snapshot fields — the same ones the sidebar badge and Analytics read — so it
- * cannot disagree with them. Stopped = Blocked + Denied, per rule, over the
- * 7-day window main already computes. With no agent running, that fact joins
- * the line instead of taking a whole card.
+ * One dot per agent running now — the live rail's rows, in the dot colours
+ * the Ledger's rail uses. A held session counts down to its hold's deadline
+ * (the approval panel's clock: `at` + `hold_seconds`), re-read once a second
+ * only while something is held. Each dot opens its session; the held call
+ * itself is already answered from the approval overlay.
  */
-function PostureLine({ state, noLive }) {
-  const p = protectionState(state, enforcingCount(state));
+function OvrLiveDots({ state, live, onOpenSession }) {
+  const approvals = state.approvals || [];
+  const deadlineOf = (row) => {
+    const a = row.state === "held" && row.approval_id ? approvals.find((x) => x.id === row.approval_id) : null;
+    return a ? Date.parse(a.at) + (a.hold_seconds || 60) * 1000 : NaN;
+  };
+  const holding = live.some((row) => Number.isFinite(deadlineOf(row)));
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!holding) return undefined;
+    setNow(Date.now());
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [holding]);
+
+  if (live.length === 0) return <div className="ovr-dots-none muted">No agent running right now</div>;
+  return (
+    <ul className="ovr-dots" aria-label="Agents running now">
+      {live.map((row) => {
+        const name = SOURCE_NAMES[row.source] || row.source || "Agent";
+        const deadline = deadlineOf(row);
+        const word =
+          row.state === "held"
+            ? "held" + (Number.isFinite(deadline) ? " · " + Math.max(0, Math.round((deadline - now) / 1000)) + "s" : "")
+            : row.state === "waiting"
+              ? "waiting for you"
+              : row.state === "idle"
+                ? "quiet"
+                : "working";
+        const tip = row.title || livePlace(row) || undefined;
+        const kids = [
+          <span key="d" className={"livedot " + row.state} aria-hidden="true" />,
+          <span key="n" className="ovr-dot-n">{name}</span>,
+          <span key="s" className="ovr-dot-s">· {word}</span>,
+        ];
+        return (
+          <li key={"dot-" + (row.pid || "") + "-" + (row.session_id || "")}>
+            {row.session_id ? (
+              <button
+                type="button"
+                className={"ovr-dot " + row.state}
+                data-tip={tip}
+                aria-label={name + " · " + word + (row.title ? " — " + row.title : "") + ". Open session"}
+                onClick={() => onOpenSession(row.session_id)}
+              >
+                {kids}
+              </button>
+            ) : (
+              <span className={"ovr-dot " + row.state} data-tip={tip}>
+                {kids}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Main's count of exposures still open — over all time, the sidebar badge's
+    number — as the hero's way to the Radar. */
+function OvrOpenCount({ state, onGoRadar }) {
   const summary = (state.radar && state.radar.summary) || {};
   const open =
     summary.open_exposures != null ? summary.open_exposures : summary.open_groups != null ? summary.open_groups : 0;
-  const week = state.radar && state.radar.rule_stats && state.radar.rule_stats[POSTURE_DAYS];
-  const stopped = week ? (week.rules || []).reduce((n, r) => n + (r.blocked || 0) + (r.denied || 0), 0) : null;
-  const parts = [
-    p.kind === "off" ? "Real-time protection off" : "Real-time protection on" + (p.level ? " · " + p.level.name + " level" : " · Custom rules"),
-    plural(open, "open exposure"),
-    stopped != null ? stopped + " stopped in the last " + POSTURE_DAYS + " days" : null,
-    noLive ? "No agent running right now" : null,
-  ].filter(Boolean);
   return (
-    <div className={"ovr-posture " + p.kind}>
-      <span className="dot" aria-hidden="true" />
-      {parts.join(" · ")}
-    </div>
+    <button type="button" className={"ovr-count" + (open > 0 ? " hot" : " live")} onClick={() => onGoRadar({})}>
+      <b>{open}</b>{" "}
+      <span className="ovr-count-lab">
+        {open === 1 ? "exposure" : "exposures"} open to review
+        <span className="ovr-count-go" aria-hidden="true">→</span>
+      </span>
+    </button>
   );
 }
 

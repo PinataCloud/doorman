@@ -5,7 +5,8 @@
    into AI this window (engaged time from the person's own turn timestamps,
    gap-capped in main/lib/spend.ts) — with its trend, then the token tiles
    beside it (the window and today). Then the two time questions the redesign
-   exists to answer: "when was I in it?" (hours per day, split by use case)
+   exists to answer: "when was I in it?" (hours per day, split by use case,
+   then the weekday × hour punchcard)
    and "what was the time FOR?" (the use-case directory: every task class with
    its hours, trend badge, sessions and tokens). Only then the volume story:
    the cumulative climb, tokens by model and the model table.
@@ -205,6 +206,143 @@ function shareOf(part, whole) {
   return pct < 0.5 ? "<1%" : Math.round(pct) + "%";
 }
 
+/* Punchcard rows, Monday first — the order main/lib/spend.ts folds them in. */
+const PUNCH_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+/* Axis hours: every sixth, in the clock's own short form. */
+const PUNCH_TICKS = [
+  { h: 0, label: "12a" },
+  { h: 6, label: "6a" },
+  { h: 12, label: "12p" },
+  { h: 18, label: "6p" },
+];
+
+/** "12am", "1pm" — a local clock hour (24 wraps to midnight). */
+function punchHour(h) {
+  const hh = h % 24;
+  return (hh % 12 === 0 ? 12 : hh % 12) + (hh < 12 ? "am" : "pm");
+}
+
+/** "2pm–3pm" — the hour a punchcard cell covers. */
+function punchSpan(h) {
+  return punchHour(h) + "–" + punchHour(h + 1);
+}
+
+/**
+ * When the engaged time happens: local weekday × hour of day, summed over the
+ * window (`g.punchcard`, main/lib/spend.ts — each stretch at the hour it
+ * began). Circle AREA is the cell's seconds against the busiest cell, so a
+ * cell twice as long reads twice as big; an empty hour is a faint dot that
+ * keeps the grid legible. Hover reads a cell; the table twin carries each
+ * weekday's total and peak hour, so nothing is hover-only.
+ */
+function WorkPunchcard({ grid, total, days }) {
+  const [ref, width] = useChartWidth();
+  const [hover, setHover] = useState(null); // { d, h }
+  const wrapRef = useRef(null);
+
+  const LABEL_W = 40;
+  const PAD_R = 6;
+  const ROW_H = 24;
+  const AXIS_H = 20;
+  const innerW = Math.max(120, width - LABEL_W - PAD_R);
+  const colW = innerW / 24;
+  const height = ROW_H * 7 + AXIS_H;
+  const rMax = Math.max(2, Math.min(colW, ROW_H) / 2 - 1.5);
+
+  let peak = { d: 0, h: 0, v: 0 };
+  grid.forEach((row, d) =>
+    row.forEach((v, h) => {
+      if (v > peak.v) peak = { d, h, v };
+    }),
+  );
+  const radius = (v) => (v > 0 ? Math.max(1.5, Math.sqrt(v / peak.v) * rMax) : 1);
+  const dayTotals = grid.map((row) => row.reduce((n, v) => n + v, 0));
+  const hourTotals = Array.from({ length: 24 }, (_, h) => grid.reduce((n, row) => n + (row[h] || 0), 0));
+  const busiestDay = dayTotals.indexOf(Math.max(...dayTotals));
+  const busiestHour = hourTotals.indexOf(Math.max(...hourTotals));
+  const aria =
+    "Engaged time by weekday and local hour, summed over the last " + days + " days. Busiest hour: " +
+    punchSpan(busiestHour) + ", " + fmtDur(hourTotals[busiestHour]) + ". Busiest day: " +
+    PUNCH_DAYS[busiestDay] + ", " + fmtDur(dayTotals[busiestDay]) + ". Busiest single slot: " +
+    PUNCH_DAYS[peak.d] + " " + punchSpan(peak.h) + ", " + fmtDur(peak.v) + ".";
+  const cx = (h) => LABEL_W + colW * h + colW / 2;
+  const cy = (d) => ROW_H * d + ROW_H / 2;
+
+  return (
+    <div className="chart punchcard" ref={ref}>
+      <div className="chart-inner" ref={wrapRef}>
+        <svg width={width} height={height} role="img" aria-label={aria} style={{ display: "block" }}>
+          {PUNCH_DAYS.map((name, d) => (
+            <text
+              key={name}
+              className={"ax" + (d === busiestDay ? " pc-top" : "")}
+              x={0}
+              y={cy(d) + 3}
+            >
+              {name.slice(0, 3)}
+            </text>
+          ))}
+          {PUNCH_TICKS.map((t) => (
+            <text key={t.h} className="ax x" x={cx(t.h)} y={height - 6} textAnchor="middle">
+              {t.label}
+            </text>
+          ))}
+          {grid.map((row, d) =>
+            row.map((v, h) => {
+              const on = hover && hover.d === d && hover.h === h;
+              return (
+                <g key={d + "-" + h} className={"pc-cell" + (v > 0 ? "" : " empty")}>
+                  {on ? (
+                    <rect x={LABEL_W + colW * h} y={ROW_H * d} width={colW} height={ROW_H} fill="var(--paper-2)" rx="3" />
+                  ) : null}
+                  <circle cx={cx(h)} cy={cy(d)} r={radius(v)} />
+                  <rect
+                    x={LABEL_W + colW * h}
+                    y={ROW_H * d}
+                    width={colW}
+                    height={ROW_H}
+                    fill="transparent"
+                    onMouseEnter={() => setHover({ d, h })}
+                    onMouseLeave={() => setHover(null)}
+                  />
+                </g>
+              );
+            }),
+          )}
+        </svg>
+      </div>
+      {hover ? (
+        <ChartTip
+          anchor={wrapRef.current}
+          x={cx(hover.h)}
+          y={ROW_H * (hover.d + 1) + 4}
+          title={PUNCH_DAYS[hover.d] + " · " + punchSpan(hover.h)}
+          rows={[{ key: "t", label: "Engaged", color: "var(--c1)", value: fmtDur(grid[hover.d][hover.h]) }]}
+          note={
+            grid[hover.d][hover.h] > 0
+              ? shareOf(grid[hover.d][hover.h], total) + " of the window's engaged time"
+              : "Nothing recorded in this hour."
+          }
+        />
+      ) : null}
+      <TableTwin
+        label="the weekly rhythm"
+        columns={[
+          { key: "day", label: "Day" },
+          { key: "total", label: "Engaged", right: true },
+          { key: "peak", label: "Busiest hour", right: true },
+        ]}
+        rows={PUNCH_DAYS.flatMap((name, d) => {
+          if (!(dayTotals[d] > 0)) return [];
+          const row = grid[d];
+          const top = row.indexOf(Math.max(...row));
+          return [{ day: name, total: fmtDur(dayTotals[d]), peak: punchSpan(top) + " · " + fmtDur(row[top]) }];
+        })}
+      />
+    </div>
+  );
+}
+
 function GraphsScreen({ state, onOpenTask }) {
   const [range, setRange] = useState(7);
   const [split, setSplit] = useState("task");
@@ -247,6 +385,11 @@ function GraphsScreen({ state, onOpenTask }) {
     const i = g.time_tasks.indexOf(task);
     return i >= 0 ? taskSeriesColor(i, task) : "var(--c-other)";
   };
+  // Absent on a snapshot from before the field existed.
+  const punchTotal =
+    Array.isArray(g.punchcard) && g.punchcard.length === 7
+      ? g.punchcard.reduce((n, row) => n + row.reduce((a, v) => a + v, 0), 0)
+      : 0;
 
   return (
     <div>
@@ -394,6 +537,17 @@ function GraphsScreen({ state, onOpenTask }) {
                 })}
             />
           </Card>
+
+          {/* The same engaged time, folded by the clock instead of the
+              calendar: which hours of which weekdays the work happens in. */}
+          {punchTotal > 0 ? (
+            <Card
+              title="When you work with AI"
+              hint={"Engaged time by weekday and hour, your local time, summed over the last " + g.days + " days."}
+            >
+              <WorkPunchcard grid={g.punchcard} total={punchTotal} days={g.days} />
+            </Card>
+          ) : null}
 
           {/* The use-case directory (ref: Harmonic's Use Cases list): what the
               time was FOR. Hours lead, the trend badge says which way this

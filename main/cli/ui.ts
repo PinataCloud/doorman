@@ -119,6 +119,16 @@ const ASCII_FORMS: Record<string, string> = {
   "└": "+",
   "█": "#",
   "░": "-",
+  "▒": "=",
+  "▓": "#",
+  "▁": "_",
+  "▂": ".",
+  "▃": "-",
+  "▄": "=",
+  "▅": "+",
+  "▆": "*",
+  "▇": "#",
+  "●": "*",
 };
 
 const NON_ASCII_FORMS = new RegExp(`[${Object.keys(ASCII_FORMS).join("")}\\u2800-\\u28ff]`, "g");
@@ -148,6 +158,12 @@ interface GlyphSet {
   /** Card frame: top-left, side, bottom-left, horizontal. */
   frame: { top: string; side: string; bottom: string; line: string };
   bar: { full: string; empty: string };
+  /** An agent guarded or not; the protection badge. */
+  dot: { on: string; off: string };
+  /** Sparkline cells, lowest first. */
+  spark: readonly string[];
+  /** Heat cells: none, then each quarter of the largest value. */
+  heat: readonly string[];
   spinner: readonly string[];
 }
 
@@ -158,6 +174,9 @@ const UNICODE: GlyphSet = {
   ellipsis: "…",
   frame: { top: "╭", side: "│", bottom: "╰", line: "─" },
   bar: { full: "█", empty: "░" },
+  dot: { on: "●", off: "○" },
+  spark: ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"],
+  heat: ["·", "░", "▒", "▓", "█"],
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -168,6 +187,9 @@ const ASCII: GlyphSet = {
   ellipsis: "...",
   frame: { top: "+", side: "|", bottom: "+", line: "-" },
   bar: { full: "#", empty: "-" },
+  dot: { on: "*", off: "o" },
+  spark: ["_", ".", "-", "=", "+", "*", "#"],
+  heat: [".", ":", "-", "=", "#"],
   spinner: ["|", "/", "-", "\\"],
 };
 
@@ -430,6 +452,39 @@ export class Ui {
     const full = Math.round(Math.min(1, Math.max(0, fraction)) * cells);
     return `${this.paint(tone, this.glyphs.bar.full.repeat(full))}${this.style.dim(this.glyphs.bar.empty.repeat(cells - full))}`;
   }
+
+  /** A sparkline: one cell per value, its height scaled to the largest (all
+   * zeros: the lowest row). Zeros dim, the rest in the tone's colour. */
+  spark(values: readonly number[], tone: Tone = "info"): string {
+    const top = this.glyphs.spark.length - 1;
+    return this.cells(levels(values, top), this.glyphs.spark, tone);
+  }
+
+  /** A heat strip: one cell per value, shaded by the quarter of the largest
+   * it falls in (zero: a dot). Zeros dim, the rest in the tone's colour. */
+  heat(values: readonly number[], tone: Tone = "info"): string {
+    return this.cells(levels(values, 4), this.glyphs.heat, tone);
+  }
+
+  /** One glyph per level; coloured only when decorating. */
+  private cells(levels: readonly number[], glyphs: readonly string[], tone: Tone): string {
+    if (!this.decorate) return levels.map((l) => glyphs[l]).join("");
+    let out = "";
+    for (let i = 0; i < levels.length; ) {
+      const lit = levels[i]! > 0;
+      let run = "";
+      for (; i < levels.length && levels[i]! > 0 === lit; i++) run += glyphs[levels[i]!];
+      out += lit ? this.paint(tone, run) : this.style.dim(run);
+    }
+    return out;
+  }
+}
+
+/** Each value as a level 0..top of the largest: 0 only for nothing, so any
+ * activity shows. */
+function levels(values: readonly number[], top: number): number[] {
+  const max = values.reduce((m, v) => (Number.isFinite(v) && v > m ? v : m), 0);
+  return values.map((v) => (max > 0 && Number.isFinite(v) && v > 0 ? Math.max(1, Math.ceil((v / max) * top)) : 0));
 }
 
 /** `n thing` / `n things`. */

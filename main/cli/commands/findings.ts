@@ -5,6 +5,7 @@ import { maskFindingRow, maskTurnText } from "../../lib/masking.js";
 import { hiddenConfidenceBands } from "../../state.js";
 import type { CliCommand } from "../command.js";
 import { ago, CliError, localTime } from "../output.js";
+import { markBeside } from "../art.js";
 import { plural, type KvRow } from "../ui.js";
 import {
   SEVERITIES,
@@ -152,13 +153,19 @@ export const findingsCommand: CliCommand = {
       };
       const s = ctx.style;
       const ui = ctx.ui;
-      const text: string[] = [
-        open.length === 0
-          ? ui.mark("ok", s.ok("No open exposures."))
-          : `${s.bold(String(open.length))} open exposure${open.length === 1 ? "" : "s"}  ${s.dim(severityLine(bySeverity))}`,
-      ];
+      const filtered = minSeverity !== undefined || rule !== undefined || session !== undefined;
+      // Nothing open anywhere: the mark, and how many exposures the Radar's
+      // Reviewed tab holds (filters make "nothing open" a narrower claim).
+      const allClear = open.length === 0 && !filtered && ui.decorate;
+      const reviewed = allClear ? new Set(feed.filter((r) => r.status !== "open").map((r) => r.exposure_key)).size : 0;
+      const text: string[] = allClear
+        ? markBeside(ui, [ui.mark("ok", s.bold(s.ok("All clear"))), s.dim(`No open exposures${reviewed > 0 ? `; ${plural(reviewed, "exposure")} reviewed` : ""}.`)], 40, 1)
+        : [
+            open.length === 0
+              ? ui.mark("ok", s.ok("No open exposures."))
+              : `${s.bold(String(open.length))} open exposure${open.length === 1 ? "" : "s"}  ${s.dim(severityLine(bySeverity))}`,
+          ];
       if (shown.length === 0) {
-        const filtered = minSeverity !== undefined || rule !== undefined || session !== undefined;
         text.push(
           ui.next(
             v.scan !== true

@@ -189,6 +189,141 @@ function shortPathLabel(path) {
   return parts.slice(-3).join("/");
 }
 
+/* The route a found value took, one lane per agent whose transcripts hold it
+   (report.providers): how it came in (your prompt, or a file's or a command's
+   output) → that agent → the provider its transcript went to, plus any file
+   the agent wrote it into. Built only from the report's sightings, writes
+   and providers. */
+function traceLanes(report) {
+  const sightings = report.places.flatMap((p) => p.sightings);
+  const sourceOf = {};
+  for (const s of sightings) sourceOf[s.session_id] = s.source;
+  // A write's result echoes the written path back; that is where the value
+  // went, not where it came from.
+  const wroteTurn = new Set(report.writes.map((w) => w.session_id + " " + w.turn_id));
+  return report.providers.map((p) => {
+    const mine = sightings.filter((s) => s.source === p.source);
+    const entries = new Map();
+    for (const s of mine) {
+      let key;
+      let label;
+      let mono = false;
+      if (s.kind === "prompt") {
+        key = "prompt";
+        label = "Your prompt";
+      } else if (s.kind === "tool_output" && !wroteTurn.has(s.session_id + " " + s.turn_id)) {
+        if (s.target && /^[/~.]/.test(s.target)) {
+          key = "file " + s.target;
+          label = shortPathLabel(s.target);
+          mono = true;
+        } else {
+          const what = s.target || s.tool_name || "a tool";
+          key = "out " + what;
+          label = what + " output";
+        }
+      } else continue;
+      const entry = entries.get(key) || { key, label, mono, title: s.target || label, count: 0 };
+      entry.count += 1;
+      entries.set(key, entry);
+    }
+    const writes = new Map();
+    for (const w of report.writes) if (sourceOf[w.session_id] === p.source) writes.set(w.path, (writes.get(w.path) || 0) + 1);
+    return {
+      ...p,
+      sightings: mine.length,
+      entries: [...entries.values()],
+      // providerOf's fallback names the rail, not a provider: the step is inferred.
+      inferred: p.provider === p.label + "'s model provider",
+      writes: [...writes.entries()].map(([path, count]) => ({ path, count })),
+    };
+  });
+}
+
+function TraceRoute({ report }) {
+  const lanes = traceLanes(report);
+  if (lanes.length === 0) return null;
+  const said = lanes
+    .map(
+      (l) =>
+        l.label +
+        ": " +
+        (l.entries.length > 0
+          ? "came in through " + joinList(l.entries.map((e) => e.label + (e.count > 1 ? " (" + e.count + " times)" : "")))
+          : "no way in seen") +
+        "; " +
+        tracePlural(l.sightings, "sighting") +
+        "; reached " +
+        l.provider +
+        " in " +
+        tracePlural(l.sessions, "session") +
+        (l.writes.length > 0 ? "; written to " + joinList(l.writes.map((w) => shortPathLabel(w.path))) : ""),
+    )
+    .join(". ");
+  return (
+    <div className="trace-route">
+      <div className="s-head">Where it went</div>
+      <div className="trace-lanes" role="img" aria-label={said + "."}>
+        <div className="trace-lane trace-lane-h" aria-hidden="true">
+          <span>Came in</span>
+          <span />
+          <span>Agent</span>
+          <span />
+          <span>Reached</span>
+        </div>
+        {lanes.map((l) => {
+          const inCount = l.entries.reduce((n, e) => n + e.count, 0);
+          return (
+            <div className="trace-lane" key={l.source} aria-hidden="true">
+              <div className="trace-col">
+                {l.entries.length > 0 ? (
+                  l.entries.map((e) => (
+                    <span className="trace-node lit" key={e.key} title={e.title}>
+                      <span className={"trace-node-t" + (e.mono ? " mono" : "")}>{e.label}</span>
+                      {e.count > 1 ? <span className="trace-node-n">×{e.count}</span> : null}
+                    </span>
+                  ))
+                ) : (
+                  <span className="trace-node muted" title="No sighting shows how it got into this agent's context">
+                    <span className="trace-node-t">Way in not seen</span>
+                  </span>
+                )}
+              </div>
+              <span className={"trace-link" + (inCount > 0 ? "" : " muted")}>
+                {inCount > 0 ? <span className="trace-link-n">{tracePlural(inCount, "sighting")}</span> : null}
+              </span>
+              <div className="trace-col">
+                <span className="trace-node lit agent">
+                  <RailMark source={l.source} size={13} />
+                  <span className="trace-node-t">{l.label}</span>
+                  <span className="trace-node-n">{tracePlural(l.sightings, "sighting")}</span>
+                </span>
+              </div>
+              <span className="trace-link">
+                <span className="trace-link-n">{tracePlural(l.sessions, "session")}</span>
+              </span>
+              <div className="trace-col">
+                <span
+                  className={"trace-node " + (l.inferred ? "muted" : "lit")}
+                  title={l.inferred ? "Inferred from the agent — which provider it uses is not known" : undefined}
+                >
+                  <span className="trace-node-t">{l.provider}</span>
+                </span>
+                {l.writes.map((w) => (
+                  <span className="trace-node lit disk" key={w.path} title={w.path}>
+                    <span className="trace-node-k">wrote</span>
+                    <span className="trace-node-t mono">{shortPathLabel(w.path)}</span>
+                    {w.count > 1 ? <span className="trace-node-n">×{w.count}</span> : null}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* The door on the Radar: one row under the hero, shaped like the field it
    leads to. Any interaction opens the sub page, where the real input takes
    focus — the Radar itself stays a triage screen with nothing to type into. */
@@ -423,6 +558,9 @@ function TraceReportView({ report, state, onOpenSession, onCopy, copied }) {
           {copied ? "Copied" : "Copy report"}
         </button>
       </div>
+
+      {/* The route as a picture, before the files it left behind. */}
+      <TraceRoute report={report} />
 
       {report.files.length > 0 ? (
         <div className="trace-files">

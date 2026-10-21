@@ -6,7 +6,7 @@
    answer neither question a person arrives with — am I protected, and what
    should this be set to?
 
-     1. the SECURITY LEVEL: four stops (Relaxed · Watchful · Protective ·
+     1. the SECURITY LEVEL: four stops (Relaxed · Watchful · Balanced ·
         Locked down) that set every rule's rung on the guard's own ladder
         (observe → warn → ask → block). Under it, what you're protected
         against: kinds of risk on the left, and opening one lists its rules on
@@ -109,10 +109,10 @@ function RulesScreen({ state }) {
         <WalletsCard state={state} />
       </details>
 
-      {/* No "Restore Doorman defaults" box. Protective's mode map IS
-          `DEFAULT_MODES` (asserted in test/policy.test.ts), so moving
-          the level to Protective is that button, exactly — and the hand-edit
-          notice's "Put Protective back" is it in one click from where the
+      {/* No "Restore Doorman defaults" box. Balanced's (id `protective`)
+          mode map IS `DEFAULT_MODES` (asserted in test/policy.test.ts), so
+          moving the level to Balanced is that button, exactly — and the
+          hand-edit notice's "Put Balanced back" is it in one click from where the
           drift is reported. A second control doing the same write, with its
           own count of the same difference, could only ever agree or be a bug. */}
     </div>
@@ -764,6 +764,57 @@ function ConfirmButton({ verb, ariaLabel, onConfirm, disabled, className }) {
   );
 }
 
+/* A level's shield: one band of fill per stop above Relaxed, so the four
+   shields read Relaxed (empty) → Locked down (full). Colour comes from the
+   stop's state in app.css (.lvl-name-stop / .passed / .on). Only one level
+   card is on screen, so the step makes the clip id unique. */
+const LVL_SHIELD_D = "M10 1.5 17.5 4.3V10.4C17.5 15 14.4 18.8 10 20.5 5.6 18.8 2.5 15 2.5 10.4V4.3Z";
+function LevelShield({ step, of }) {
+  const top = 1.5;
+  const bottom = 20.5;
+  const band = (bottom - top) / of;
+  const clip = "lvl-shield-clip-" + step;
+  return (
+    <svg className="lvl-shield" width="18" height="20" viewBox="0 0 20 22" aria-hidden="true">
+      <clipPath id={clip}>
+        <path d={LVL_SHIELD_D} />
+      </clipPath>
+      {step > 0 ? (
+        <g clipPath={"url(#" + clip + ")"}>
+          <rect className="lvl-shield-fill" x="0" y={bottom - band * step} width="20" height={band * step} />
+          {Array.from({ length: step - 1 }, (_, k) => (
+            <line key={k} className="lvl-shield-band" x1="0" x2="20" y1={bottom - band * (k + 1)} y2={bottom - band * (k + 1)} />
+          ))}
+        </g>
+      ) : null}
+      <path className="lvl-shield-edge" d={LVL_SHIELD_D} />
+    </svg>
+  );
+}
+
+/* A family's rules across the four rungs, Observe → Block: one square per
+   rung, filled from the bottom by that rung's share of the family. Hidden from
+   assistive tech — the row's accessible name says the same split in words. */
+function FamilyModeGlyph({ counts, total }) {
+  const said =
+    plural(total, "rule") + ": " + counts.map((n, i) => n + " " + RUNGS[i].word).join(", ");
+  return (
+    <span className="lvl-fam-glyph" data-tip={said} aria-hidden="true">
+      <svg width="45" height="9" viewBox="0 0 45 9">
+        {counts.map((n, i) => {
+          const h = total > 0 ? (8 * n) / total : 0;
+          return (
+            <g key={i} className={"lvl-fam-cell mode-" + RUNGS[i].mode + (n ? "" : " zero")}>
+              <rect className="lvl-fam-box" x={i * 12 + 0.5} y="0.5" width="8" height="8" rx="1.5" />
+              {n ? <rect className="lvl-fam-fill" x={i * 12 + 0.5} y={8.5 - h} width="8" height={h} rx="1" /> : null}
+            </g>
+          );
+        })}
+      </svg>
+    </span>
+  );
+}
+
 /**
  * The security level — the whole Guardrails page's first decision.
  *
@@ -853,6 +904,12 @@ function LevelCard({ state, frozen, installed }) {
     move(SECURITY_LEVELS[pos].id);
     if (frozen || edited.length > 0) setPos(at);
   };
+  // A jump to one stop — a detent or its shield — through the same move (and
+  // so the same confirm sheet) the lever uses.
+  const pick = (i) => {
+    setPos(i);
+    move(SECURITY_LEVELS[i].id);
+  };
 
   return (
     <Card title="Security level">
@@ -895,10 +952,7 @@ function LevelCard({ state, frozen, installed }) {
                 disabled={frozen}
                 className={"lvl-stop" + (i === pos ? " on" : "") + (i <= pos ? " passed" : "")}
                 data-tip={level.blurb}
-                onClick={() => {
-                  setPos(i);
-                  move(level.id);
-                }}
+                onClick={() => pick(i)}
               >
                 <span className="lvl-dot" aria-hidden="true" />
               </button>
@@ -920,11 +974,24 @@ function LevelCard({ state, frozen, installed }) {
             onBlur={commit}
           />
         </div>
+        {/* Each name under its shield: the shield fills a band per stop
+            (Relaxed empty → Locked down full), coloured up to the handle and
+            accented at it. Hidden like the detents — the slider is the one
+            accessible control; these are the obvious place to click. */}
         <div className="lvl-names" aria-hidden="true">
           {SECURITY_LEVELS.map((level, i) => (
-            <span key={level.id} className={"lvl-name-stop" + (i === pos ? " on" : "")}>
-              {level.name}
-            </span>
+            <button
+              key={level.id}
+              type="button"
+              tabIndex={-1}
+              disabled={frozen}
+              data-tip={level.blurb}
+              className={"lvl-name-stop" + (i === pos ? " on" : "") + (i < pos ? " passed" : "")}
+              onClick={() => pick(i)}
+            >
+              <LevelShield step={i} of={SECURITY_LEVELS.length - 1} />
+              <span>{level.name}</span>
+            </button>
           ))}
         </div>
       </div>
@@ -1004,8 +1071,9 @@ function LevelCard({ state, frozen, installed }) {
           /* The row: the kind's name and rule count, and the set-all segment.
              The accessible name carries how the kind's rules divide across
              the rungs, in words. */
-          const split = [0, 1, 2, 3]
-            .map((i) => ({ ...RUNGS[i], count: cat.detectors.filter((id) => RUNG_OF[effective(id)] === i).length }))
+          const counts = [0, 1, 2, 3].map((i) => cat.detectors.filter((id) => RUNG_OF[effective(id)] === i).length);
+          const split = counts
+            .map((count, i) => ({ ...RUNGS[i], count }))
             .filter((part) => part.count > 0);
           const on = cat.key === openCat;
           /* What the whole kind is set to, when its rules agree — the value
@@ -1038,6 +1106,7 @@ function LevelCard({ state, frozen, installed }) {
                     <span className="lvl-cat-name">{cat.label}</span>
                     <span className="lvl-cat-n">
                       {cat.detectors.length} rule{cat.detectors.length === 1 ? "" : "s"}
+                      <FamilyModeGlyph counts={counts} total={cat.detectors.length} />
                     </span>
                   </span>
                 </button>

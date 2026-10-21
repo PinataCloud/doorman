@@ -716,10 +716,10 @@ describe("every screen renders (renderer)", () => {
     const live = lever(populatedState())!;
     expect(live).not.toBeNull();
     expect([live.min, live.max, live.step]).toEqual([0, 3, 1]);
-    // Reads the level in force, by name — Protective is the fixture's.
+    // Reads the level in force, by name — Balanced (id `protective`) is the fixture's.
     expect(live.value).toBe(2);
     expect(live.label).toBe("Security level");
-    expect(live.text).toContain("Protective");
+    expect(live.text).toContain("Balanced");
     expect(live.disabled).toBe(false);
     expect(live.stopsHidden).toBe(true);
     // Frozen: with no guard the handle does not move.
@@ -1038,7 +1038,7 @@ describe("every screen renders (renderer)", () => {
     ) as { titles: string[]; buttons: string[]; stops: number };
     expect(shape.titles).not.toContain("Defaults");
     expect(shape.buttons.join(" ")).not.toContain("Restore Doorman defaults");
-    // …and the way back is still reachable: four stops, one of them Protective.
+    // …and the way back is still reachable: four stops, one of them Balanced.
     expect(shape.stops).toBe(4);
   });
 
@@ -1439,42 +1439,38 @@ describe("every screen renders (renderer)", () => {
   });
 
   /**
-   * The Overview's posture line prints how many exposures are ACTIVE — main's
-   * `open_exposures`, the same field the Radar's hero and the sidebar badge
-   * print, never a renderer-side count — beside the protection state, and
-   * folds "no agent running" into itself instead of an empty card.
+   * The Overview's hero says the protection state and level, and the flow card
+   * prints how many exposures are OPEN — main's `open_exposures`, the same
+   * field the Radar's hero and the sidebar badge print, never a renderer-side
+   * count. With no agent running, the hero says so and no empty card is drawn.
    */
-  it("prints the active-exposure count from the summary in the posture line", () => {
+  it("prints the open-exposure count from the summary and the protection state in the hero", () => {
     const s = populatedState();
     // Main's count, deliberately different from the rows the renderer holds.
     s.radar.summary = { ...s.radar.summary, open_exposures: 9 };
-    const posture = (state: AppState, noLive: boolean) => {
+    const textOf = (state: AppState) => {
       ctx.__state = state;
-      ctx.__noLive = noLive;
       return runInContext(
         `(function () {
-           var tree = PostureLine({ state: __state, noLive: __noLive });
-           var text = function (node) {
-             if (node == null || typeof node === "boolean") return "";
+           var text = function (node, depth) {
+             if (node == null || typeof node === "boolean" || depth > 24) return "";
              if (typeof node !== "object") return String(node);
-             if (Array.isArray(node)) return node.map(text).join("");
-             return (node.kids || []).map(text).join("");
+             if (Array.isArray(node)) return node.map(function (n) { return text(n, depth); }).join("");
+             if (node.fn) return text(node.fn(__propsOf(node)), depth + 1);
+             return (node.kids || []).map(function (k) { return text(k, depth + 1); }).join("");
            };
-           return { text: text(tree), className: String(tree.props.className) };
+           return text(OverviewScreen({ state: __state, onGoRadar: function () {}, onOpenSession: function () {} }), 0);
          })()`,
         ctx as object,
-        { filename: "posture line" },
-      ) as { text: string; className: string };
+        { filename: "overview hero" },
+      ) as string;
     };
-    const on = posture(s, false);
-    expect(on.text).toContain("Real-time protection on");
-    expect(on.text).toContain("9 open exposures");
-    expect(on.text).not.toContain("No agent running");
-    expect(on.className).toContain("protected");
-    // No live agent: said in the line, and the Active sessions card is not drawn.
-    expect(posture(s, true).text).toContain("No agent running right now");
+    expect(textOf(s)).toMatch(/Protected · (Relaxed|Watchful|Balanced|Locked down|Custom rules)/);
+    expect(textOf(s)).toContain("9 exposures open to review");
+    // No live agent: said in the hero, and the Active sessions card is not drawn.
     const quiet = populatedState();
     quiet.live = { ...quiet.live, sessions: [] };
+    expect(textOf(quiet)).toContain("No agent running right now");
     ctx.__state = quiet;
     const cards = runInContext(
       `__nodes(OverviewScreen({ state: __state, onGoRadar: function () {}, onOpenSession: function () {} }), "ActiveSessions", [], 0).length`,
@@ -1482,10 +1478,10 @@ describe("every screen renders (renderer)", () => {
       { filename: "no live card" },
     );
     expect(cards).toBe(0);
-    // Guard off: the line says so first.
+    // Guard off: the hero's title is the off word, with no level after it.
     const off = populatedState();
     off.radar = { ...off.radar, guard_installed: false };
-    expect(posture(off, false).text).toMatch(/^Real-time protection off/);
+    expect(textOf(off)).not.toMatch(/Protected · /);
   });
 
   /**
@@ -2751,7 +2747,7 @@ describe("the wizard popup (renderer/screens/rules.jsx)", () => {
   it("View reads a saved set against its level's defaults, marking only the rules it changes", () => {
     const state = populatedState();
     const protective = state.level_modes.protective;
-    // A Protective set with one rule moved by hand from Ask to Block.
+    // A Balanced set with one rule moved by hand from Ask to Block.
     const modes = { ...protective, secret_egress: "block" as const };
     expect(protective.secret_egress).toBe("ask");
     const set = { id: "s1", name: "Stricter deletes", saved_at: "2026-09-01T00:00:00Z", level: "protective" as const, modes, packs: [] as string[] };
@@ -2778,7 +2774,7 @@ describe("the wizard popup (renderer/screens/rules.jsx)", () => {
       { filename: "rules-saved-view" },
     ) as { heads: string[]; rules: number; differs: string[]; custom: number; text: string };
     // The default column is named for the level Restore would land on.
-    expect(view.heads).toEqual(["Rule", "Saved", "Protective default"]);
+    expect(view.heads).toEqual(["Rule", "Saved", "Balanced default"]);
     // Every rule the ladder has an opinion about is a row.
     expect(view.rules).toBe(Object.keys(protective).length);
     // Exactly the one hand-moved rule differs: its row reads saved Block
@@ -2786,7 +2782,7 @@ describe("the wizard popup (renderer/screens/rules.jsx)", () => {
     expect(view.differs).toHaveLength(1);
     expect(view.differs[0]).toMatch(/CustomBlockAsk$/);
     expect(view.custom).toBe(1);
-    expect(view.text).toContain("One rule differs from Protective");
+    expect(view.text).toContain("One rule differs from Balanced");
     // A set that matches its level says so, and marks nothing.
     ctx.__set = { ...set, modes: { ...protective } };
     const clean = runInContext(

@@ -152,6 +152,12 @@ export interface SpendGraphs {
   today_seconds: number;
   /** Distinct sessions with any activity in the window. */
   window_sessions: number;
+  /** Engaged seconds by LOCAL weekday × hour over the window: 7 rows (Monday
+   * first) × 24 columns (local hour 0–23). A stretch lands whole on the local
+   * hour its earlier turn falls in — the same attribution time_days uses — so
+   * the cells sum to window_seconds. Window membership stays UTC-day, like
+   * every other window figure; only the placement is local. */
+  punchcard: number[][];
   days: number;
 }
 
@@ -349,6 +355,7 @@ export function aggregateGraphs(
   let windowSeconds = 0;
   let prevSeconds = 0;
   let todaySeconds = 0;
+  const punchcard: number[][] = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
 
   for (const [sessionId, recs] of bySession) {
     recs.sort((a, b) => a.at - b.at || (a.iso < b.iso ? -1 : 1));
@@ -370,6 +377,10 @@ export function aggregateGraphs(
       if (idx === undefined) continue;
       windowSeconds += seconds;
       windowSessions.add(sessionId);
+      // Local weekday, Monday first (getDay() is Sunday = 0).
+      const local = new Date(rec.at);
+      const weekday = punchcard[(local.getDay() + 6) % 7]!;
+      weekday[local.getHours()] = (weekday[local.getHours()] ?? 0) + seconds;
       taskSeconds.set(task, (taskSeconds.get(task) ?? 0) + seconds);
       perDayTaskSeconds[idx]!.set(task, (perDayTaskSeconds[idx]!.get(task) ?? 0) + seconds);
       railSeconds.set(rec.rail, (railSeconds.get(rec.rail) ?? 0) + seconds);
@@ -453,6 +464,7 @@ export function aggregateGraphs(
     prev_window_seconds: prevSeconds,
     today_seconds: todaySeconds,
     window_sessions: windowSessions.size,
+    punchcard,
     days: count,
   };
 }

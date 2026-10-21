@@ -75,6 +75,19 @@ export const usageCommand: CliCommand = {
         };
       }
       const noted = (v: string, note: string) => (note ? `${v}  ${s.dim(note)}` : v);
+      // A heat cell a day (two in a week's window, so the dates fit under
+      // it), shaded by the quarter of the busiest day; the max gives the scale.
+      const per = Math.ceil(14 / days);
+      const cells = g.time_days.length * per;
+      // Only where the keys (15 columns), the strip and its dates fit unwrapped.
+      const strip = ui.decorate && cells > 0 && (ui.width ?? 80) >= 15 + Math.max(cells, 13) + 2;
+      const [from = "", to = ""] = strip
+        ? [g.time_days[0]!.date, g.time_days[g.time_days.length - 1]!.date].map((date) =>
+            new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }),
+          )
+        : [];
+      const maxSeconds = Math.max(0, ...g.time_days.map((d) => d.total));
+      const maxTokens = Math.max(0, ...g.token_days.map((d) => d.total));
       const text = [
         ui.section(`Usage, last ${days} days`),
         ...ui.kv([
@@ -86,6 +99,9 @@ export const usageCommand: CliCommand = {
             noted(String(g.window_sessions), ui.list([`${activeDays} of ${days} days had activity`, plural(g.by_task.length, "use case")])),
           ],
           tokensPerHour > 0 && ["tokens/hour", compactNumber(tokensPerHour)],
+          strip && ["time/day", noted(ui.heat(g.time_days.flatMap((d) => Array<number>(per).fill(d.total))), maxSeconds > 0 ? `max ${duration(maxSeconds)}` : "")],
+          strip && ["tokens/day", noted(ui.heat(g.token_days.flatMap((d) => Array<number>(per).fill(d.total))), maxTokens > 0 ? `max ${compactNumber(maxTokens)}` : "")],
+          strip && ["", s.dim(`${from}${" ".repeat(Math.max(1, cells - from.length - to.length))}${to}`)],
         ]),
       ];
       if (g.by_task.length > 0) {

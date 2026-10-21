@@ -3,7 +3,6 @@ import {
   ALL_DETECTORS,
   HOLD_SECONDS_MAX,
   HOLD_SECONDS_MIN,
-  SECURITY_LEVELS,
   handEditedDetectors,
   levelOfModes,
   normalizeConfirm,
@@ -46,6 +45,26 @@ export function tilde(path: string, home: string): string {
 export function currentLevel(prefs: Prefs): SecurityLevel {
   return prefs.security_level ?? levelOfModes(prefs.policy.modes) ?? "protective";
 }
+
+/** Each level as people read it — the app's names. The stored id (and the
+ * `--json` value) stays `protective` for Balanced, so no prefs migrate. */
+export const LEVEL_NAMES: Record<SecurityLevel, string> = {
+  relaxed: "relaxed",
+  watchful: "watchful",
+  protective: "balanced",
+  locked_down: "locked down",
+};
+
+/** What `doorman policy level` accepts: each level's name, plus the stored ids. */
+const LEVEL_INPUTS: Record<string, SecurityLevel> = {
+  relaxed: "relaxed",
+  watchful: "watchful",
+  balanced: "protective",
+  protective: "protective",
+  locked_down: "locked_down",
+  "locked-down": "locked_down",
+};
+const LEVEL_CHOICES = ["relaxed", "watchful", "balanced", "locked_down"];
 
 /** What a held call turns into when nobody answers in time, in words. */
 export function confirmSentence(confirm: ConfirmPolicy): string {
@@ -101,7 +120,7 @@ const policyShow: CliCommand = {
     const text = [
       ctx.ui.section("Policy"),
       ...ctx.ui.kv([
-        ["level", `${level}${edited.length > 0 ? s.warn(`  ${edited.length} rule${edited.length === 1 ? "" : "s"} changed by hand`) : ""}`],
+        ["level", `${LEVEL_NAMES[level]}${edited.length > 0 ? s.warn(`  ${edited.length} rule${edited.length === 1 ? "" : "s"} changed by hand`) : ""}`],
         ["rules", `${modeLine}  ${s.dim("doorman rules")}`],
         ["holds", confirmSentence(policy.confirm)],
         ["packs", `${packs.length === 0 ? "none" : packs.join(", ")}  ${s.dim(`${packs.length} of ${RULE_PACKS.length} · doorman packs`)}`],
@@ -116,18 +135,18 @@ const policyShow: CliCommand = {
 const policyLevel: CliCommand = {
   name: "policy level",
   summary: "Move the security level (resets every rule's mode to the level's)",
-  usage: `<${SECURITY_LEVELS.join("|")}>`,
+  usage: `<${LEVEL_CHOICES.join("|")}>`,
   notes: [
     "A level rewrites the mode of every rule, like the level control in the app. Custom rules, packs, exceptions and hold settings are kept.",
   ],
   examples: [
-    ["doorman policy level protective", "the default level"],
+    ["doorman policy level balanced", "the default level"],
     ["doorman policy level locked_down", "the strictest level"],
   ],
   positionals: { min: 1, max: 1 },
   async run(ctx, args) {
-    const level = args.positionals[0] as SecurityLevel;
-    if (!SECURITY_LEVELS.includes(level)) throw new CliError(`Unknown level "${level}".`, 2, `Pick one of: ${SECURITY_LEVELS.join(", ")}.`);
+    const level = LEVEL_INPUTS[String(args.positionals[0]).toLowerCase()];
+    if (!level) throw new CliError(`Unknown level "${args.positionals[0]}".`, 2, `Pick one of: ${LEVEL_CHOICES.join(", ")}.`);
     let overwritten = 0;
     const { syncError } = savePrefs(ctx, "Change the security level", (prefs) => {
       // Counted before the write, against the level being left (radar:security-level).
@@ -137,7 +156,7 @@ const policyLevel: CliCommand = {
     return {
       data: { level, overwritten, ...(syncError ? { sync_error: syncError } : {}) },
       text: [
-        `${ctx.ui.mark("ok", `Level: ${level}.`)}${overwritten > 0 ? ` ${overwritten} rule${overwritten === 1 ? "" : "s"} changed by hand went back to the level's mode.` : ""}`,
+        `${ctx.ui.mark("ok", `Level: ${LEVEL_NAMES[level]}.`)}${overwritten > 0 ? ` ${overwritten} rule${overwritten === 1 ? "" : "s"} changed by hand went back to the level's mode.` : ""}`,
         ...syncNote(ctx, syncError),
       ],
     };

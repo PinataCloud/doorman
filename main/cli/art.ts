@@ -107,3 +107,12 @@ export function compactBanner(ui: Ui, title: string, subtitle: string): string[]
   const s = ui.style;
   return beside(MARK, [s.bold(s.accent(title)), s.dim(subtitle)], s, 3, 1);
 }
+
+/** The small mark with `lines` beside it (the `doorman status` header, an
+ * "All clear"), `top` lines down, each line fitted to the terminal; just
+ * the lines, as given, when plain, and unmarked under `min` columns. */
+export function markBeside(ui: Ui, lines: readonly string[], min: number, top = 0): string[] {
+  if (!ui.decorate) return [...lines];
+  const out = (ui.width ?? 80) < min ? lines : beside(MARK, lines, ui.style, 3, top);
+  return out.map((l) => ui.fit(l));
+}

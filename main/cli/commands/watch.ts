@@ -287,12 +287,14 @@ async function retireWatch(pid: number, label: string): Promise<void> {
 /**
  * The terminal half of answering held calls, shared by `watch` and
  * `sbx watch`: lines on stderr, the prompt line under the card redrawn in
- * place on a terminal (erased first, with the rows it reflowed onto when the
- * terminal got narrower), and — where `attention` asks for it and this is a
+ * place on a terminal that takes cursor codes (erased first, with the rows
+ * it reflowed onto when the terminal got narrower; TERM=dumb gets it once,
+ * as a static line), and — where `attention` asks for it and this is a
  * terminal — a bell per new call and the waiting count in the window title,
  * the person's own title pushed by `open` and put back by `close`.
  */
 export class HeldScreen {
+  /** The prompt line is redrawn in place (and ticks); otherwise printed once. */
   readonly tty: boolean;
   private readonly attention: boolean;
   private readonly bell: boolean;
@@ -305,9 +307,11 @@ export class HeldScreen {
     private readonly out: NodeJS.WritableStream & { isTTY?: boolean },
     private readonly options: { env: NodeJS.ProcessEnv; attention: boolean; idleTitle: string; waitingTitle: (waiting: number) => string },
   ) {
-    this.tty = "isTTY" in out && out.isTTY === true;
+    const terminal = "isTTY" in out && out.isTTY === true;
+    this.tty = terminal && ui.term.live;
+    // A dumb terminal still rings; it just can't take a title or a redraw.
     this.attention = this.tty && options.attention;
-    this.bell = this.attention && options.env.DOORMAN_NO_BELL !== "1";
+    this.bell = terminal && options.attention && options.env.DOORMAN_NO_BELL !== "1";
   }
 
   /** Erase the prompt line: the row the cursor is on, and the rows above it
@@ -868,7 +872,7 @@ export const watchCommand: CliCommand = {
     "  v  show the full call, when the card had to cut it (answers nothing)",
     "Unanswered calls end as the hold settings say (`doorman policy confirm`). Refuses to start while the app answers, and stops when the app starts.",
     "Takes over from another `doorman watch` whose terminal saw no key for 10 minutes, or any with --replace. When a held call goes unanswered and no key was pressed for a minute, it stops, so agents fall back to their own prompt.",
-    "Prompts go to stderr; stdout gets the summary when it stops. On a terminal it rings once per held call and shows waiting calls in the window title (DOORMAN_NO_BELL=1 turns the bell off).",
+    "Prompts go to stderr; stdout gets the summary when it stops. On a terminal the time left counts down as a bar under the card (printed once where the terminal can't redraw: TERM=dumb, or not a terminal), it rings once per held call and shows waiting calls in the window title (DOORMAN_NO_BELL=1 turns the bell off).",
     "Docker Sandboxes: `doorman sbx watch` on your computer answers every running sandbox in one terminal. Without the Doorman CLI on your computer, `sbx exec -it <sandbox> doorman watch` answers one.",
     "--stdio speaks JSON, one object per line, each with a `type`. Out on stdout: `hello` once it answers, `held` (the request) for each held call, `resolved` (id, outcome, message) when one stops waiting, `info` (message) for anything to tell a person. In on stdin: `answer` (id, verdict allow or deny, scope once, project or silence). It stops the moment stdin ends.",
   ],

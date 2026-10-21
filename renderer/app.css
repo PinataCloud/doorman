@@ -533,19 +533,63 @@ td.right, th.right { text-align: right; }
 .detail-head h2 { margin: 0; font-family: var(--display); font-size: var(--t-2u); font-weight: 650; display: inline; }
 .detail-title { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
 .detail-title .railmark { width: 22px; height: 22px; }
-/* The session's footer: the cost-per-turn chart after the last turn, in the
-   scroll flow — pinned, it covered the last turn in a short window. */
-.detail-foot {
+/* The session strip (ledger.jsx TurnStrip): one tick per loaded turn, tucked
+   under the header numbers. Tones follow the timeline — you wear the user
+   bubble's accent, prose replies ink, tool-only turns the muted tan. */
+.detail-head .meta + .turnstrip { margin-top: calc(var(--s3) - var(--s6)); }
+.turnstrip { margin: 0 0 var(--s6); }
+.turnstrip .ts-row { display: flex; align-items: flex-end; gap: var(--s3); }
+.turnstrip .ts-plot { flex: 1; min-width: 0; }
+.turnstrip .ts-slot { cursor: pointer; }
+.turnstrip .ts-tick { transition: opacity 120ms ease; }
+.turnstrip .ts-tick.user { fill: var(--blue); }
+.turnstrip .ts-tick.reply { fill: var(--ink-3); }
+.turnstrip .ts-tick.tool { fill: var(--tan-2); }
+.turnstrip .ts-notch { fill: var(--bad); }
+.turnstrip svg:hover .ts-tick { opacity: .55; }
+.turnstrip .ts-slot:hover .ts-tick { opacity: 1; }
+.turnstrip .ts-more {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--t-3);
+  color: var(--blue);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.turnstrip .ts-more:disabled { color: var(--ink-4); cursor: default; }
+.turnstrip .ts-cap {
   display: flex;
   align-items: center;
   gap: var(--s4);
-  padding: var(--s4) 0 var(--s3);
-  margin-top: var(--s4);
-  border-top: 1px solid var(--tan);
+  margin-top: var(--s2);
+  font-family: var(--mono);
+  font-size: var(--t-3);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  white-space: nowrap;
+  overflow: hidden;
 }
-.detail-foot .sparkwrap { display: inline-flex; align-items: center; gap: var(--s3); }
-.detail-foot .sparklabel { font-family: var(--mono); font-size: var(--t-3); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4); }
-.detail-foot .spacer { flex: 1; }
+.turnstrip .ts-key { display: inline-flex; align-items: center; gap: 5px; }
+.turnstrip .ts-key i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.turnstrip .ts-key i.user { background: var(--blue); }
+.turnstrip .ts-key i.reply { background: var(--ink-3); }
+.turnstrip .ts-key i.tool { background: var(--tan-2); }
+.turnstrip .ts-key i.notch { background: var(--bad); height: 3px; }
+.turnstrip .ts-cap .spacer { flex: 1; }
+/* The turn a strip tick jumped to, lit once. */
+.bubble.just-focused, .toolturn.just-focused { animation: turnFlash 1.8s ease; }
+@keyframes turnFlash {
+  0% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 40%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turnstrip .ts-tick { transition: none; }
+  .bubble.just-focused, .toolturn.just-focused { animation: none; outline: 2px solid var(--accent); outline-offset: 2px; }
+}
 /* One line at any width: whole cells, the settlement line yields last. */
 .detail-head .meta {
   font-family: var(--mono);
@@ -1265,6 +1309,21 @@ button.btn:disabled { opacity: .5; cursor: default; }
 /* The guard cut the preview: say how much is missing, offer the rest. */
 .ap-cut { display: flex; align-items: center; gap: var(--s3); font-size: var(--t-2); color: var(--warn); margin: calc(-1 * var(--s2)) 0 var(--s3); }
 button.btn.danger.primary { background: var(--bad); border-color: var(--bad); color: var(--on-fill); }
+/* The hold window on the Deny button (approvals.jsx HoldRing): the ring empties
+   over the hold, in the button's own ink so it reads on the filled red in both
+   themes. Inside the button, so the panel's no-drag rule already covers it. */
+.ap-ring { flex: none; transform: rotate(-90deg); }
+.ap-ring circle { fill: none; stroke: currentColor; stroke-width: 2; }
+.ap-ring .ap-ring-track { opacity: .3; }
+.ap-ring .ap-ring-sweep {
+  stroke-dasharray: 100 100;
+  animation-name: ap-ring-sweep;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+@keyframes ap-ring-sweep { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 100; } }
+/* No sweep: the inline offset, re-read once a second, steps instead. */
+@media (prefers-reduced-motion: reduce) { .ap-ring .ap-ring-sweep { animation: none; } }
 button.btn.quiet { border-color: transparent; color: var(--ink-3); }
 button.btn.quiet:hover { border-color: var(--tan-2); }
 .sidebar .foot .dot.hot { background: var(--bad); }
@@ -1294,6 +1353,16 @@ button.btn.quiet:hover { border-color: var(--tan-2); }
 }
 .chart svg rect[tabindex]:focus-visible { outline: none; }
 .chart svg rect[tabindex]:focus-visible + * { opacity: 1; }
+/* The Usage punchcard (graphs.jsx WorkPunchcard): circle area is engaged
+   time; an empty hour is a faint dot so the grid stays readable. */
+.punchcard .pc-cell circle { fill: var(--c1); transition: opacity 120ms ease; }
+.punchcard .pc-cell.empty circle { fill: var(--tan-2); }
+.punchcard svg:hover .pc-cell:not(.empty) circle { opacity: .6; }
+.punchcard svg .pc-cell:hover circle { opacity: 1; }
+.chart svg text.ax.pc-top { fill: var(--ink-2); font-weight: 700; }
+@media (prefers-reduced-motion: reduce) {
+  .punchcard .pc-cell circle { transition: none; }
+}
 
 .charttip {
   position: fixed;
@@ -1923,7 +1992,6 @@ button.eventrun .er-act { font-size: var(--t-3); color: var(--blue); flex: none;
 .detail-head .settle { display: inline-flex; align-items: center; gap: var(--s4); }
 .detail-head .settle .s-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .detail-head .settle .swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.detail-head .sparkwrap { display: inline-flex; align-self: center; }
 /* The screen title never wraps: it is two words and the subtitle can reflow. */
 .screen-head h1 { white-space: nowrap; }
 /* Search inside a filter strip shares the row — it must not eat it. */
@@ -2043,6 +2111,43 @@ body.doorman-panel { background: transparent; overflow: hidden; }
 
 /* ---- radar: grouped feed ---- */
 .feednote { font-size: var(--t-2); color: var(--ink-4); margin-bottom: 2px; }
+/* The empty queue (radar.jsx RadarAllClear): the mark on white, as everywhere
+   it appears, in a soft good-tinted ring. `.celebrate` is the one-time pop and
+   sparks for the queue emptying in front of you. */
+.allclear { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--s2); padding: var(--s6) var(--s5); }
+.allclear-mark {
+  position: relative;
+  width: 72px; height: 72px; margin-bottom: var(--s5);
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: #FFFFFF;
+  box-shadow: 0 0 0 6px var(--good-soft), 0 0 0 7px color-mix(in srgb, var(--good) var(--mix-3), transparent);
+}
+.allclear-mark img { width: 50px; height: 50px; display: block; object-fit: contain; }
+.allclear-h { margin: 0; font-size: var(--t-1u); font-weight: 650; color: var(--ink); }
+.allclear-n { margin: 0; font-size: var(--t-1); color: var(--ink-2); }
+.allclear-hint { margin: var(--s2) 0 0; font-size: var(--t-2); color: var(--ink-3); }
+.allclear-sparks { position: absolute; inset: 0; pointer-events: none; }
+.allclear-sparks i {
+  position: absolute; left: 50%; top: 50%;
+  width: 5px; height: 5px; margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%;
+  background: var(--good);
+  opacity: 0;
+  animation: allclear-spark 700ms var(--ease) 120ms both;
+}
+.allclear-sparks i:nth-child(even) { background: var(--accent); }
+.allclear.celebrate .allclear-mark { animation: allclear-pop 480ms var(--ease) both; }
+@keyframes allclear-pop { 0% { transform: scale(.84); } 60% { transform: scale(1.06); } 100% { transform: none; } }
+@keyframes allclear-spark {
+  0% { opacity: 0; transform: rotate(var(--spark-a)) translateY(-30px) scale(.4); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(var(--spark-a)) translateY(-58px) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .allclear.celebrate .allclear-mark { animation: none; }
+  .allclear-sparks { display: none; }
+}
 .finding.triaged { opacity: .72; }
 .finding.triaged:hover { opacity: 1; }
 .sevbadge.sev-critical, .sevbadge.sev-high, .sevbadge.sev-medium, .sevbadge.sev-low { flex: none; }
@@ -2583,8 +2688,13 @@ button.protbadge:focus-visible { outline: 2px solid #D9C2F5; outline-offset: 3px
   font-weight: 650;
   line-height: 1.02;
   letter-spacing: -.02em;
+  /* Fixed-width digits so the count-up (analytics.jsx useCountUp) doesn't jitter. */
+  font-variant-numeric: tabular-nums;
 }
 .pf .pf-lab { margin-top: var(--s2); font-size: var(--t-1); color: var(--ink-2); }
+/* One ◆ per stopped exposure (analytics.jsx StoppedMarks), outcome-coloured inline. */
+.pf .pf-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-top: var(--s2); font-size: var(--t-3); line-height: 1; }
+.pf .pf-more { margin-left: var(--s2); font-family: var(--mono); color: var(--ink-3); }
 /* The delta as a SENTENCE ("74% fewer than the 14 days before"), coloured by
    the judgement rather than by the sign: fewer exposures is better, fewer
    stopped is worse, and an arrow alone cannot say which. */
@@ -3367,9 +3477,47 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .trace-next p { margin: var(--s2) 0 0; font-size: var(--t-1); line-height: 1.6; color: var(--ink-2); max-width: 78ch; }
 .trace-actions { margin-bottom: var(--s6); flex-wrap: wrap; }
 
+/* The route, one lane per agent: came in → agent → reached. Lit nodes hold a
+   sighting; muted (dashed) ones are a step the report could only infer or
+   did not see. Fixed column fractions so every lane's nodes line up; labels
+   ellipsize rather than push the columns at the 960px minimum window. */
+.trace-route { margin-bottom: var(--s6); }
+.trace-lane {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) 88px minmax(0, 1fr) 88px minmax(0, 1.3fr);
+  align-items: center; padding: var(--s2) 0; border-top: 1px solid var(--linen-2);
+}
+.trace-lane-h, .trace-lane-h + .trace-lane { border-top: none; }
+.trace-lane-h { padding: 0 0 var(--s1); font-family: var(--mono); font-size: var(--t-3); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4); }
+.trace-col { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.trace-node {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 8px;
+  border: 1px solid var(--tan-2); border-radius: var(--r); font-size: var(--t-2); color: var(--ink-2);
+}
+.trace-node.lit { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--paper)); color: var(--ink); }
+.trace-node.muted { border-style: dashed; color: var(--ink-4); }
+.trace-node-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-node-t.mono { font-size: var(--t-3); }
+.trace-node-n, .trace-node-k { flex: none; font-size: var(--t-3); color: var(--ink-3); }
+.trace-node .railmark { flex: none; }
+/* A link: a line with an arrowhead, its count riding above it. */
+.trace-link { position: relative; display: flex; justify-content: center; height: 30px; margin: 0 6px; }
+.trace-link::before {
+  content: ""; position: absolute; left: 0; right: 4px; top: 50%; border-top: 1px solid var(--accent);
+  transform-origin: left; animation: trace-link-in .4s var(--ease) both;
+}
+.trace-link::after {
+  content: ""; position: absolute; right: 0; top: calc(50% - 3.5px);
+  border-left: 5px solid var(--accent); border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+}
+.trace-link.muted::before { border-top-style: dashed; border-top-color: var(--tan-2); }
+.trace-link.muted::after { border-left-color: var(--tan-2); }
+.trace-link-n { position: relative; align-self: flex-start; font-family: var(--mono); font-size: var(--t-3); color: var(--ink-3); white-space: nowrap; line-height: 1.2; }
+@keyframes trace-link-in { from { transform: scaleX(0); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .trace-link::before { animation: none; } }
+
 /* Transcript files that hold the value in plain text. */
 .trace-files { margin-bottom: var(--s6); }
-.trace-files .s-head {
+.trace-files .s-head, .trace-route .s-head {
   display: flex; align-items: center; gap: var(--s4);
   font-family: var(--mono); font-size: var(--t-3); letter-spacing: .12em; text-transform: uppercase;
   color: var(--ink-4); margin-bottom: var(--s3);
@@ -3683,8 +3831,34 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
    the detent buttons — growing the selected grip then cannot shift the words
    under the other three. */
 .lvl-names { display: flex; justify-content: space-between; margin-top: var(--s3); }
-.lvl-name-stop { width: 14%; text-align: center; font-size: var(--t-1); color: var(--ink-3); }
+.lvl-name-stop {
+  width: 14%; display: flex; flex-direction: column; align-items: center; gap: 5px;
+  background: none; border: 0; padding: 0; font: inherit; font-size: var(--t-1); color: var(--ink-3);
+  cursor: pointer;
+}
+.lvl-name-stop:disabled { cursor: default; }
 .lvl-name-stop.on { color: var(--ink); font-weight: 600; }
+/* The shield over each name: its own fill says how strict the stop is; its
+   colour says whether the handle has reached it — muted past the handle,
+   the rail's navy up to it, the accent at it. */
+.lvl-shield { display: block; overflow: visible; transition: transform .12s ease; }
+.lvl-shield-edge { fill: none; stroke: var(--tan-2); stroke-width: 1.4; stroke-linejoin: round; transition: stroke .12s; }
+.lvl-shield-fill { fill: var(--tan-2); transition: fill .12s; }
+.lvl-shield-band { stroke: var(--paper); stroke-width: 1; }
+.lvl-name-stop:hover:not(:disabled):not(.on) .lvl-shield-edge { stroke: var(--tan-3); }
+.lvl-name-stop.passed .lvl-shield-edge { stroke: var(--accent-deep); }
+.lvl-name-stop.passed .lvl-shield-fill { fill: var(--accent-deep); }
+.lvl-name-stop.on .lvl-shield { transform: scale(1.15); }
+.lvl-name-stop.on .lvl-shield-edge { stroke: var(--accent); stroke-width: 1.8; }
+.lvl-name-stop.on .lvl-shield-fill { fill: var(--accent); }
+/* Guard off: drawn inert, in the observe colour, like the rail. */
+.lvl-track-wrap.off .lvl-name-stop.passed .lvl-shield-edge,
+.lvl-track-wrap.off .lvl-name-stop.on .lvl-shield-edge { stroke: var(--tan-3); }
+.lvl-track-wrap.off .lvl-name-stop.passed .lvl-shield-fill,
+.lvl-track-wrap.off .lvl-name-stop.on .lvl-shield-fill { fill: var(--tan-3); }
+@media (prefers-reduced-motion: reduce) {
+  .lvl-shield, .lvl-shield-edge, .lvl-shield-fill { transition: none; }
+}
 
 /* ---- what the level MEANS, below the rule that closes the track ---------- */
 .lvl-said {
@@ -3811,7 +3985,19 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
    above it, and on one line it read as another column of the table. */
 .lvl-cat-said { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .lvl-cat-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-1); }
-.lvl-cat-n { font-size: var(--t-2); color: var(--ink-3); }
+.lvl-cat-n { display: flex; align-items: center; gap: var(--s3); font-size: var(--t-2); color: var(--ink-3); }
+/* The family's split across the four rungs, beside its count: one square per
+   rung in the mode segment's colour, filled by that rung's share. */
+.lvl-fam-glyph { display: inline-flex; cursor: help; }
+.lvl-fam-glyph svg { display: block; }
+.lvl-fam-cell.mode-observe { --fam: var(--tan-3); }
+.lvl-fam-cell.mode-warn { --fam: var(--gold); }
+.lvl-fam-cell.mode-ask { --fam: var(--warn); }
+.lvl-fam-cell.mode-block { --fam: var(--bad); }
+.lvl-fam-box { fill: none; stroke: var(--fam); stroke-width: 1; }
+.lvl-fam-cell.zero .lvl-fam-box { stroke: var(--ring); }
+.lvl-fam-fill { fill: var(--fam); transition: y .12s ease, height .12s ease; }
+@media (prefers-reduced-motion: reduce) { .lvl-fam-fill { transition: none; } }
 /* The open kind's rules, dropped out under its row on the recessed ground. */
 .lvl-rules { display: flex; flex-direction: column; background: var(--linen); border-top: 1px solid var(--ring); }
 .lvl-rule {
@@ -4445,13 +4631,60 @@ button.btn.sm { height: 24px; padding: 0 var(--s4); font-size: var(--t-2); }
 .sechead .tracebar.pronounced .tracebar-go { color: var(--ink-3); transition: transform var(--glide-ms) var(--ease); }
 .sechead .tracebar.pronounced:hover .tracebar-go { transform: translateX(2px); color: var(--ink); }
 
-/* The Overview's posture line: one sentence above the cards, its dot the
-   protection state (the text always says it too). */
-.ovr-posture {
-  display: flex; align-items: center; gap: var(--s3);
-  margin: 0 0 var(--s5);
-  font-size: var(--t-1); color: var(--ink-2);
+/* The Overview's hero: the protection ring, the words and the live dots. It
+   wraps under a narrow window rather than squeezing the ring. */
+.ovr-hero-row { display: flex; align-items: center; gap: var(--s6); flex-wrap: wrap; }
+.ovr-hero-said { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: var(--s3); }
+.ovr-hero-t { margin: 0; font-size: var(--t-2u); font-weight: 650; line-height: 1.25; color: var(--ink); }
+.ovr-hero-sub { font-size: var(--t-1); color: var(--ink-2); }
+/* One arc per security level, lit up to the one the rules are at, in the
+   protection state's colour; Custom lights them all, muted. */
+.ovr-ring { flex: none; display: flex; flex-direction: column; align-items: center; gap: var(--s3); }
+.ovr-ring-dial { position: relative; width: 110px; height: 110px; }
+.ovr-ring-dial svg { display: block; }
+.ovr-ring-seg { fill: none; stroke: var(--tan); stroke-width: 8; transition: stroke var(--glide-ms) var(--ease); }
+.ovr-ring.protected .ovr-ring-seg.on { stroke: var(--good); }
+.ovr-ring.watch .ovr-ring-seg.on { stroke: var(--warn); }
+.ovr-ring.off .ovr-ring-seg.on { stroke: var(--bad); }
+.ovr-ring.custom .ovr-ring-seg.on { stroke-opacity: .55; }
+/* The level's shield (LevelShield, as Guardrails draws it), filled to the
+   level in the ring's colour. */
+.ovr-ring-core { position: absolute; inset: 0; margin: auto; width: 44px; height: 48px; }
+.ovr-ring-core .lvl-shield { width: 44px; height: 48px; }
+.ovr-ring-core .lvl-shield-edge { stroke-width: 1.2; stroke: var(--tan-3); }
+.ovr-ring-core .lvl-shield-band { stroke: var(--paper); }
+.ovr-ring.protected .ovr-ring-core .lvl-shield-edge { stroke: var(--good); }
+.ovr-ring.protected .ovr-ring-core .lvl-shield-fill { fill: var(--good); }
+.ovr-ring.watch .ovr-ring-core .lvl-shield-edge { stroke: var(--warn); }
+.ovr-ring.watch .ovr-ring-core .lvl-shield-fill { fill: var(--warn); }
+.ovr-ring.off .ovr-ring-core .lvl-shield-edge { stroke: var(--tan-3); }
+.ovr-ring.off .ovr-ring-core .lvl-shield-fill { fill: var(--tan-3); }
+.ovr-ring.custom .ovr-ring-core .lvl-shield-fill { fill-opacity: .55; }
+/* Calls held right now, on the shield. */
+.ovr-ring-held {
+  position: absolute; top: -3px; right: -5px;
+  min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box; border-radius: 999px;
+  background: var(--warn); color: var(--on-fill); box-shadow: 0 0 0 2px var(--paper);
+  font-family: var(--mono); font-size: var(--t-2); font-weight: 650; line-height: 20px; text-align: center;
 }
-.ovr-posture .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--good); }
-.ovr-posture.watch .dot { background: var(--gold); }
-.ovr-posture.off .dot { background: var(--bad); }
+.ovr-ring-cap { font-size: var(--t-2); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+/* The agents running now: a pill each, the Ledger rail's dot inside. */
+.ovr-dots { list-style: none; margin: var(--s4) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--s3) var(--s4); }
+.ovr-dot {
+  display: inline-flex; align-items: center; gap: var(--s3);
+  padding: 3px 10px 3px 8px; border: 1px solid var(--ring); border-radius: 999px; background: var(--paper);
+  font: inherit; font-size: var(--t-1); color: var(--ink-2);
+}
+button.ovr-dot { cursor: pointer; }
+button.ovr-dot:hover { background: var(--paper-2); border-color: var(--tan-3); color: var(--ink); }
+.ovr-dot.held { border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 8%, var(--paper)); }
+.ovr-dot-n { font-weight: 600; color: var(--ink); }
+.ovr-dot.held .ovr-dot-s { color: var(--warn); font-variant-numeric: tabular-nums; }
+.ovr-dots-none { margin-top: var(--s4); font-size: var(--t-1); }
+.ovr-dot:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) var(--mix-2), transparent); outline-offset: 1px; }
+/* The open count at the hero's side; it drops under the words when the
+   window is narrow. */
+.ovr-hero-row > .ovr-count { flex: none; margin-left: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .ovr-ring-seg { transition: none; }
+}

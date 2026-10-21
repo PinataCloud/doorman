@@ -134,6 +134,71 @@ const ruleStopped = (r) => (r.stopped != null ? r.stopped : r.blocked + r.denied
 /** Rule modes as prose — the segment labels stay OBS/WARN/ASK/BLOCK. */
 const ANALYTICS_MODE_WORDS = { observe: "Observe", warn: "Warn", ask: "Ask", block: "Block" };
 
+const ANALYTICS_REDUCED_MOTION = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+const analyticsReducedMotion = () => !!(ANALYTICS_REDUCED_MOTION && ANALYTICS_REDUCED_MOTION.matches);
+
+/**
+ * A figure that counts up to its value over ~600ms — from 0 on first mount and
+ * whenever `resetKey` (the window) changes, from the figure already shown when
+ * only the value moved (a new snapshot). One rAF run per change, nothing
+ * afterwards; under reduced motion the value is returned as is.
+ */
+function useCountUp(value, resetKey) {
+  const [shown, setShown] = useState(0);
+  const shownRef = useRef(0);
+  const keyRef = useRef(resetKey);
+
+  useEffect(() => {
+    const settle = () => {
+      shownRef.current = value;
+      setShown(value);
+    };
+    const from = keyRef.current === resetKey ? shownRef.current : 0;
+    keyRef.current = resetKey;
+    if (!Number.isFinite(value) || analyticsReducedMotion() || from === value) {
+      settle();
+      return undefined;
+    }
+    const t0 = performance.now();
+    let raf = requestAnimationFrame(function step(now) {
+      const p = Math.min(1, (now - t0) / 600);
+      const v = Math.round(from + (value - from) * (1 - Math.pow(1 - p, 3)));
+      shownRef.current = v;
+      setShown(v);
+      if (p < 1) raf = requestAnimationFrame(step);
+    });
+    // Cut short (unmount, another change): the next run starts from where this stopped.
+    return () => cancelAnimationFrame(raf);
+  }, [value, resetKey]);
+
+  if (analyticsReducedMotion() || !Number.isFinite(value)) return value;
+  // The render that switches windows, before the effect restarts the count.
+  return keyRef.current === resetKey ? shown : 0;
+}
+
+const STOPPED_MARKS_CAP = 20;
+
+/** One ◆ per stopped exposure under the Stopped figure, in its outcome's colour
+    (blocked first, then denied — the legend's order), capped with "+N".
+    aria-hidden: the total is the figure above and the split is the legend. */
+function StoppedMarks({ blocked, denied }) {
+  const total = blocked + denied;
+  if (total <= 0) return null;
+  const shownBlocked = Math.min(blocked, STOPPED_MARKS_CAP);
+  const shownDenied = Math.min(denied, STOPPED_MARKS_CAP - shownBlocked);
+  const marks = [];
+  for (let i = 0; i < shownBlocked; i++) marks.push(ANALYTICS_OUTCOMES[0].color);
+  for (let i = 0; i < shownDenied; i++) marks.push(ANALYTICS_OUTCOMES[1].color);
+  return (
+    <div className="pf-marks" aria-hidden="true" title={blocked + " blocked · " + denied + " denied"}>
+      {marks.map((color, i) => (
+        <span key={i} className="pf-mark" style={{ color }}>◆</span>
+      ))}
+      {total > marks.length ? <span className="pf-more">+{total - marks.length}</span> : null}
+    </div>
+  );
+}
+
 function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
   const [days, setDays] = useState(14);
   const [busyExport, setBusyExport] = useState(null);
@@ -230,6 +295,13 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
   // The reading the sidebar and the header use (app.jsx), so "off" means the same here.
   const protection = protectionState(state, enforcingCount(state));
   const guardOff = protection.kind === "off";
+
+  // The hero figures and tile numbers count up per window (useCountUp).
+  const shownNewExposures = useCountUp(newExposures, days);
+  const shownStopped = useCountUp(stopped, days);
+  const shownRate = useCountUp(sessionRate != null ? sessionRate : stats.sessions, days);
+  const shownNeverFired = useCountUp(neverFired, days);
+  const shownFired = useCountUp(stats.rules.length, days);
 
   const exportReport = (format) => {
     setBusyExport(format);
@@ -343,7 +415,7 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
         </div>
         <div className="pairfigs">
           <div className="pf">
-            <div className="pf-num">{newExposures}</div>
+            <div className="pf-num">{shownNewExposures}</div>
             <div className="pf-lab">New exposure{newExposures === 1 ? "" : "s"} surfaced</div>
             {exposureDelta ? (
               <div className={"pf-delta " + exposureDelta.tone}>
@@ -355,8 +427,9 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
             {daily.length > 1 ? <MicroSpark data={daily.map((d) => d.total)} color="var(--c1)" width={240} height={46} /> : null}
           </div>
           <div className="pf">
-            <div className="pf-num">{stopped}</div>
+            <div className="pf-num">{shownStopped}</div>
             <div className="pf-lab">Stopped by the guard</div>
+            <StoppedMarks blocked={outcomeTotal("blocked")} denied={outcomeTotal("denied")} />
             {stoppedDelta ? (
               <div className={"pf-delta " + stoppedDelta.tone}>
                 {stoppedDelta.arrow} {stoppedDelta.text}
@@ -421,7 +494,7 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
             window (main fills it from the session store); with none, there is
             no rate to state and the count stands on its own. */}
         <Kpi
-          num={sessionRate != null ? sessionRate + "%" : String(stats.sessions)}
+          num={sessionRate != null ? shownRate + "%" : String(shownRate)}
           label="Sessions flagged"
           note={
             sessionRate == null
@@ -446,12 +519,12 @@ function AnalyticsScreen({ state, onOpenRule, onGoRules }) {
           />
         ) : null}
         <Kpi
-          num={neverFired + " / " + totalRules}
+          num={shownNeverFired + " / " + totalRules}
           label="Rules never triggered"
           note={neverFired === totalRules ? "no rule on Guardrails fired in this window" : "quiet rules are not broken rules"}
         />
         <Kpi
-          num={String(stats.rules.length)}
+          num={String(shownFired)}
           label="Rules that fired"
           note={
             (firedRadarOnly > 0 ? "incl. " + firedRadarOnly + " Radar-only · " : "") +

@@ -213,6 +213,7 @@ function ApprovalActions({ request, state, busy, answer, autoFocus }) {
   return (
     <div className="ap-actions">
       <button ref={denyRef} className="btn danger primary" disabled={!!busy} title="Deny (Esc)" onClick={() => answer("deny")}>
+        {busy ? null : <HoldRing request={request} />}
         {busy === "deny" ? "Denying…" : "Deny"}
       </button>
       <button className="btn good" disabled={!!busy} title={"Allow once (" + AP_MOD_KEY + "Enter)"} onClick={() => answer("allow")}>
@@ -351,19 +352,34 @@ function breakPath(text) {
     .flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
 }
 
-/** Ticks once a second against the request's own deadline, so a re-render or a
-    slept laptop can't desynchronise it from what the guard will actually do. */
-function ApprovalCountdown({ request, state }) {
-  const deadline = Date.parse(request.at) + (request.hold_seconds || 60) * 1000;
-  const [left, setLeft] = useState(Math.max(0, Math.round((deadline - Date.now()) / 1000)));
+/** The hold window as a clock: milliseconds left before the guard gives up
+    waiting, re-read once a second against the request's own deadline so a
+    re-render or a slept laptop can't desynchronise it from what the guard will
+    actually do. `epoch` bumps when ticks were missed (sleep, a throttled
+    window) so a time-driven animation can restart at the true position. */
+function useHoldClock(request) {
+  const hold = (request.hold_seconds || 60) * 1000;
+  const deadline = Date.parse(request.at) + hold;
+  const [ms, setMs] = useState(() => Math.max(0, deadline - Date.now()));
+  const [epoch, setEpoch] = useState(0);
 
   useEffect(() => {
-    const tick = setInterval(
-      () => setLeft(Math.max(0, Math.round((deadline - Date.now()) / 1000))),
-      1000,
-    );
+    let last = Date.now();
+    const tick = setInterval(() => {
+      const now = Date.now();
+      if (now - last > 2500) setEpoch((e) => e + 1);
+      last = now;
+      setMs(Math.max(0, deadline - now));
+    }, 1000);
     return () => clearInterval(tick);
   }, [deadline]);
+
+  return { hold, deadline, ms, epoch };
+}
+
+function ApprovalCountdown({ request, state }) {
+  const { deadline, ms } = useHoldClock(request);
+  const left = Math.round(ms / 1000);
 
   if (!Number.isFinite(deadline)) return null;
   return (
@@ -376,5 +392,36 @@ function ApprovalCountdown({ request, state }) {
             ? "then " + approvalAgent(request, state) + " asks"
             : "then " + approvalAgent(request, state) + " warns + continues"}
     </span>
+  );
+}
+
+/** The hold window drawn on the Deny button: a ring that empties as the
+    countdown beside the title runs down (same deadline, same clock). The sweep
+    is one linear CSS animation over the whole window, started part-way through
+    by a negative delay fixed per epoch; under reduced motion the animation is
+    off and the inline offset (re-read each tick) steps once a second instead.
+    aria-hidden: the seconds are already read out by ApprovalCountdown. */
+function HoldRing({ request }) {
+  const { hold, deadline, ms, epoch } = useHoldClock(request);
+  // Frozen per epoch: a changing delay would shift a running animation twice.
+  const elapsed = useMemo(() => Math.max(0, hold - ms), [epoch, deadline]);
+  if (!Number.isFinite(deadline) || hold <= 0) return null;
+  return (
+    <svg className="ap-ring" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+      <circle className="ap-ring-track" cx="8" cy="8" r="6" />
+      <circle
+        key={epoch}
+        className="ap-ring-sweep"
+        cx="8"
+        cy="8"
+        r="6"
+        pathLength="100"
+        style={{
+          strokeDashoffset: 100 * (1 - Math.min(1, ms / hold)),
+          animationDuration: hold + "ms",
+          animationDelay: -elapsed + "ms",
+        }}
+      />
+    </svg>
   );
 }
