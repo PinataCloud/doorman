@@ -1,4 +1,4 @@
-import { exposureGroups, radarRows } from "../../lib/app-views.js";
+import { exposureGroups, exposurePlace, radarRows } from "../../lib/app-views.js";
 import type { CliCommand } from "../command.js";
 import { plural } from "../ui.js";
 import { SEVERITIES, cardTitle, oneLine, paintSeverity, ruleLabels, severityLine, withEngine, type Severity } from "./data-shared.js";
@@ -61,7 +61,7 @@ export const scanCommand: CliCommand = {
           "",
           ...ui.table(
             ["SEVERITY", "TITLE", "PLACE", "NEW SIGHTINGS", "ID"],
-            groups.map((g) => [paintSeverity(s, g.face.severity), oneLine(cardTitle(g.face, labels)), g.face.place, String(g.rows.length), g.face.finding_id]),
+            groups.map((g) => [paintSeverity(s, g.face.severity), oneLine(cardTitle(g.face, labels)), exposurePlace(g.face), String(g.rows.length), g.face.finding_id]),
             { keep: [0, 4], drop: [3] },
           ),
           "",

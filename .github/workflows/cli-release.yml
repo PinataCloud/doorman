@@ -2,7 +2,9 @@
 # `v*` releases, with its own version in cli/package.json.
 #
 # Cutting a release:
-#   1. bump "version" in cli/package.json, commit;
+#   1. bump "version" in cli/package.json, write its `## CLI <x.y.z> — <date>`
+#      section in CHANGELOG.md (the release notes, and what `doorman
+#      changelog` and `doorman update` show), commit;
 #   2. push a matching tag: `git tag cli-v<x.y.z> && git push origin cli-v<x.y.z>`.
 # Run workflow (workflow_dispatch) re-runs an existing tag; npm refuses to
 # publish a version twice, so a re-run only completes the GitHub release.
@@ -58,6 +60,14 @@ jobs:
           if [ "$version" != "$TAG" ]; then
             echo "::error::tag $TAG does not match cli/package.json ($version)"; exit 1
           fi
+      # Every release needs its CHANGELOG.md section: missing, the release
+      # stops here, before testing or packing. The install line goes on top.
+      - name: Release notes
+        run: |
+          {
+            printf '```sh\nnpm install -g @pinata/doorman@%s\n```\n\n' "${TAG#cli-v}"
+            node scripts/release-notes.mjs cli "$TAG"
+          } > "$RUNNER_TEMP/release-notes.md"
       - run: npm run typecheck
       - run: npm test
       # Compiles, assembles dist/cli-package and proves the bin runs on its own.
@@ -80,6 +90,8 @@ jobs:
           "$scratch/node_modules/.bin/doorman" --version
           "$scratch/node_modules/.bin/doorman" status
           "$scratch/node_modules/.bin/doorman" status --json > /dev/null
+          # The bundled CHANGELOG.md, which `doorman update` shows after installing.
+          "$scratch/node_modules/.bin/doorman" changelog > /dev/null
       - name: Publish to npm
         if: env.HAS_NPM_TOKEN == 'true'
         working-directory: dist/cli-package
@@ -104,6 +116,6 @@ jobs:
           version=${TAG#cli-v}
           if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$REPO" --title "Doorman CLI $version" \
-              --notes "npm install -g @pinata/doorman@$version" --latest=false
+              --notes-file "$RUNNER_TEMP/release-notes.md" --latest=false
           fi
           gh release upload "$TAG" --repo "$REPO" --clobber "${{ steps.pack.outputs.tarball }}"

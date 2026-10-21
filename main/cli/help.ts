@@ -63,7 +63,7 @@ export const HELP_GROUPS: readonly HelpGroup[] = [
     ],
     examples: [
       ["doorman findings --severity high", "high and critical exposures"],
-      ["doorman findings review <id>", "mark one reviewed"],
+      ["doorman findings resolve <id>", "mark one resolved"],
     ],
   },
   {
@@ -104,6 +104,8 @@ export const HELP_GROUPS: readonly HelpGroup[] = [
       ["model", "The injection classifier: which model runs, downloads"],
       ["config", "Settings shared with the app"],
       ["update", "Check for a newer Doorman CLI and install it"],
+      ["changelog", "What changed in each release of the CLI"],
+      ["completion", "Tab completion for zsh, bash and fish"],
     ],
     examples: [
       ["doorman config set retention_days 30", "keep 30 days of history"],
@@ -119,7 +121,8 @@ const FIRST_STEPS: readonly (readonly [string, string])[] = [
   ["doorman watch", "answer held calls here while the app is closed"],
 ];
 
-const GLOBAL_FLAGS: readonly (readonly [string, string])[] = [
+/** Flags every command takes (index.ts strips them before parsing). */
+export const GLOBAL_FLAGS: readonly (readonly [string, string])[] = [
   ["--json", "machine-readable output on stdout"],
   ["--verbose", "log what happens to stderr"],
   ["--quiet, -q", "no progress lines or update notice"],

@@ -26,7 +26,7 @@
  * with plain `node`, so nothing here may import from outside main/guard/.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SecurityDetectorId, SecuritySeverity } from "./security-detect.js";
 // ApprovalRequest.detectors is string[] rather than SecurityDetectorId[]: an
@@ -146,6 +146,28 @@ export function parsePresence(json: string): PresenceRecord | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** The presence folder, parsed. A missing folder is no records; a file
+ * half-written on this read is skipped (the next read has it). */
+export function readPresence(guardDir: string): PresenceRecord[] {
+  let names: string[];
+  try {
+    names = readdirSync(presenceDir(guardDir));
+  } catch {
+    return [];
+  }
+  const out: PresenceRecord[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const rec = parsePresence(readFileSync(join(presenceDir(guardDir), name), "utf8"));
+      if (rec) out.push(rec);
+    } catch {
+      // gone since the listing
+    }
+  }
+  return out;
 }
 
 /** What the guard asks. Everything here is safe to display: the preview is

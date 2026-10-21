@@ -194,14 +194,17 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   ctx.commandName = command.name;
   ctx.json = json;
   ctx.quiet = quiet;
+  // `completion` runs on every Tab press, its stderr discarded: nothing in the
+  // background, and no notice someone would never see.
+  const background = command.name !== "completion";
   // Whether a newer CLI is out: asked at most once a day, while the command
   // runs, and said on stderr after its output (update-check.ts).
-  const updateNotice = command.name === "update" ? undefined : startUpdateCheck(ctx, env.packageName ?? DEFAULT_PACKAGE, env.version);
+  const updateNotice = command.name === "update" || !background ? undefined : startUpdateCheck(ctx, env.packageName ?? DEFAULT_PACKAGE, env.version);
   let code: number;
   try {
     // The classifier's model, if it is on and not here yet: fetched by a
     // detached child while this command runs (auto-download.ts).
-    maybeStartModelDownload(ctx, command.name);
+    if (background) maybeStartModelDownload(ctx, command.name);
     const result = await command.run(ctx, { values: parsed.values, positionals: parsed.positionals });
     if (json) given.stdout.write(`${JSON.stringify(result.data, null, 2)}\n`);
     else if (result.raw) given.stdout.write(result.text.length > 0 ? `${result.text.join("\n")}\n` : "");
@@ -222,7 +225,7 @@ export async function main(argv: readonly string[], io?: CliEnvironment): Promis
   // A background model download that failed and nobody was told (model.ts).
   let failed: string | undefined;
   try {
-    failed = modelDownloadFailureNotice(ctx, command.name);
+    failed = background ? modelDownloadFailureNotice(ctx, command.name) : undefined;
   } catch {
     failed = undefined; // a notice never fails a command
   }

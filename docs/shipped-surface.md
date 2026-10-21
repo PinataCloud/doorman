@@ -184,6 +184,9 @@ Audited from the built `dist/cli-package` (2026-10-16, 0.1.0): 150 files,
 - `LICENSE`, `NOTICE`, `README.md` (from `cli/README.md`), `package.json`
   (from `cli/package.json`; its one dependency, `@huggingface/tokenizers`, is
   pinned to the app's version).
+- `CHANGELOG.md` (from the repo root): what `doorman changelog` prints and
+  `doorman update` shows after installing. The build script fails if `files`
+  leaves out a top-level file or the changelog has no section for the version.
 
 Network: the same as the app, with npm in place of the app's updater. The CLI
 makes two requests on its own:
@@ -199,6 +202,14 @@ makes two requests on its own:
   it starts by itself while the classifier is on and the model is missing, as
   a detached `doorman model download --auto` child of whichever command
   noticed (`main/cli/auto-download.ts`).
+
+`doorman changelog`, and the what's-new step of `doorman update`, make no
+request: they read the bundled `CHANGELOG.md` (update runs the newly installed
+copy's `doorman changelog --since <old> --json` locally). When it can't be
+read, the GitHub release URL (`github.com/PinataCloud/doorman/releases`) is
+printed as text, never fetched. `doorman watch` reads the local process table
+(`ps`, and `lsof` on macOS) for its live-agents line; nothing leaves the
+machine.
 
 The second-opinion call stays loopback-only. URLs in the code beyond
 `huggingface.co`, `registry.npmjs.org`, `127.0.0.1` and schema ids are the

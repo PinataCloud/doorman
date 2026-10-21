@@ -47,9 +47,10 @@ import { MODEL_HOSTS, sandboxAllowCommand, sandboxPolicyBlock } from "./docker-s
 /** The child the CLI starts: the arguments after the CLI's own entry point. */
 export const AUTO_DOWNLOAD_ARGS = ["model", "download", "--auto"] as const;
 
-/** Commands that never start one: the explicit download itself, and the two
- * that are about to change what the plan needs (the next command catches up). */
-const NO_AUTO_DOWNLOAD = new Set(["model download", "model remove", "model select"]);
+/** Commands that never start one: the explicit download itself, the two
+ * that are about to change what the plan needs (the next command catches up),
+ * and `changelog`, which reads a bundled file (and runs under `update`). */
+const NO_AUTO_DOWNLOAD = new Set(["model download", "model remove", "model select", "changelog"]);
 
 /** After the n-th failure in a row, wait this long before trying again: the
  * app's 1 / 5 / 30 minutes, then once a day (a CLI has no "next launch"). */

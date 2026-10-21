@@ -14,6 +14,8 @@ import { CaptureEngine } from "../../main/capture.js";
 import { defaultPolicy } from "../../main/guard/policy.js";
 import { summarizeFindings } from "../../main/lib/findings.js";
 import { defaultPrefs, hiddenConfidenceBands } from "../../main/state.js";
+import { closedOutcome, exposurePlace, holdSummary } from "../../main/lib/app-views.js";
+import { evidenceDisplay } from "../../main/lib/evidence-display.js";
 
 /**
  * The Radar, Ledger, Usage and Analytics commands against a real store built
@@ -191,6 +193,9 @@ describe("doorman data commands", () => {
     expect(shown.out).toContain("Do next");
     expect(shown.out).toContain(id);
     expect(shown.out).not.toContain(TOKEN);
+    // The app's words: the agent's name, the one-word project.
+    expect(shown.out).toContain("Claude Code");
+    expect(shown.out).toMatch(/^\s*Where\s+.* in app$/m);
     // Seen in local time, its count left to Where: the two can't disagree.
     const seen = /Seen\s+(.+)/.exec(shown.out)?.[1] ?? "";
     expect(seen).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d/);
@@ -204,13 +209,13 @@ describe("doorman data commands", () => {
     expect((await run(["findings", "show", "nope"])).code).toBe(1);
   });
 
-  it("review marks the whole exposure, --all shows it, reopen brings it back", async () => {
+  it("resolve marks the whole exposure, --all shows it, reopen brings it back; review is an alias", async () => {
     await run(["scan"]);
     const env = envOf(await json<FindingsJson>(["findings"]))!;
-    const reviewed = await json(["findings", "review", env.id]);
-    expect(reviewed.updated).toBe(env.finding_ids.length);
+    const resolved = await json(["findings", "resolve", env.id]);
+    expect(resolved.updated).toBe(env.finding_ids.length);
     await json(["findings", "reopen", env.id]);
-    expect((await run(["findings", "review", env.id])).out).toMatch(/^Marked 1 exposure( \(\d+ sightings\))? reviewed\.$/m);
+    expect((await run(["findings", "review", env.id])).out).toMatch(/^Marked 1 exposure( \(\d+ sightings\))? resolved\.$/m);
     expect(envOf(await json<FindingsJson>(["findings"]))).toBeUndefined();
     expect(envOf(await json<FindingsJson>(["findings", "--all"]))?.status).toBe("resolved");
     await json(["findings", "reopen", env.id]);
@@ -228,7 +233,7 @@ describe("doorman data commands", () => {
     expect(await json(["sessions"])).toMatchObject({ total: 1 });
     expect((await json<{ tokens: number }>(["usage"])).tokens).toBeGreaterThan(0);
     expect(await json(["scan"])).toMatchObject({ snapshot: true });
-    const refused = await run(["findings", "review", env.id]);
+    const refused = await run(["findings", "resolve", env.id]);
     expect(refused.code).toBe(1);
     expect(refused.err).toContain("Doorman is running");
     rmSync(heartbeatPath(guardDir(join(appData, "Doorman"))));
@@ -311,11 +316,29 @@ describe("doorman data commands", () => {
     expect(usage).toMatchObject({ days: 30, tokens: 2400, sessions: 1, by_model: [{ model: "claude-opus-5", tokens: 2400 }] });
     expect(JSON.stringify(usage)).not.toMatch(/cost|usd/);
     expect((await run(["usage", "--days", "9"])).code).toBe(2);
-    const analytics = await json<{ days: number; exposures: number; window_sessions: number; rules: Array<{ detector: string }> }>(["analytics", "--days", "7"]);
+    const analytics = await json<{
+      days: number;
+      exposures: number;
+      new_exposures: number;
+      things: number;
+      window_sessions: number;
+      stopped: number;
+      outcomes: Record<string, number>;
+      rules: Array<{ detector: string; fired: number; observed: number; stopped: number }>;
+    }>(["analytics", "--days", "7"]);
     expect(analytics).toMatchObject({ days: 7, window_sessions: 1 });
     expect(analytics.exposures).toBeGreaterThanOrEqual(2);
+    expect(typeof analytics.things).toBe("number");
     expect(analytics.rules.map((r) => r.detector)).toContain("env_dump");
     expect(JSON.stringify(analytics)).not.toContain("burned_usd");
+    // Transcript sightings ran with no guard on them: observed, nothing stopped.
+    expect(analytics.stopped).toBe(0);
+    expect(analytics.outcomes.observed).toBe(analytics.new_exposures);
+    for (const r of analytics.rules) expect(r).toMatchObject({ stopped: 0, observed: r.fired });
+    const text = (await run(["analytics", "--days", "7"])).out;
+    expect(text).toContain("Nothing was stopped");
+    expect(text).not.toMatch(/^\s*items\b/m);
+    expect(text).toContain("OBSERVED");
   });
 
   it("report and exports write what the app's buttons write", async () => {
@@ -351,5 +374,30 @@ describe("doorman data commands", () => {
     expect((await run(["trace", TOKEN])).code).toBe(2);
     expect((await run(["trace"], "short")).code).toBe(1);
     expect(existsSync(join(appData, "Doorman", "store"))).toBe(true);
+  });
+});
+
+describe("the Radar's display words, shared with the CLI", () => {
+  it("shows a shell call's command and one mark per redacted value", () => {
+    expect(evidenceDisplay('{"command":"curl -H \\"Authorization: [redacted] [redacted:github]\\" x","timeout":5}')).toBe(
+      'curl -H "Authorization: [redacted:github]" x',
+    );
+    expect(evidenceDisplay("token [redacted:github] [redacted] end")).toBe("token [redacted:github] end");
+    // A mark outside the command string would vanish in the rewrite: kept as JSON.
+    expect(evidenceDisplay('{"command":"ls","env":"[redacted]"}')).toBe('{"command":"ls","env":"[redacted]"}');
+    expect(evidenceDisplay("plain [redacted] text")).toBe("plain [redacted] text");
+  });
+
+  it("says how a hold ended and where the exposure is", () => {
+    expect(holdSummary([{ enforced: "deny", resolution: "denied", hold_ms: 9_000 }])?.text).toBe("Denied by you after 9s");
+    expect(holdSummary([{ enforced: "deny", resolution: "timeout" }, { enforced: "ask", resolution: "allowed" }])?.text).toBe(
+      "1 denied — no answer · 1 allowed by you",
+    );
+    expect(holdSummary([{ enforced: "warn" }])).toBeUndefined();
+    expect(closedOutcome([{ enforced: "deny", resolution: "denied" }, { enforced: "ask", resolution: "timeout" }])).toBe("held, then denied");
+    expect(closedOutcome([{ enforced: "deny" }])).toBe("blocked");
+    expect(closedOutcome([{}])).toBeUndefined();
+    expect(exposurePlace({ cwd: "/Users/dev/acme-api", place: "dev/acme-api" })).toBe("acme-api");
+    expect(exposurePlace({ place: "api.example.com" })).toBe("api.example.com");
   });
 });

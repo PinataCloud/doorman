@@ -5,6 +5,7 @@ import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError } from "../output.js";
 import { checkForUpdate, updateCachePath } from "../update-check.js";
+import { RELEASES_URL, cliPackageDir, releaseLines, type ChangelogRelease } from "./changelog.js";
 
 /** How this copy of the CLI was installed, which decides how it updates. */
 export type InstallKind = "global" | "npx" | "project" | "source";
@@ -20,11 +21,6 @@ export function defaultNpmRunner(platform: NodeJS.Platform): NpmRunner {
     const r = spawnSync(npmBin(platform), [...args], { encoding: "utf8", shell: platform === "win32", windowsHide: true });
     return { status: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ? String(r.error) : ""}` };
   };
-}
-
-/** The package directory this CLI runs from (three levels above build/main/cli). */
-export function cliPackageDir(): string {
-  return join(__dirname, "..", "..", "..", "..");
 }
 
 /** Where this copy came from: npm's global root, an npx cache, a project's
@@ -46,6 +42,32 @@ export function installKind(packageDir: string, npm: NpmRunner): InstallKind {
   return "project";
 }
 
+/**
+ * What changed since `since`, told by the copy just installed in `packageDir`:
+ * its own `doorman changelog --since`, so its CHANGELOG.md read its way.
+ * Undefined when it can't say. Local only: nothing is fetched.
+ */
+export function whatsNew(packageDir: string, since: string, env: NodeJS.ProcessEnv): ChangelogRelease[] | undefined {
+  const bin = join(packageDir, "build", "main", "cli", "index.js");
+  const r = spawnSync(process.execPath, [bin, "changelog", "--since", since, "--json"], {
+    encoding: "utf8",
+    timeout: 15_000,
+    windowsHide: true,
+    env: { ...env, DOORMAN_NO_UPDATE_CHECK: "1" },
+  });
+  if (r.status !== 0) return undefined;
+  try {
+    const raw: unknown = JSON.parse(r.stdout);
+    if (!raw || typeof raw !== "object" || !("versions" in raw) || !Array.isArray(raw.versions)) return undefined;
+    return raw.versions.filter(
+      (v: unknown): v is ChangelogRelease =>
+        !!v && typeof v === "object" && "version" in v && typeof v.version === "string" && "date" in v && typeof v.date === "string" && "body" in v && typeof v.body === "string",
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 function installedVersion(packageDir: string): string | undefined {
   try {
     const raw: unknown = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
@@ -63,6 +85,7 @@ export const updateCommand: CliCommand = {
   flags: [["--check", "only say whether an update is available (exit 0 either way)"]],
   notes: [
     "Doorman checks npm for a newer version at most once a day and says so after a command. Turn that off with DOORMAN_NO_UPDATE_CHECK=1 (it is also off under CI and when stderr is not a terminal).",
+    "After installing, it shows what changed since the version you had, from the new version's own `doorman changelog`.",
   ],
   examples: [
     ["doorman update --check", "is there a newer version?"],
@@ -108,9 +131,15 @@ export const updateCommand: CliCommand = {
         `Run \`npm install -g ${spec}\` yourself.`,
       );
     }
+    const changes = whatsNew(packageDir, current, ctx.io.env);
+    const releaseNotes = `${RELEASES_URL}/tag/cli-v${now}`;
+    const updated = ui.mark("ok", s.ok(`Updated the Doorman CLI from ${current} to ${now}.`));
     return {
-      data: { ...status, updated: true, install: kind, version: now, cache: updateCachePath(ctx.dataDir) },
-      text: [ui.mark("ok", s.ok(`Updated the Doorman CLI from ${current} to ${now}.`))],
+      data: { ...status, updated: true, install: kind, version: now, cache: updateCachePath(ctx.dataDir), changes: changes ?? null, release_notes: releaseNotes },
+      text:
+        changes === undefined
+          ? [updated, ui.mark("info", `What changed: ${releaseNotes}`)]
+          : [updated, ...(changes.length > 0 ? ["", ...releaseLines(ui, changes)] : [])],
     };
   },
 };

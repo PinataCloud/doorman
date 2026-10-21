@@ -7,13 +7,14 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { heldCard, promptLine, startWatch } from "../../main/cli/commands/watch.js";
+import { heldCard, liveLine, promptLine, startWatch, type WatchSession } from "../../main/cli/commands/watch.js";
 import { CliContext, type CliEnvironment } from "../../main/cli/context.js";
 import { main } from "../../main/cli/index.js";
 import { stripAnsi, visibleLength } from "../../main/cli/output.js";
 import { Ui } from "../../main/cli/ui.js";
 import { guardDir } from "../../main/enforcement.js";
-import { cappedPreview, heartbeatPath, pendingDir, pidAlive, requestPath, writeRequest, type ApprovalRequest } from "../../main/guard/handshake.js";
+import { cappedPreview, heartbeatPath, pendingDir, pidAlive, requestPath, writePresence, writeRequest, type ApprovalRequest } from "../../main/guard/handshake.js";
+import type { AgentProcess, ProcessInventory } from "../../main/lib/agent-processes.js";
 
 /**
  * `doorman watch` in a second terminal: a held call has to reach a person who
@@ -241,6 +242,63 @@ describe("doorman watch", () => {
     }, 20_000);
   });
 
+  describe("the agents running now", () => {
+    const started = new Date(Date.now() - 10 * 60_000).toISOString();
+    const agent = (pid: number): AgentProcess => ({ pid, ppid: 1, source: "claude-code", command: "claude", tty: "ttys001", started_at: started, cwd: "/work/repo" });
+    /** A process table as `ps` reads it: launchd, then the agents. */
+    const table = (agents: AgentProcess[]) => async (now: Date): Promise<ProcessInventory> => ({
+      at: now.toISOString(),
+      rows: [{ pid: 1, ppid: 0, started_at: started, command: "/sbin/launchd" }, ...agents.map(({ pid, ppid, tty, started_at, command }) => ({ pid, ppid, tty, started_at, command }))],
+      agents,
+    });
+    async function liveWatch(opts: { tty: boolean; stdio?: boolean }, readProcesses: (now: Date) => Promise<ProcessInventory>) {
+      const { env, seen } = environment({ tty: opts.tty });
+      const ctx = new CliContext(env);
+      const session = await startWatch(ctx, { stdio: opts.stdio, readProcesses });
+      return { ctx, seen, session };
+    }
+    async function finish(w: { ctx: CliContext; session: WatchSession }) {
+      w.session.stop("test");
+      await w.session.done;
+      w.ctx.releaseWrite();
+    }
+
+    it("counts them in one line, from the process table and the guard's presence records", async () => {
+      // 4242 made a tool call just now; 4343 has been quiet since it started.
+      writePresence(guardDir(dataDir), { session_id: "s-live", source: "claude-code", pid: 4242, at: new Date().toISOString() });
+      const w = await liveWatch({ tty: false }, table([agent(4242), agent(4343)]));
+      await until(() => w.seen.err.includes("Agents running now"), "the live line");
+      expect(w.seen.err).toContain("Agents running now: 1 working, 1 quiet.");
+      await finish(w);
+    }, 20_000);
+
+    it("says when none is running, in place on a terminal", async () => {
+      const w = await liveWatch({ tty: true }, table([]));
+      await until(() => w.seen.err.includes("No agent running right now."), "the live line");
+      expect(w.seen.err).toContain("\r\u001b[2KNo agent running right now.");
+      await finish(w);
+    }, 20_000);
+
+    it("says nothing without a process table, and never reads one under --stdio", async () => {
+      let reads = 0;
+      const empty = async (now: Date): Promise<ProcessInventory> => {
+        reads += 1;
+        return { at: now.toISOString(), rows: [], agents: [] };
+      };
+      const w = await liveWatch({ tty: false }, empty);
+      await until(() => reads > 0, "the read");
+      await delay(100);
+      expect(w.seen.err).not.toMatch(/agents? running/i);
+      await finish(w);
+
+      reads = 0;
+      const s = await liveWatch({ tty: false, stdio: true }, empty);
+      await delay(200);
+      await finish(s);
+      expect(reads).toBe(0);
+    }, 20_000);
+  });
+
   describe("another doorman watch already answering", () => {
     let other: ChildProcess | undefined;
     afterEach(() => {
@@ -421,5 +479,21 @@ describe("the held-call card", () => {
     expect(visibleLength(promptLine(ui, request, Date.now()))).toBeGreaterThan(50);
     stream.columns = 50;
     expect(visibleLength(promptLine(ui, request, Date.now()))).toBeLessThan(50);
+  });
+});
+
+describe("the live line", () => {
+  const rich = Ui.for({ isTTY: true, columns: 80 }, { TERM: "xterm-256color", LANG: "en_US.UTF-8" }, "darwin");
+  const plain = Ui.for({}, {}, "darwin");
+
+  it("counts each state beside a dot, as the app's live sessions do", () => {
+    expect(stripAnsi(liveLine(rich, { held: 0, working: 1, waiting: 1, idle: 0 }))).toBe("● 1 working · ● 1 waiting for you");
+    expect(stripAnsi(liveLine(rich, { held: 1, working: 0, waiting: 0, idle: 2 }))).toBe("● 1 held · ● 2 quiet");
+    expect(liveLine(plain, { held: 0, working: 2, waiting: 1, idle: 0 })).toBe("Agents running now: 2 working, 1 waiting for you.");
+  });
+
+  it("says when no agent is running", () => {
+    expect(stripAnsi(liveLine(rich, { held: 0, working: 0, waiting: 0, idle: 0 }))).toBe("○ No agent running right now");
+    expect(liveLine(plain, { held: 0, working: 0, waiting: 0, idle: 0 })).toBe("No agent running right now.");
   });
 });

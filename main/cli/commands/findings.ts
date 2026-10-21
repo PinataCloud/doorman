@@ -1,7 +1,20 @@
-import { exposureGroups, radarFeedRows, radarRows, type ExposureGroup, type FindingOutcome, type RadarRow } from "../../lib/app-views.js";
+import {
+  closedOutcome,
+  exposureGroups,
+  exposurePlace,
+  holdSummary,
+  radarFeedRows,
+  radarRows,
+  type ExposureGroup,
+  type FindingOutcome,
+  type RadarRow,
+} from "../../lib/app-views.js";
 import { DETECTOR_GUIDANCE } from "../../lib/ai-guidance.js";
+import { evidenceDisplay } from "../../lib/evidence-display.js";
 import { confidenceOf, SEVERITY_RANK, type FindingStatus } from "../../lib/findings.js";
 import { maskFindingRow, maskTurnText } from "../../lib/masking.js";
+import { sourceLabel } from "../../lib/transcript-sources-registry.js";
+import type { TurnSource } from "../../lib/turns.js";
 import { hiddenConfidenceBands } from "../../state.js";
 import type { CliCommand } from "../command.js";
 import { ago, CliError, localTime } from "../output.js";
@@ -32,21 +45,12 @@ const OUTCOME_WORDS: Record<FindingOutcome | "mixed", string> = {
   mixed: "Mixed",
 };
 
-/** How a held call ended (renderer/components.jsx RESOLUTION_LABELS). */
-const RESOLUTION_WORDS: Record<string, string> = {
-  allowed: "you allowed it",
-  denied: "you denied it",
-  timeout: "nobody answered, denied",
-  unattended: "app was closed, the agent's own fallback applied",
-  unavailable: "app was closed, denied, not run",
-};
-
-/** The triage verdicts as the Radar names them. */
+/** The triage verdicts as the Radar names them (radar.jsx VERDICT_LABELS). */
 const STATUS_WORDS: Record<FindingStatus, string> = {
-  open: "open",
-  resolved: "reviewed",
-  false_positive: "false positive",
-  accepted_risk: "accepted risk",
+  open: "Open",
+  resolved: "Resolved",
+  false_positive: "False positive",
+  accepted_risk: "Accepted risk",
 };
 
 /** The card's three lines (radar.jsx ExposureStory): the account's story,
@@ -56,9 +60,9 @@ function story(row: RadarRow, ran: boolean): { what: string; next: string } {
   const account = row.account;
   const guidance = DETECTOR_GUIDANCE[row.detector];
   const told = account ? account.sentence : (guidance?.blurb ?? "");
-  const so = !ran ? "Nothing left this machine: the call was stopped before it ran, so there is nothing to undo." : (account?.so ?? "");
+  const so = !ran ? "Nothing left this computer: the call was stopped before it ran, so there is nothing to undo." : (account?.so ?? "");
   const next = !ran
-    ? "Nothing to clean up. Mark it reviewed, or loosen the rule if this should have been allowed."
+    ? "Nothing to clean up. Mark it Resolved, or loosen the rule if this should have been allowed."
     : account
       ? account.next
       : (guidance?.fix ?? "");
@@ -74,8 +78,10 @@ function exposureJson(g: ExposureGroup<RadarRow>, labels: Record<string, string>
     rule_label: ruleLabel(g.face, labels),
     place: g.face.place,
     place_kind: g.face.place_kind,
+    place_label: exposurePlace(g.face),
     status: g.bucket === "open" ? "open" : g.face.status,
     outcome: g.outcome,
+    outcome_summary: closedOutcome(g.rows) ?? "observed",
     sightings: g.rows.length,
     things: g.things,
     sessions: g.sessions,
@@ -98,7 +104,7 @@ export const findingsCommand: CliCommand = {
     scan: { type: "boolean", default: false },
   },
   flags: [
-    ["--all", "include reviewed exposures (and their verdict)"],
+    ["--all", "include exposures with a verdict (and say which)"],
     ["--severity <min>", "critical, high, medium or low: that severity and worse"],
     ["--rule <id>", "one rule, by id (secret_file_read) or name"],
     ["--session <id>", "exposures seen in one session (id or prefix)"],
@@ -108,12 +114,12 @@ export const findingsCommand: CliCommand = {
   notes: [
     "One row per exposure (a rule at a place: a file, a server, a project), worst first, as the app's Radar screen lists them. Sightings in confidence bands the app hides, and false positives unless you show them there, are left out here too.",
     "So are sightings whose transcript is gone or no longer holds them, as of the last scan (the app's, or `--scan`).",
-    "The ID column is the exposure's newest worst sighting: pass it to `doorman findings show`.",
+    "The ID column is the exposure's newest worst sighting: pass it to `doorman findings show`. ACTION says what the guard did when it did more than observe.",
   ],
   examples: [
     ["doorman findings --scan", "read new transcripts, then list open exposures"],
     ["doorman findings --severity high", "high and critical exposures"],
-    ["doorman findings --all --limit 0", "every exposure, reviewed ones too"],
+    ["doorman findings --all --limit 0", "every exposure, resolved ones too"],
   ],
   async run(ctx, args) {
     const v = args.values;
@@ -154,12 +160,12 @@ export const findingsCommand: CliCommand = {
       const s = ctx.style;
       const ui = ctx.ui;
       const filtered = minSeverity !== undefined || rule !== undefined || session !== undefined;
-      // Nothing open anywhere: the mark, and how many exposures the Radar's
-      // Reviewed tab holds (filters make "nothing open" a narrower claim).
+      // Nothing open anywhere: the mark, and how many exposures carry a
+      // verdict (filters make "nothing open" a narrower claim).
       const allClear = open.length === 0 && !filtered && ui.decorate;
-      const reviewed = allClear ? new Set(feed.filter((r) => r.status !== "open").map((r) => r.exposure_key)).size : 0;
+      const judged = allClear ? new Set(feed.filter((r) => r.status !== "open").map((r) => r.exposure_key)).size : 0;
       const text: string[] = allClear
-        ? markBeside(ui, [ui.mark("ok", s.bold(s.ok("All clear"))), s.dim(`No open exposures${reviewed > 0 ? `; ${plural(reviewed, "exposure")} reviewed` : ""}.`)], 40, 1)
+        ? markBeside(ui, [ui.mark("ok", s.bold(s.ok("All clear"))), s.dim(`No open exposures${judged > 0 ? `; ${plural(judged, "exposure")} with a verdict` : ""}.`)], 40, 1)
         : [
             open.length === 0
               ? ui.mark("ok", s.ok("No open exposures."))
@@ -173,26 +179,31 @@ export const findingsCommand: CliCommand = {
               : filtered
                 ? "Without --severity, --rule or --session, `doorman findings --all` lists every exposure."
                 : v.all !== true
-                  ? "`doorman findings --all` lists reviewed exposures too."
+                  ? "`doorman findings --all` lists exposures with a verdict too."
                   : "`doorman sessions` lists the sessions read so far.",
           ),
         );
       } else {
-        const header = ["SEVERITY", "TITLE", "PLACE", "SIGHTINGS", "LAST SEEN", ...(v.all === true ? ["STATUS"] : []), "ID"];
+        // The outcome only where the guard did more than observe (the app's closed row).
+        const outcomes = shown.map((g) => closedOutcome(g.rows) ?? "");
+        const acted = outcomes.some(Boolean);
+        const header = ["SEVERITY", "TITLE", "PLACE", ...(acted ? ["ACTION"] : []), "SIGHTINGS", "LAST SEEN", ...(v.all === true ? ["STATUS"] : []), "ID"];
+        const sightingsAt = acted ? 4 : 3;
         text.push(
           "",
           ...ui.table(
             header,
-            shown.map((g) => [
+            shown.map((g, i) => [
               paintSeverity(s, g.face.severity),
               oneLine(cardTitle(g.face, labels)),
-              oneLine(g.face.place),
+              oneLine(exposurePlace(g.face)),
+              ...(acted ? [outcomes[i]!] : []),
               String(g.rows.length),
               ago(g.latest, ctx.io.now()),
-              ...(v.all === true ? [g.bucket === "open" ? "open" : STATUS_WORDS[g.face.status]] : []),
+              ...(v.all === true ? [STATUS_WORDS[g.bucket === "open" ? "open" : g.face.status]] : []),
               g.face.finding_id,
             ]),
-            { keep: [0, header.length - 1], drop: [3, 4] },
+            { keep: [0, header.length - 1], drop: [sightingsAt, sightingsAt + 1] },
           ),
         );
       }
@@ -229,8 +240,15 @@ export const findingsShowCommand: CliCommand = {
       const group = exposureGroups(all.filter((r) => r.exposure_key === row.exposure_key && (r.status === "open" ? "open" : "triaged") === bucket))[0]!;
       const masked = maskFindingRow(row);
       const { what, next } = story(masked, group.ran);
-      const sources = [...new Set(group.rows.map((r) => r.source))];
-      const where = `${group.rows.length} sighting${group.rows.length === 1 ? "" : "s"}${group.sessions > 0 ? ` · ${group.sessions} session${group.sessions === 1 ? "" : "s"}` : ""} in ${row.place}`;
+      const agents = [...new Set(group.rows.map((r) => sourceLabel(r.source as TurnSource)))];
+      const place = exposurePlace(group.face);
+      const where = `${group.rows.length} sighting${group.rows.length === 1 ? "" : "s"}${group.sessions > 0 ? ` · ${group.sessions} session${group.sessions === 1 ? "" : "s"}` : ""}${place ? ` in ${place}` : ""}`;
+      // The Action pill and, for a hold, how it ended (radar.jsx holdSummary);
+      // the app's dashes become commas after the line's own.
+      const hold = holdSummary(group.rows);
+      const holdText = hold ? `${hold.text.charAt(0).toLowerCase()}${hold.text.slice(1)}`.replace(/ — /g, ", ") : undefined;
+      const action = holdText ? `${OUTCOME_WORDS[group.outcome]} — ${holdText}` : OUTCOME_WORDS[group.outcome];
+      const excerpt = evidenceDisplay(masked.excerpt);
       let reveal: Record<string, unknown> | undefined;
       if (args.values.evidence === true) {
         const result = engine.revealFinding(row.finding_id);
@@ -253,6 +271,8 @@ export const findingsShowCommand: CliCommand = {
         rule_label: ruleLabel(row, labels),
         what,
         action: OUTCOME_WORDS[group.outcome],
+        ...(hold ? { hold_summary: hold.text } : {}),
+        excerpt_display: excerpt,
         where,
         do_next: next,
         exposure: exposureJson(group, labels),
@@ -267,12 +287,12 @@ export const findingsShowCommand: CliCommand = {
         s.dim(
           ui.list([
             row.detector === "credential_in_tool_arg" && row.account?.source_kind === "tool_output" ? "Credential in tool output" : ruleLabel(row, labels),
-            row.place,
-            ...sources,
-          ]),
+            place,
+            ...agents,
+          ].filter(Boolean)),
         ),
         "",
-        ...ui.kv([field("What", what), field("Action", OUTCOME_WORDS[group.outcome]), field("Where", where), field("Do next", next)]),
+        ...ui.kv([field("What", what), field("Action", action), field("Where", where), field("Do next", next)]),
         "",
         ...ui.kv([
           field("Status", STATUS_WORDS[row.status]),
@@ -281,8 +301,8 @@ export const findingsShowCommand: CliCommand = {
           field("Session", row.session_id),
           field("Tool", row.tool_name),
           field("Target", masked.target ? oneLine(masked.target, ui.width === undefined ? undefined : 120) : undefined),
-          field("Held", row.resolution ? RESOLUTION_WORDS[row.resolution] : undefined),
-          field("Excerpt", oneLine(masked.excerpt, ui.width === undefined ? undefined : 200)),
+          field("Answered", hold?.via ? `from ${hold.via}` : undefined),
+          field("Excerpt", oneLine(excerpt, ui.width === undefined ? undefined : 200)),
           field("ID", row.finding_id),
         ]),
       ];
@@ -300,17 +320,17 @@ export const findingsShowCommand: CliCommand = {
           text.push(ui.mark("warn", s.warn(`Couldn't read the evidence: ${String(reveal.error)}`)));
         }
       } else if (row.status === "open") {
-        text.push("", ui.next(`\`doorman findings review ${row.finding_id}\` marks it reviewed once handled.`));
+        text.push("", ui.next(`\`doorman findings resolve ${row.finding_id}\` marks it resolved once handled.`));
       }
       return { data, text };
     });
   },
 };
 
-/** `findings review|reopen|false-positive|accept-risk <id...>`: the Radar's
+/** `findings resolve|reopen|false-positive|accept-risk <id...>`: the Radar's
  * triage buttons. Like a card's button, each id marks its whole exposure
  * (every row on that card) unless --only. */
-function statusCommand(word: string, status: FindingStatus, summary: string): CliCommand {
+function statusCommand(word: string, status: FindingStatus, summary: string, note?: string): CliCommand {
   return {
     name: `findings ${word}`,
     summary,
@@ -321,6 +341,7 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
     notes: [
       "Each id marks its whole exposure (every sighting of that rule at that place), like the app's button. `doorman findings` lists the ids; a unique prefix is enough.",
       "Refuses while Doorman is running: do it in the app then.",
+      ...(note ? [note] : []),
     ],
     async run(ctx, args) {
       ctx.requireWritable(summary);
@@ -344,8 +365,8 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
         const what = `${plural(exposures, "exposure")}${updated === exposures ? "" : ` (${plural(updated, "sighting")})`}`;
         const text = [
           updated === 0
-            ? ctx.ui.mark("off", `Nothing changed: ${exposures === 1 ? "that exposure is" : "those exposures are"} already ${STATUS_WORDS[status]}.`)
-            : ctx.ui.mark("ok", `${status === "open" ? "Reopened" : "Marked"} ${what}${status === "open" ? "" : ` ${STATUS_WORDS[status]}`}.`),
+            ? ctx.ui.mark("off", `Nothing changed: ${exposures === 1 ? "that exposure is" : "those exposures are"} already ${STATUS_WORDS[status].toLowerCase()}.`)
+            : ctx.ui.mark("ok", `${status === "open" ? "Reopened" : "Marked"} ${what}${status === "open" ? "" : ` ${STATUS_WORDS[status].toLowerCase()}`}.`),
         ];
         return { data, text };
       });
@@ -353,9 +374,12 @@ function statusCommand(word: string, status: FindingStatus, summary: string): Cl
   };
 }
 
+const resolveCommand = statusCommand("resolve", "resolved", "Mark exposures resolved", "`doorman findings review` is an alias, the command's earlier name.");
+
 export const findingsStatusCommands: CliCommand[] = [
-  statusCommand("review", "resolved", "Mark exposures reviewed"),
-  statusCommand("reopen", "open", "Put reviewed exposures back in the queue"),
+  resolveCommand,
+  statusCommand("reopen", "open", "Put exposures with a verdict back in the queue"),
   statusCommand("false-positive", "false_positive", "Mark exposures as false positives"),
-  statusCommand("accept-risk", "accepted_risk", "Mark exposures reviewed as an accepted risk"),
+  statusCommand("accept-risk", "accepted_risk", "Mark exposures as an accepted risk"),
+  { ...resolveCommand, name: "findings review", summary: "Alias of `findings resolve`", notes: resolveCommand.notes?.slice(0, -1) },
 ];

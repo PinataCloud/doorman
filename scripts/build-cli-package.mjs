@@ -48,7 +48,9 @@ cpSync(join(root, "build", "main"), join(out, "build", "main"), {
 });
 cpSync(runtime, join(out, "build", "runtime", "onnxruntime-web"), { recursive: true });
 cpSync(vsix, join(out, "build", "vscode"), { recursive: true });
-for (const file of ["LICENSE", "NOTICE"]) cpSync(join(root, file), join(out, file));
+// CHANGELOG.md: what `doorman changelog` prints and `doorman update` shows
+// after installing (main/cli/commands/changelog.ts).
+for (const file of ["LICENSE", "NOTICE", "CHANGELOG.md"]) cpSync(join(root, file), join(out, file));
 cpSync(join(root, "cli", "README.md"), join(out, "README.md"));
 
 // The manifest, with runtime dependencies pinned to the versions the app is
@@ -67,6 +69,12 @@ chmodSync(bin, 0o755);
 // Stand-alone checks.
 const version = execFileSync(process.execPath, [bin, "--version"], { encoding: "utf8" }).trim();
 if (version !== manifest.version) fail(`the bin reports ${version}, the manifest says ${manifest.version}`);
+// npm pack quietly leaves out what `files` doesn't list.
+const listed = new Set(["package.json", ...manifest.files.map((f) => f.replace(/\/$/, ""))]);
+const unlisted = readdirSync(out).filter((f) => !listed.has(f));
+if (unlisted.length > 0) fail(`cli/package.json "files" leaves out ${unlisted.join(", ")}`);
+const notes = JSON.parse(execFileSync(process.execPath, [bin, "changelog", "--json"], { encoding: "utf8", cwd: out }));
+if (notes.versions?.[0]?.version !== manifest.version) fail(`the bundled CHANGELOG.md has no "## CLI ${manifest.version}" section`);
 const loaded = JSON.parse(
   execFileSync(
     process.execPath,

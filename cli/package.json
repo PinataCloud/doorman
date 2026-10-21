@@ -17,7 +17,7 @@
   "bin": {
     "doorman": "build/main/cli/index.js"
   },
-  "files": ["build/", "LICENSE", "NOTICE", "README.md"],
+  "files": ["build/", "CHANGELOG.md", "LICENSE", "NOTICE", "README.md"],
   "dependencies": {
     "@huggingface/tokenizers": "0.1.3"
   }

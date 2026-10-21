@@ -173,6 +173,33 @@ describe("the update check and `doorman update`", () => {
     expect(r.code).toBe(0);
     expect(installs).toEqual([["install", "--global", "--no-audit", "--no-fund", "@pinata/doorman@0.3.0"]]);
     expect(r.out).toContain("Updated the Doorman CLI from 0.2.0 to 0.3.0.");
+    // This fake package has no bin to ask what changed: the release page instead.
+    expect(r.out).toContain("What changed: https://github.com/PinataCloud/doorman/releases/tag/cli-v0.3.0");
+  });
+
+  it("after installing, shows what changed since the old version, as the new copy's own `doorman changelog` tells it", async () => {
+    const globalRoot = join(root, "npm", "node_modules");
+    const packageDir = installedPackage(globalRoot);
+    // The freshly installed bin: answers `changelog --since … --json` with one release, saying how it was asked.
+    mkdirSync(join(packageDir, "build", "main", "cli"), { recursive: true });
+    writeFileSync(
+      join(packageDir, "build", "main", "cli", "index.js"),
+      'const asked = process.argv.slice(2).join(" ");\nconsole.log(JSON.stringify({ versions: [{ version: "0.3.0", date: "2026-10-21", body: `### New\\n- asked: ${asked}` }] }));\n',
+    );
+    const installs: string[][] = [];
+    const text = await run(["update"], { fetch: registry({ version: "0.3.0" }).fetchImpl, packageDir, runNpm: fakeNpm(globalRoot, packageDir, installs) });
+    expect(text.code).toBe(0);
+    expect(text.out).toBe(
+      ["Updated the Doorman CLI from 0.2.0 to 0.3.0.", "", "Doorman CLI 0.3.0  2026-10-21", "  New", "  - asked: changelog --since 0.2.0 --json", ""].join("\n"),
+    );
+    writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: "@pinata/doorman", version: "0.2.0" }));
+    const json = await run(["update", "--json"], { fetch: registry({ version: "0.3.0" }).fetchImpl, packageDir, runNpm: fakeNpm(globalRoot, packageDir, installs) });
+    const data: unknown = JSON.parse(json.out);
+    expect(data).toMatchObject({
+      updated: true,
+      changes: [{ version: "0.3.0", date: "2026-10-21", body: "### New\n- asked: changelog --since 0.2.0 --json" }],
+      release_notes: "https://github.com/PinataCloud/doorman/releases/tag/cli-v0.3.0",
+    });
   });
 
   it("fails loudly when npm didn't install the new version", async () => {

@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { ReadStream } from "node:tty";
 import { ApprovalWatcher, GuardHeartbeat, SpoolWatcher, guardHostStates, syncGuard } from "../../enforcement.js";
-import { heartbeatFresh, heartbeatPath, pidAlive, type ApprovalRequest, type ApprovalVerdict } from "../../guard/handshake.js";
+import { heartbeatFresh, heartbeatPath, pidAlive, readPresence, type ApprovalRequest, type ApprovalVerdict, type PresenceRecord } from "../../guard/handshake.js";
+import { readProcessInventory, type ProcessInventory } from "../../lib/agent-processes.js";
+import { foldLiveSessions, type LiveCounts } from "../../lib/live-sessions.js";
+import type { SessionSummary } from "../../lib/turns.js";
 import { appOwner } from "../../lib/data-owner.js";
 import { HOSTS } from "../../guard/hosts/index.js";
 import { approvalContextNote, approvalPolicyChange, approvalSummary } from "../../lib/approvals.js";
@@ -249,6 +252,25 @@ export function promptLine(ui: Ui, request: ApprovalRequest, nowMs: number): str
   return `${indent}${s.bold(answers[1]!)}`;
 }
 
+/** How often `watch` re-reads the process table: the app's tick with its window up. */
+const LIVE_TICK_MS = 5_000;
+
+/** The agents running on this machine now, counted as the app's live rail
+ * counts them (lib/live-sessions.ts): "● 1 working · ● 1 waiting for you",
+ * each dot in its state's colour. */
+export function liveLine(ui: Ui, counts: LiveCounts): string {
+  const states: [tone: Tone, count: number, word: string][] = [
+    ["held", counts.held, "held"],
+    ["ok", counts.working, "working"],
+    ["info", counts.waiting, "waiting for you"],
+    ["off", counts.idle, "quiet"],
+  ];
+  const shown = states.filter(([, count]) => count > 0);
+  if (shown.length === 0) return ui.decorate ? ui.style.dim(`${ui.glyphs.dot.off} No agent running right now`) : "No agent running right now.";
+  const items = shown.map(([tone, count, word]) => (ui.decorate ? `${ui.paint(tone, ui.glyphs.dot.on)} ${count} ${word}` : `${count} ${word}`));
+  return ui.decorate ? ui.list(items) : `Agents running now: ${ui.list(items)}.`;
+}
+
 /** Who wrote the heartbeat file (fresh or not), whether it is fresh, and —
  * for a `doorman watch` — when its terminal last saw a key, and whether it
  * is a `--stdio` one (answering for `doorman sbx watch` on the host). */
@@ -292,14 +314,20 @@ async function retireWatch(pid: number, label: string): Promise<void> {
  * as a static line), and — where `attention` asks for it and this is a
  * terminal — a bell per new call and the waiting count in the window title,
  * the person's own title pushed by `open` and put back by `close`.
+ *
+ * While no call is prompting, the bottom line is the live line (`live`),
+ * when one was given: redrawn in place the same way, under whatever is said.
  */
 export class HeldScreen {
   /** The prompt line is redrawn in place (and ticks); otherwise printed once. */
   readonly tty: boolean;
   private readonly attention: boolean;
   private readonly bell: boolean;
-  /** The visible width of the prompt line on screen, 0 when none is. */
+  /** The visible width of the bottom line (prompt or live line) on screen, 0 when none is. */
   private promptCols = 0;
+  /** A call's prompt owns the bottom line, from `prompt` until `clearPrompt`. */
+  private prompting = false;
+  private liveLine: string | undefined;
   private shownTitle: string | undefined;
 
   constructor(
@@ -314,21 +342,46 @@ export class HeldScreen {
     this.bell = terminal && options.attention && options.env.DOORMAN_NO_BELL !== "1";
   }
 
-  /** Erase the prompt line: the row the cursor is on, and the rows above it
+  /** Erase the bottom line: the row the cursor is on, and the rows above it
    * that the line reflowed onto if the terminal got narrower since it was drawn. */
   private erasePrompt(): string {
     const rows = Math.max(1, Math.ceil(this.promptCols / Math.max(1, this.ui.width ?? 80)));
     return `${CLEAR_LINE}${CLEAR_ROW_ABOVE.repeat(rows - 1)}`;
   }
 
-  clearPrompt(): void {
+  private erase(): void {
     if (this.promptCols > 0 && this.tty) this.out.write(this.erasePrompt());
     this.promptCols = 0;
   }
 
+  /** `line` as the bottom line, in place of the one there. Terminal only. */
+  private drawBottom(line: string): void {
+    this.out.write(`${this.promptCols > 0 ? this.erasePrompt() : CLEAR_LINE}${line}`);
+    this.promptCols = visibleLength(line);
+  }
+
+  /** No call is prompting any more: the live line takes the bottom back. */
+  clearPrompt(): void {
+    this.prompting = false;
+    this.erase();
+    if (this.tty && this.liveLine !== undefined) this.drawBottom(this.liveLine);
+  }
+
   say(line: string): void {
-    this.clearPrompt();
+    this.erase();
     this.out.write(`${line}\n`);
+    if (!this.prompting && this.tty && this.liveLine !== undefined) this.drawBottom(this.liveLine);
+  }
+
+  /** The live line, redrawn in place on a terminal (shown while no call
+   * prompts); elsewhere printed as said — the caller says it once there. */
+  live(line: string): void {
+    if (!this.tty) {
+      this.say(line);
+      return;
+    }
+    this.liveLine = line;
+    if (!this.prompting) this.drawBottom(line);
   }
 
   /** The countdown line for `request`, at the terminal's width now: a
@@ -336,8 +389,8 @@ export class HeldScreen {
   prompt(request: ApprovalRequest, nowMs: number): void {
     const line = promptLine(this.ui, request, nowMs);
     if (this.tty) {
-      this.out.write(`${this.promptCols > 0 ? this.erasePrompt() : CLEAR_LINE}${line}`);
-      this.promptCols = visibleLength(line);
+      this.prompting = true;
+      this.drawBottom(line);
     } else {
       this.out.write(`${line}\n`);
     }
@@ -375,7 +428,9 @@ export class HeldScreen {
   }
 
   close(): void {
-    this.clearPrompt();
+    this.liveLine = undefined;
+    this.prompting = false;
+    this.erase();
     if (this.shownTitle !== undefined) this.out.write(`${setTitle("")}${POP_TITLE}`);
     this.shownTitle = undefined;
   }
@@ -494,7 +549,10 @@ export function unansweredWords(request: ApprovalRequest, timedOut: boolean): st
  * the heartbeat never looks idle: the end of stdin is what says nobody is
  * there, and it stops at once.
  */
-export async function startWatch(ctx: CliContext, options: { auto?: "deny"; replace?: boolean; stdio?: boolean; tickMs?: number; stepDownIdleMs?: number }): Promise<WatchSession> {
+export async function startWatch(
+  ctx: CliContext,
+  options: { auto?: "deny"; replace?: boolean; stdio?: boolean; tickMs?: number; stepDownIdleMs?: number; readProcesses?: (now: Date) => Promise<ProcessInventory> },
+): Promise<WatchSession> {
   const sandbox = dockerSandbox(ctx.io.env);
   const stdio = options.stdio === true;
   let replaced: string | undefined;
@@ -685,6 +743,8 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; repl
     if (current) return;
     const next = list.find((r) => !answered.has(r.id));
     if (!next) {
+      // A call that just ended may have been the line's "held": recount it.
+      if (tty) drawLive();
       screen.clearPrompt();
       return;
     }
@@ -717,6 +777,45 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; repl
     onLines: (lines) => handle.engine.ingestSpoolLines(lines),
     log,
   });
+
+  // The agents running here now, as one line (liveLine): the app's live
+  // rail fold over the process table and the guard's presence records, the
+  // table re-read every LIVE_TICK_MS. Only on a live terminal by default — a
+  // piped or logged watch gains nothing from a line that can't redraw, and
+  // `ps` + `lsof` every few seconds isn't free — and never for --stdio or
+  // --json, nor where there is no `ps` to read. Tests inject `readProcesses`.
+  const readProcesses =
+    stdio || ctx.json
+      ? undefined
+      : (options.readProcesses ?? (tty && (ctx.io.platform === "darwin" || ctx.io.platform === "linux") ? readProcessInventory : undefined));
+  let liveInputs: { inventory: ProcessInventory; presence: PresenceRecord[] } | undefined;
+  // Read once: this watch reads no transcripts, so the ledger's sessions
+  // stand still while it runs.
+  let sessions: SessionSummary[] | undefined;
+  let liveTimer: NodeJS.Timeout | undefined;
+  /** Fold the last read against the held calls now, and show it. */
+  const drawLive = () => {
+    if (!liveInputs || stopped) return;
+    const { inventory, presence } = liveInputs;
+    sessions ??= handle.engine.sessions();
+    const { counts } = foldLiveSessions({ now: new Date(), agents: inventory.agents, rows: inventory.rows, rowsAt: new Date(inventory.at), presence, sessions, approvals: approvals.list() });
+    screen.live(liveLine(ui, counts));
+  };
+  /** Never rejects: the line is a courtesy, never a reason to stop answering. */
+  const readLive = async (): Promise<void> => {
+    try {
+      const inventory = await readProcesses!(new Date());
+      if (stopped) return;
+      // No table at all: `ps` failed or isn't here. Saying "no agent" would be a guess.
+      if (inventory.rows.length > 0) {
+        liveInputs = { inventory, presence: readPresence(ctx.guardDir) };
+        drawLive();
+      }
+    } catch (err) {
+      log(`live sessions: ${String(err)}`);
+    }
+    if (tty && liveInputs && !stopped) liveTimer = setTimeout(() => void readLive(), LIVE_TICK_MS);
+  };
 
   const stdin = ctx.io.stdin;
   // Raw mode: one key answers, and Ctrl-C arrives as input rather than SIGINT.
@@ -781,6 +880,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; repl
     if (stopped) return;
     stopped = true;
     clearInterval(tick);
+    clearTimeout(liveTimer);
     approvals.stop();
     // Remove the heartbeat only while it is ours: after the app's takeover it
     // is the app's. An app that is still starting hasn't written one yet, so
@@ -831,6 +931,7 @@ export async function startWatch(ctx: CliContext, options: { auto?: "deny"; repl
   if (stdio && replaced) tell(replaced);
   if (!guardHostStates(ctx.io.env).some((h) => h.installed)) tell("The guard is not installed, so nothing will be held. Run `doorman guard install`.");
   if (!policy.confirm.interactive) tell("Holds are off, so nothing will be held. Turn them on with `doorman policy confirm --interactive on`.");
+  if (readProcesses) void readLive();
 
   tick = setInterval(() => {
     const beat = readHeartbeat(ctx.guardDir);
@@ -873,6 +974,7 @@ export const watchCommand: CliCommand = {
     "Unanswered calls end as the hold settings say (`doorman policy confirm`). Refuses to start while the app answers, and stops when the app starts.",
     "Takes over from another `doorman watch` whose terminal saw no key for 10 minutes, or any with --replace. When a held call goes unanswered and no key was pressed for a minute, it stops, so agents fall back to their own prompt.",
     "Prompts go to stderr; stdout gets the summary when it stops. On a terminal the time left counts down as a bar under the card (printed once where the terminal can't redraw: TERM=dumb, or not a terminal), it rings once per held call and shows waiting calls in the window title (DOORMAN_NO_BELL=1 turns the bell off).",
+    "While no call is waiting, the bottom line counts the agents running on this machine now, as the app's live sessions do: held, working, waiting for you, quiet (\"No agent running right now\" when there are none), refreshed every 5 seconds. Only on a terminal that can redraw (not piped, not TERM=dumb), not with --stdio or --json, and on macOS and Linux only.",
     "Docker Sandboxes: `doorman sbx watch` on your computer answers every running sandbox in one terminal. Without the Doorman CLI on your computer, `sbx exec -it <sandbox> doorman watch` answers one.",
     "--stdio speaks JSON, one object per line, each with a `type`. Out on stdout: `hello` once it answers, `held` (the request) for each held call, `resolved` (id, outcome, message) when one stops waiting, `info` (message) for anything to tell a person. In on stdin: `answer` (id, verdict allow or deny, scope once, project or silence). It stops the moment stdin ends.",
   ],

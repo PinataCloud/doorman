@@ -17,13 +17,13 @@ doorman status
 | --- | --- |
 | `doorman status` | The dashboard: guard, agents, model, what needs review, and the next thing to do |
 | `doorman scan` | Read new agent transcripts (Claude Code, Codex, Cursor, Copilot, Gemini and more) and report new findings |
-| `doorman findings` | Open exposures, grouped like the app's Security Radar; `show`, `review`, `reopen`, `false-positive`, `accept-risk` |
+| `doorman findings` | Open exposures, grouped like the app's Security Radar; `show`, `resolve`, `reopen`, `false-positive`, `accept-risk` (`review` still works for `resolve`) |
 | `doorman sessions`, `session <id>`, `search <query>` | The Event Ledger: sessions, turns and search, always masked |
 | `doorman usage`, `doorman analytics` | Tokens and time spent with AI; what each rule found |
 | `doorman report`, `doorman export detections\|ledger\|bundle` | The security report (Markdown) and schema-valid JSON exports (`bundle`: both, for `doorman sbx pull`) |
 | `doorman trace` | Trace a secret: where a value went, read from stdin and never echoed |
 | `doorman guard install\|uninstall\|status` | The PreToolUse hook that watches, holds or blocks each agent's tool calls |
-| `doorman watch` | Answer held tool calls in this terminal while the desktop app is closed |
+| `doorman watch` | Answer held tool calls in this terminal while the desktop app is closed; on macOS and Linux its bottom line counts the agents running now (held · working · waiting for you · quiet) |
 | `doorman sbx ls\|watch\|pull` | From your computer, Docker Sandboxes running Doorman: list them, answer all their held calls in one terminal, bring their findings here |
 | `doorman policy`, `rules`, `packs`, `exceptions`, `custom-rules` | The policy the guard enforces, rule by rule |
 | `doorman mcp`, `doorman gateway` | MCP servers on this machine, Doorman's own MCP server, and the MCP gateway |
@@ -31,10 +31,18 @@ doorman status
 | `doorman doctor` | Check the guard, MCP and editor wiring, and repair it |
 | `doorman model` | The on-device injection classifier ([Llama-Doorman-22M](https://huggingface.co/PinataCloud/Llama-Doorman-22M)): status, download, check text |
 | `doorman config` | Settings shared with the app (retention, confidence bands and more) |
-| `doorman update` | Install a newer Doorman CLI with npm; `--check` only says whether one is out |
+| `doorman update` | Install a newer Doorman CLI with npm and show what changed; `--check` only says whether one is out |
+| `doorman changelog` | What changed in each CLI release; `--since <version>` or `--all` |
+| `doorman completion <zsh\|bash\|fish>` | Print a Tab-completion script: commands, subcommands, flags and exposure ids |
 
 Every command takes `--json` for machine-readable output and `--help` for its
 usage, options and examples. `doorman help` lists every command by group.
+
+Tab completion: `doorman completion zsh > "${fpath[1]}/_doorman"`,
+`source <(doorman completion bash)` in `~/.bashrc` (macOS's bash 3.2:
+`eval "$(doorman completion bash)"`), or
+`doorman completion fish > ~/.config/fish/completions/doorman.fish`.
+`doorman completion --help` has the details.
 
 ### In the terminal
 
@@ -160,7 +168,8 @@ don't see cloud sandboxes (`sbx --cloud`), and answering their held calls with
 Like the app, the CLI looks for a newer version on its own: at most once a
 day it asks the npm registry for the latest `@pinata/doorman`, and when one is
 out it says so on stderr after the command's output. `doorman status` shows it
-too. `doorman update` installs it with `npm install --global`; a copy run
+too. `doorman update` installs it with `npm install --global`, then shows what
+changed since your version (`doorman changelog` prints it any time); a copy run
 through npx or installed in a project tells you the command to run there
 instead.
 

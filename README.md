@@ -110,7 +110,8 @@ doorman guard uninstall   # take the hook out again
   (scripts and CI don't start it). Set `DOORMAN_INJECTION_CLASSIFIER=off` to
   skip the model.
 - It looks for a new version once a day and says so after a command's output;
-  `doorman update` installs it.
+  `doorman update` installs it and shows what changed.
+- Tab completion for zsh, bash and fish: `doorman completion --help`.
 - Without a global install: `npx @pinata/doorman status`.
 - **With the desktop app** on the same machine, both use the same store,
   policy and guard. While the app is running, the CLI reads a copy and asks
@@ -462,10 +463,15 @@ parallel, each launched once as a smoke test, then publishes every file to a
 release on this repo, which is where installed apps look for updates.
 
 ```sh
+# write the "## App 0.2.0 — <date>" section in CHANGELOG.md (from ## Unreleased)
 npm version 0.2.0 --no-git-tag-version   # bumps package.json + lock
 git commit -am "chore: release 0.2.0"
 git tag v0.2.0 && git push origin main v0.2.0
 ```
+
+Both release workflows publish that version's `CHANGELOG.md` section as the
+release notes (`scripts/release-notes.mjs`) and stop before building when it
+is missing.
 
 The tag must match `package.json` or the run stops. Publishing uses the run's
 own `GITHUB_TOKEN`; the only secrets the workflow reads are the optional Apple
@@ -488,7 +494,8 @@ secret), and a GitHub release holding the tarball. That release is never
 marked latest, because the desktop app's updater reads the latest release.
 
 ```sh
-# bump "version" in cli/package.json, commit, then:
+# bump "version" in cli/package.json, write its "## CLI <x.y.z> — <date>"
+# section in CHANGELOG.md, commit, then:
 git tag cli-v0.1.0 && git push origin cli-v0.1.0
 ```
 

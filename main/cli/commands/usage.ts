@@ -1,5 +1,5 @@
-import { alertsByTask, ruleStatsWindow, sessionTaskLookup } from "../../lib/app-views.js";
-import { RULE_STATS_WINDOWS } from "../../lib/findings.js";
+import { alertsByTask, fmtHold, ruleStatsWindow, sessionTaskLookup } from "../../lib/app-views.js";
+import { RULE_STATS_WINDOWS, type DecidedVia, type RuleStat, type WindowStats } from "../../lib/findings.js";
 import { aggregateGraphs } from "../../lib/spend.js";
 import { TASK_LABELS, type TaskClass } from "../../lib/task-class.js";
 import type { CliCommand } from "../command.js";
@@ -155,6 +155,62 @@ export const usageCommand: CliCommand = {
   },
 };
 
+/** What happened to each new exposure, worst first (lib/findings.ts StatsDay).
+ * Blocked and Denied are "stopped"; Allowed is a hold you let through, so it
+ * ran. MIRRORS renderer/screens/analytics.jsx ANALYTICS_OUTCOMES. */
+const ANALYTICS_OUTCOMES = [
+  ["blocked", "Blocked"],
+  ["denied", "Denied"],
+  ["allowed", "Allowed"],
+  ["warned", "Warned"],
+  ["observed", "Observed"],
+] as const;
+
+/** Where a held call was answered, as the app's "How held calls were answered" card names it. */
+const DECIDED_VIA_WORDS: Record<DecidedVia, string> = {
+  panel: "floating panel",
+  window: "app window",
+  notification: "notification",
+  editor: "editor",
+  terminal: "terminal",
+  timeout: "timed out",
+  "app-absent": "app closed",
+};
+
+/** "20% fewer than the 14 days before."; undefined with nothing to compare
+ * against. MIRRORS renderer/screens/analytics.jsx windowDelta (the text). */
+function windowDelta(now: number, before: number | undefined, days: number): string | undefined {
+  if (before === undefined) return undefined;
+  const period = `the ${days} days before`;
+  if (before === 0) return now === 0 ? `none in ${period} either.` : `up from none in ${period}.`;
+  if (now === before) return `the same as ${period}.`;
+  const pct = Math.round((Math.abs(now - before) / before) * 100);
+  return `${pct}% ${now < before ? "fewer" : "more"} than ${period}.`;
+}
+
+/** The screen's headline, written from the two figures under it; enforcement
+ * is judged on the SHARE stopped, with a 5-point band. MIRRORS
+ * renderer/screens/analytics.jsx windowHeadline. */
+function windowHeadline(newExposures: number, prev: WindowStats["prev"], stopped: number, allowed: number, days: number): string {
+  if (newExposures === 0) return prev && prev.new_exposures > 0 ? "Nothing new surfaced this window." : "Nothing has surfaced yet.";
+  const none = `Nothing was stopped — every new exposure was ${allowed > 0 ? "observed, warned or allowed." : "observed or warned."}`;
+  if (!prev) {
+    const counted = `${plural(newExposures, "new exposure")} in the last ${days} days.`;
+    return stopped === 0 ? `${counted} ${none}` : counted;
+  }
+  const first =
+    prev.new_exposures === 0 || newExposures > prev.new_exposures
+      ? "Exposures are up."
+      : newExposures < prev.new_exposures
+        ? "Exposures are down."
+        : "Exposures held steady.";
+  if (stopped === 0) return `${first} ${none}`;
+  if (prev.new_exposures === 0) return first;
+  const share = stopped / newExposures;
+  const prevShare = prev.stopped / prev.new_exposures;
+  return `${first} ${share > prevShare + 0.05 ? "Enforcement is up." : share < prevShare - 0.05 ? "Enforcement is down." : "Enforcement held steady."}`;
+}
+
 export const analyticsCommand: CliCommand = {
   name: "analytics",
   summary: "Security analytics: what each rule caught in the window, and how held calls were answered",
@@ -165,7 +221,7 @@ export const analyticsCommand: CliCommand = {
     ["--scan", "read new transcripts first"],
   ],
   notes: [
-    "Exposures (a rule at a place), the distinct items exposed under them (secrets, files) and sightings in the window, how many of the sessions that ran had a sighting, how held calls were answered, and every rule that fired.",
+    "New exposures (a rule at a place) and what the guard did with each: stopped (blocked, or held and denied), allowed, warned or observed. Then the exposures and sightings in the window, how many of the sessions that ran had a sighting, how held calls were answered, and every rule that fired.",
   ],
   examples: [
     ["doorman analytics", "the last 14 days"],
@@ -176,36 +232,70 @@ export const analyticsCommand: CliCommand = {
     const labels = ruleLabels(ctx);
     return withEngine(ctx, args.values.scan === true, ({ engine }) => {
       const stats = ruleStatsWindow(engine.shownFindings(), engine.sessions(), days, new Date(ctx.io.now()), labels);
+      // New exposures by worst outcome, as the screen's hero reads them.
+      const outcomes = Object.fromEntries(ANALYTICS_OUTCOMES.map(([key]) => [key, stats.daily.reduce((n, d) => n + d[key], 0)])) as Record<
+        (typeof ANALYTICS_OUTCOMES)[number][0],
+        number
+      >;
+      const stopped = outcomes.blocked + outcomes.denied;
+      // Every surface a PERSON answers through; timeout and app-absent are the guard alone.
+      const via = stats.decided_via;
+      const answeredByYou = via.panel + via.window + via.notification + via.editor + via.terminal;
+      // A rule's sightings whose call never ran; an older stat without `stopped` adds it up.
+      const ruleStopped = (r: RuleStat) => r.stopped ?? r.blocked + r.denied + r.timed_out;
+      // Sightings with no enforcement are observed whatever the rule's mode (analytics.jsx observedRows).
+      const ruleObserved = (r: RuleStat) => Math.max(0, r.fired - r.warned - r.held - r.blocked);
       // Tokens only: the dollar estimates stay folded, never shown.
       const { burned_usd: _usd, rules, ...rest } = stats;
-      const data = { ...rest, rules: rules.map(({ burned_usd: _ruleUsd, ...r }) => r) };
+      const data = {
+        ...rest,
+        stopped,
+        outcomes,
+        answered_by_you: answeredByYou,
+        rules: rules.map(({ burned_usd: _ruleUsd, ...r }) => ({ ...r, stopped: ruleStopped(r), observed: ruleObserved(r) })),
+      };
       const s = ctx.style;
       const ui = ctx.ui;
       const rate = stats.window_sessions ? Math.round((stats.sessions / stats.window_sessions) * 100) : undefined;
       const noted = (v: string, note: string) => (note ? `${v}  ${s.dim(note)}` : v);
-      const prevNew = stats.prev?.new_exposures;
-      const humans = Object.entries(stats.decided_via)
-        .filter(([, n]) => n > 0)
-        .map(([via, n]) => `${via} ${n}`);
+      const prev = stats.prev;
+      // The stopped figure states a SHARE of the new exposures, as the screen does.
+      const share = stats.new_exposures > 0 ? Math.round((stopped / stats.new_exposures) * 100) : undefined;
+      const prevShare = prev && prev.new_exposures > 0 ? Math.round((prev.stopped / prev.new_exposures) * 100) : undefined;
+      const shareText =
+        share === undefined
+          ? "blocked, or held and denied."
+          : prevShare === undefined
+            ? `${share}% of them — blocked, or held and denied.`
+            : share === prevShare
+              ? `${share}% of them, the same share as the ${days} days before.`
+              : `${share}% of them, ${share > prevShare ? "up" : "down"} from ${prevShare}% the ${days} days before.`;
+      const present = ANALYTICS_OUTCOMES.filter(([key]) => outcomes[key] > 0).map(([key, label]) => `${label} ${outcomes[key]}`);
+      const surfaces = (Object.keys(DECIDED_VIA_WORDS) as DecidedVia[]).filter((k) => via[k] > 0).map((k) => `${DECIDED_VIA_WORDS[k]} ${via[k]}`);
       const text = [
         ui.section(`Security analytics, last ${days} days`),
+        s.bold(windowHeadline(stats.new_exposures, prev, stopped, outcomes.allowed, days)),
+        "",
         ...ui.kv([
-          ["exposures", noted(String(stats.exposures), `${stats.new_exposures} new${prevNew !== undefined ? ` (${prevNew} the ${days} days before)` : ""}`)],
-          ["items", noted(String(stats.things), `${stats.new_things} new`)],
+          ["new exposures", noted(String(stats.new_exposures), windowDelta(stats.new_exposures, prev?.new_exposures, days) ?? "")],
+          ["stopped", noted(String(stopped), `by the guard: ${ui.list([`${outcomes.blocked} blocked`, `${outcomes.denied} denied`])}; ${shareText}`)],
+          present.length > 0 && ["outcomes", noted(ui.list(present), "what the guard did with each new exposure")],
+          ["exposures", noted(String(stats.exposures), `seen in the last ${days} days`)],
           ["sightings", String(stats.total)],
           [
             "sessions",
             noted(rate !== undefined ? `${rate}%` : String(stats.sessions), `${stats.sessions} of the ${stats.window_sessions ?? 0} sessions that ran had a sighting`),
           ],
-          [
+          stats.decisions > 0 && [
             "held calls",
             noted(
               String(stats.decisions),
               ui.list(
                 [
-                  stats.median_hold_ms !== undefined ? `median ${Math.round(stats.median_hold_ms / 1000)}s to decide` : "",
-                  ...humans,
-                  stats.scoped_allows > 0 ? `${stats.scoped_allows} allowed for a project` : "",
+                  stats.median_hold_ms !== undefined ? `median ${fmtHold(stats.median_hold_ms)} to decide` : "",
+                  `${answeredByYou} answered by you`,
+                  ...surfaces,
+                  stats.scoped_allows > 0 ? `${stats.scoped_allows} allowed for a whole project` : "",
                 ].filter(Boolean),
               ),
             ),
@@ -218,19 +308,20 @@ export const analyticsCommand: CliCommand = {
           "",
           ui.section(`Rules that fired (${stats.rules.length})`),
           ...ui.table(
-            ["RULE", "WORST", "FIRED", "EXPOSURES", "SESSIONS", "BLOCKED", "HELD", "WARNED", "LAST"],
+            ["RULE", "WORST", "FIRED", "EXPOSURES", "SESSIONS", "STOPPED", "ALLOWED", "WARNED", "OBSERVED", "LAST"],
             stats.rules.map((r) => [
               r.label,
               r.worst ? paintSeverity(s, r.worst) : "",
               String(r.fired),
               String(r.exposures),
               String(r.sessions),
-              String(r.blocked),
-              String(r.held),
+              String(ruleStopped(r)),
+              String(r.allowed),
               String(r.warned),
+              String(ruleObserved(r)),
               r.last_fired_at ? ago(r.last_fired_at, ctx.io.now()) : "",
             ]),
-            { indent: 2, keep: [0, 1, 2, 3, 4, 5, 6, 7, 8], drop: [5, 6, 7, 4] },
+            { indent: 2, keep: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], drop: [8, 6, 7, 4] },
           ),
         );
       } else {

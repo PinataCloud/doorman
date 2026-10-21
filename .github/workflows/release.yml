@@ -3,7 +3,8 @@
 #
 # Cutting a release:
 #   1. bump "version" in package.json (and package-lock.json: `npm version
-#      <x.y.z> --no-git-tag-version`), commit;
+#      <x.y.z> --no-git-tag-version`), write its `## App <x.y.z> — <date>`
+#      section in CHANGELOG.md (the release notes), commit;
 #   2. push a matching tag: `git tag v<x.y.z> && git push origin v<x.y.z>`.
 # Run workflow (workflow_dispatch) rebuilds an existing tag — its release is
 # replaced file by file.
@@ -59,6 +60,15 @@ jobs:
           if [ "$version" != "$TAG" ]; then
             echo "::error::tag $TAG does not match package.json ($version)"; exit 1
           fi
+      # Every release needs its CHANGELOG.md section: missing, the release
+      # stops here, before any build. The publish job uses it as the notes.
+      - name: Release notes
+        run: node scripts/release-notes.mjs app "$TAG" > release-notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 14
       - run: npm run typecheck
       - run: npm test
 
@@ -297,7 +307,7 @@ jobs:
           binaries=(artifacts/*.dmg artifacts/*.zip artifacts/*.AppImage artifacts/*.exe artifacts/*.blockmap)
           manifests=(artifacts/latest*.yml)
           if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$REPO" --title "Doorman ${TAG#v}" --notes "Doorman ${TAG#v}" --draft
+            gh release create "$TAG" --repo "$REPO" --title "Doorman ${TAG#v}" --notes-file artifacts/release-notes.md --draft
           fi
           gh release upload "$TAG" --repo "$REPO" --clobber "${binaries[@]}"
           gh release upload "$TAG" --repo "$REPO" --clobber "${manifests[@]}"

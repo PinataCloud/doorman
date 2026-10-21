@@ -93,6 +93,91 @@ export function exposureRan(row: Pick<FindingRow, "enforced" | "resolution">): b
   return true;
 }
 
+/** WHERE an exposure is, in one word: the project its face ran in, else the
+ * place main resolved (a host, a server, a sink). MIRRORS
+ * renderer/screens/radar.jsx exposurePlace. */
+export function exposurePlace(face: Pick<RadarRow, "cwd" | "place">): string {
+  return (face.cwd || face.place || "").split("/").filter(Boolean).pop() || "";
+}
+
+/** "4s", "1m 12s": a hold's duration. MIRRORS renderer/screens/radar.jsx fmtHold. */
+export function fmtHold(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+export type HoldEndingKey = "allowed" | "denied" | "passed" | "pending";
+
+/** How a held call ended, in the app's words; undefined for a row never
+ * held. `key` buckets the endings ("denied" covers both refusals). MIRRORS
+ * renderer/screens/radar.jsx holdEnding. */
+export function holdEnding(row: Pick<FindingRow, "enforced" | "resolution">): { key: HoldEndingKey; label: string } | undefined {
+  if (findingOutcome(row) !== "held") return undefined;
+  switch (row.resolution) {
+    case "allowed":
+      return { key: "allowed", label: "Allowed by you" };
+    case "denied":
+      return { key: "denied", label: "Denied by you" };
+    case "timeout":
+      return { key: "denied", label: "Denied — no answer" };
+    case "unavailable":
+      return { key: "denied", label: "Denied — nobody could be asked" };
+    case "unattended":
+      return { key: "passed", label: "Passed to the agent's own prompt" };
+    default:
+      return { key: "pending", label: "No answer recorded" };
+  }
+}
+
+/** Where a held call was answered, by a person. MIRRORS radar.jsx DECIDED_VIA_LABELS. */
+const DECIDED_VIA_LABELS: Partial<Record<NonNullable<FindingRow["decided_via"]>, string>> = {
+  panel: "the floating panel",
+  window: "the app window",
+  notification: "a notification",
+  editor: "the editor",
+  terminal: "the terminal",
+};
+
+/** The held rows' endings as one line: "Denied by you after 12s" for one
+ * hold, "2 allowed by you · 1 denied — no answer" for several; `via` names
+ * the surface a person answered a single hold from. Undefined when nothing
+ * was held. MIRRORS renderer/screens/radar.jsx holdSummary. */
+export function holdSummary(rows: readonly Pick<FindingRow, "enforced" | "resolution" | "hold_ms" | "decided_via">[]): { text: string; via?: string } | undefined {
+  const held = rows.filter((r) => findingOutcome(r) === "held");
+  if (held.length === 0) return undefined;
+  const buckets = new Map<string, { key: HoldEndingKey; label: string; n: number }>();
+  for (const r of held) {
+    const e = holdEnding(r)!;
+    const b = buckets.get(e.label) ?? { ...e, n: 0 };
+    b.n += 1;
+    buckets.set(e.label, b);
+  }
+  const parts = [...buckets.values()];
+  if (held.length === 1) {
+    const r = held[0]!;
+    const e = parts[0]!;
+    const after = e.key !== "pending" && typeof r.hold_ms === "number" && Number.isFinite(r.hold_ms) ? ` after ${fmtHold(r.hold_ms)}` : "";
+    const via = r.decided_via ? DECIDED_VIA_LABELS[r.decided_via] : undefined;
+    return { text: e.label + after, ...(via ? { via } : {}) };
+  }
+  return { text: parts.map((p) => `${p.n} ${p.label.charAt(0).toLowerCase()}${p.label.slice(1)}`).join(" · ") };
+}
+
+/** A closed card's outcome words, or undefined when its sightings were only
+ * observed (the rest state, not news): "blocked", "held, then denied",
+ * "mixed outcomes". MIRRORS renderer/screens/radar.jsx closedOutcome. */
+export function closedOutcome(rows: readonly Pick<FindingRow, "enforced" | "resolution">[]): string | undefined {
+  const outcomes = [...new Set(rows.map(findingOutcome))];
+  if (outcomes.length > 1) return "mixed outcomes";
+  const o = outcomes[0];
+  if (o === undefined || o === "observed") return undefined;
+  if (o !== "held") return o;
+  const ends = [...new Set(rows.map((r) => holdEnding(r)!.key))];
+  return ends.length === 1 && (ends[0] === "allowed" || ends[0] === "denied") ? `held, then ${ends[0]}` : "held";
+}
+
 /** One Radar card: an exposure (rule × place) in one triage bucket. */
 export interface ExposureGroup<T extends RadarRow> {
   key: string;

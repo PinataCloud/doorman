@@ -84,7 +84,7 @@ import { watchEditorIntents } from "./vscode-ext-install.js";
 import { appBundlePath } from "./lib/vscode-ext.js";
 import { DEFAULT_VARIANT, fileLink } from "./lib/vscode.js";
 import { formatTokens } from "./lib/format.js";
-import { parsePresence, presenceDir, presencePath, type ApprovalVia, type PresenceRecord } from "./guard/handshake.js";
+import { presencePath, readPresence, type ApprovalVia, type PresenceRecord } from "./guard/handshake.js";
 import type { ShadowAiState } from "./lib/shadow-ai.js";
 import { alignRedactedValues } from "./lib/reveal.js";
 import { normalizeTraceInput, type TraceReport } from "./lib/secret-trace.js";
@@ -1421,28 +1421,6 @@ function scheduleRecompute(): void {
   recomputeTimer.unref?.();
 }
 
-/** The guard's presence folder, parsed. Missing folder = no records. */
-function readPresenceRecords(): PresenceRecord[] {
-  const dir = presenceDir(guardDir(app.getPath("userData")));
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const out: PresenceRecord[] = [];
-  for (const name of names) {
-    if (!name.endsWith(".json")) continue;
-    try {
-      const rec = parsePresence(readFileSync(join(dir, name), "utf8"));
-      if (rec) out.push(rec);
-    } catch {
-      // a half-written file on this tick — the next one reads it
-    }
-  }
-  return out;
-}
-
 function liveStateFor(sessions: readonly SessionSummary[], now: Date): LiveState {
   return foldLiveSessions({
     now,
@@ -1464,7 +1442,7 @@ async function refreshLive(): Promise<void> {
   try {
     const now = new Date();
     liveInventory = await readProcessInventory(now);
-    const presence = readPresenceRecords();
+    const presence = readPresence(guardDir(app.getPath("userData")));
     const stale = stalePresence(presence, liveInventory.rows, liveInventory.agents, store.snapshot().sessions, now);
     for (const rec of stale) {
       const path = presencePath(guardDir(app.getPath("userData")), rec.source, rec.session_id);
