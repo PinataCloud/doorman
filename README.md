@@ -151,7 +151,7 @@ sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doo
 - Add it to a sandbox you already have: `sbx kit add my-project <kit>`. Don't
   install Doorman in a sandbox by hand: the next `sbx kit add` or template
   resets the agent's configuration and drops the hook without a word.
-- Pin the CLI version with `--kit-arg doorman.version=0.4.1` (default: latest).
+- Pin the CLI version with `--kit-arg doorman.version=0.6.0` (default: latest).
 - For v3 workloads (`sbx run docker.io/docker/sbx-kit-claude:…`), use the v3
   kit: `--kit "git+https://github.com/PinataCloud/doorman.git#dir=integrations/sbx-kit/v3/doorman"`.
   A v3 sandbox takes no `sbx kit add`, so give `--kit` when you create it.
@@ -167,24 +167,34 @@ sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doo
 
 ## What it does
 
+- **Overview**: the security landing page. It shows protection and the security
+  level as a ring, the agents running right now (a held call counts down), the
+  exposures still open to review, and recent sessions with something flagged.
 - **Usage graphs**: the last 7 or 30 days of input and output tokens per
-  model, measured from the transcripts. Figures are token counts, never
-  dollars: the vendored pricing table (`main/lib/pricing.ts`) still prices
-  each turn internally, but an on-device estimate can't know how a turn was
-  actually paid for.
+  model, measured from the transcripts, and a weekday × hour punchcard of when
+  you work with AI. Figures are token counts, never dollars: the vendored
+  pricing table (`main/lib/pricing.ts`) still prices each turn internally, but
+  an on-device estimate can't know how a turn was actually paid for.
 - **Event Ledger**: sessions and their turns, with local full-text search,
-  deterministic titles (the agent's own title, else the first prompt), and the
+  deterministic titles (the agent's own title, else the first prompt), a
+  per-turn strip that marks the turns with exposures, and the
   subscription-vs-overage split where the agent records it (Codex plan
   windows).
 - **Security Radar**: deterministic detectors (`main/guard/security-detect.ts`,
   with redaction first) run over every prompt, tool call and tool output,
   backfill included. Findings carry masked excerpts only and are grouped into
-  *exposures*: one rule in one place (`main/lib/exposures.ts`). The Radar
-  also has a **Trace a secret** view (`renderer/screens/radar-trace.jsx`).
-- **Analytics and Rules**: per-rule counters over a chosen window, the
-  detector catalog, rule packs, your own rules (with a dry-run editor) and the
-  exceptions list. The families shown are narrowed by
-  `main/guard/rule-scope.ts`.
+  *exposures*: one rule in one place (`main/lib/exposures.ts`), each reviewed
+  with one click as Resolved, False positive or Accept risk. The Radar also
+  has a **Trace a secret** view (`renderer/screens/radar-trace.jsx`) that
+  draws where a value went.
+- **Analytics**: per-rule counters over a chosen window: what each rule
+  found, what the guard stopped (blocked or denied), and which rules to set to
+  Ask next.
+- **Guardrails**: real-time protection and how held calls wait, the security
+  level (Relaxed, Watchful, Balanced — the default — or Locked down), each
+  rule's mode with its recent activity, rule packs, your own rules (with a
+  dry-run editor), exceptions and your wallet addresses. The families shown
+  are narrowed by `main/guard/rule-scope.ts`.
 - **The guard**: a PreToolUse hook that can watch, ask (hold the call until you
   answer in the app, a floating panel, a notification or VS Code), or block.
   Adapters live in `main/guard/hosts/`: Claude Code, Codex, Cursor, Gemini CLI,

@@ -38,10 +38,13 @@ usage, options and examples. `doorman help` lists every command by group.
 
 ### In the terminal
 
-On a terminal, output has colour, status marks (✓ ! ✗) and, on `doorman` and
-`doorman watch`, the Doorman llama in ASCII. Tables and long lines fit the
-terminal's width, and long work (a scan, the model download) shows its
-progress on one line that redraws in place.
+On a terminal, output has colour, status marks (✓ ! ✗) and, on `doorman`,
+`doorman status` and `doorman watch`, the Doorman llama in ASCII. `doorman
+status` adds a protection badge, a severity bar and a 14-day exposure
+sparkline; `doorman usage` adds a heat strip per day; `doorman trace` draws
+where the value went; and `doorman findings` says "All clear" when nothing is
+open. Tables and long lines fit the terminal's width, and long work (a scan,
+the model download) shows its progress on one line that redraws in place.
 
 Everything else gets plain text with the same words and columns, nothing that
 breaks `grep` or `awk`:
