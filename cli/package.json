@@ -1,6 +1,6 @@
 {
   "name": "@pinata/doorman",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Doorman from the terminal: watch what your AI coding agents read and run, flag the secrets they expose, and guard their tool calls.",
   "license": "Apache-2.0",
   "author": "Pinata",
