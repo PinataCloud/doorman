@@ -39,6 +39,49 @@ terminals, servers and scripts. See [Get started](#get-started).
 fine-tune of Llama Prompt Guard 2 (22M) for agent tool output, published on
 Hugging Face with its benchmark and file fingerprints. Built with Llama.
 
+## Rules you can read, packs you switch on, rules you write
+
+<p align="center">
+  <b>Doorman's guard runs on rules you can read, change and write yourself.</b>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/rules-light.png" alt="Guardrails: the Crypto wallets rule pack and four rules of your own, each with its mode" width="49%">
+  <img src="docs/screenshots/held-call-dark.png" alt="A cast send to mainnet held by the Crypto wallets pack, waiting for Deny or Allow" width="49%">
+</p>
+
+| Built-in rules | Rule packs | Your own rules |
+|---|---|---|
+| Credentials, secrets, wallet keys and personal data, recognised by detectors that know the real formats | Named sets of rules you switch on per machine, such as Crypto wallets: 12 rules for transfers, key exports and exchange APIs | Patterns over the tool, the shell command, an MCP server or any argument. No code runs |
+| One security level sets them all, from Relaxed to Locked down | Written in the same format as your own rules, so every pack is a worked example to copy | Try it against your last 14 days before you save it |
+
+Each rule decides what happens to a matching call: **observe** it,
+**warn** about it, **ask** you (the agent waits for your Allow or Deny), or
+**block** it. A rule of your own is a few lines of JSON:
+
+```json
+{
+  "id": "no-prod-apply",
+  "label": "kubectl apply against prod",
+  "severity": "high",
+  "mode": "ask",
+  "when": { "command": "kubectl\\s+apply\\b.*--context[= ]prod" }
+}
+```
+
+```sh
+doorman custom-rules dry-run rule.json   # what it would have caught
+doorman custom-rules add rule.json       # hold it from the next call
+```
+
+<p align="center">
+  <a href="docs/rules.md"><b>How rules work →</b></a> ·
+  <a href="docs/rules.md#your-own-rules"><b>Write your own →</b></a> ·
+  <a href="CONTRIBUTING.md#add-a-rule-pack"><b>Contribute a pack →</b></a>
+</p>
+
+*Screenshots use made-up sessions in a sandboxed profile.*
+
 ## Get started
 
 ### Desktop app
