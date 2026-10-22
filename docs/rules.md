@@ -9,6 +9,7 @@ add a rule or a pack to Doorman itself, see
 - [What a rule is](#what-a-rule-is)
 - [Where rules run](#where-rules-run)
 - [Modes: what happens to a call](#modes-what-happens-to-a-call)
+- [What Doorman holds whatever the rules say](#what-doorman-holds-whatever-the-rules-say)
 - [Severity: how loud a finding is](#severity-how-loud-a-finding-is)
 - [Security levels](#security-levels)
 - [The built-in rules](#the-built-in-rules)
@@ -114,6 +115,31 @@ Agents with their own approval prompt are Claude Code, Cursor, Copilot, Droid,
 Qwen and Grok. The others (Codex, Gemini CLI, Crush, Goose, Kimi, Kiro,
 OpenCode, and usually Hermes and OpenClaw) can't ask you themselves, so an
 unanswered ask follows the `--unattended` setting.
+
+### What Doorman holds whatever the rules say
+
+A few calls are held for you at every security level, whatever each rule's
+mode, because they would let an agent stand down the check it is under:
+
+- **Changes to Doorman's own files:** its guard, the guard's policy and
+  answers, and the rest of Doorman's data directory, including your settings
+  in `prefs.json`. Reading them is fine.
+- **Doorman's own controls, run by the agent:** commands that turn protection
+  down (`doorman guard uninstall`, `rules set`/`disable`, `policy level`,
+  `policy confirm`, `packs disable`, `exceptions add`, `custom-rules add`,
+  `remove` or `accept`), answer held calls (`doorman watch` in any form,
+  `doorman sbx watch`), or hide what Doorman recorded (closing a finding,
+  `config set retention_days`, `confidence_bands` or `show_false_positives`,
+  `model remove`, `mcp recognize`, `gateway unroute`). That covers `doorman`
+  however it is run: by path, through `npx @pinata/doorman`, or through
+  `node …/cli/index.js`.
+
+Everything that only reads, tightens or suggests stays free, such as
+`doorman status`, `scan`, `findings`, `rules enable`, `packs enable` and
+`custom-rules dry-run`. An agent that wants a new rule suggests it instead
+(see [Rules your agent suggests](#rules-your-agent-suggests)). If you do want
+an agent to run one of these commands, allow it on the approval card, or run it
+yourself.
 
 ## Severity: how loud a finding is
 

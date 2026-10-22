@@ -50,7 +50,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { customDetectorId, customDetectorLabels, parseCustomRules } from "../guard/custom-rules.js";
-import { DOORMAN_MCP_SERVER_NAME, evaluateToolCall, type GuardHookInput } from "../guard/decision.js";
+import { DOORMAN_MCP_SERVER_NAME, doormanControl, evaluateToolCall, type GuardHookInput } from "../guard/decision.js";
 import { appListening, heartbeatPath, readPresence } from "../guard/handshake.js";
 import { HOSTS, hostLabel } from "../guard/hosts/index.js";
 import { DETECTOR_LABELS, HOOK_TIMEOUT_SLACK_SECONDS, isGuardCommand, parsePolicy, type GuardPolicy } from "../guard/policy.js";
@@ -397,6 +397,17 @@ export function checkToolCall(args: Record<string, unknown>, paths: McpPaths, io
   };
   const { policy, unreadable } = readPolicy(paths, io);
   const guardOff = io.guardHosts().length === 0;
+  // Doorman's own controls are held whatever the rules say (guard.ts, like
+  // its self-protection): say so before the rules are even consulted.
+  const control = doormanControl(input.tool_name, input.tool_input);
+  if (control !== undefined) {
+    const lines = [
+      `Decision: ask — this call would ${control.label}, and the guard holds Doorman's own controls for the person to decide, whatever the rules say.`,
+      "Ask the user to run it themselves if they want it. To suggest a rule, use doorman_propose_rule: the person reviews it in Doorman.",
+    ];
+    if (guardOff) lines.push("Doorman's guard is not installed in any agent on this computer, so it holds or blocks nothing.");
+    return { text: [...lines, ...(unreadable ? [POLICY_UNREADABLE] : [])].join("\n") };
+  }
   const result = evaluateToolCall(input, policy);
   const decision = result.decision;
   const labels = customDetectorLabels(policy.custom_rules ?? []);

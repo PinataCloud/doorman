@@ -36,11 +36,11 @@
 
 import { appendFileSync, readFileSync, realpathSync } from "node:fs";
 import { redact } from "./redact.js";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { armedEscalation, customArmedEscalation, readArmedTaints } from "./armed.js";
 import { ruleShown } from "./rule-scope.js";
 import { customDetectorLabels, isCustomDetectorId } from "./custom-rules.js";
-import { evaluatePrompt, evaluateToolCall, guardSelfWrite, isDoormanReadOnlyTool, parsePolicy, type ExceptedFinding, type GuardHookInput } from "./decision.js";
+import { doormanControl, evaluatePrompt, evaluateToolCall, guardSelfWrite, isDoormanReadOnlyTool, parsePolicy, type ExceptedFinding, type GuardHookInput } from "./decision.js";
 import { decideEnforcement, type GuardFinding } from "./policy.js";
 import { secondOpinion, secondOpinionRawText, type SecondOpinionTelemetry } from "./second-opinion.js";
 import { MAX_COMMAND_CHARS, networkCallName, sanitizeExcerpt, scanWindow, type SecurityDetectorId } from "./security-detect.js";
@@ -269,43 +269,65 @@ async function main(): Promise<void> {
   }
   const labels = customDetectorLabels(policy.custom_rules ?? []);
 
-  // Self-protection (decision.ts guardSelfWrite): a call that would change this
-  // directory — approve its own hold, rewrite policy.json, replace the guard —
+  // Self-protection (decision.ts guardSelfWrite): a call that would change
+  // Doorman's own files — approve its own hold, rewrite policy.json, replace
+  // the guard, or edit prefs.json, which the next sync copies into the policy —
   // is held whatever the policy says. Not a rule, so no hidden-rule, mode,
-  // exception or second opinion can stand it down.
+  // exception or second opinion can stand it down. The protected directories
+  // are this guard's, and Doorman's data directory when the guard sits in its
+  // usual place in it (`<data>/doorman/guard`).
   let selfWrite: string | undefined;
   let selfFinding: SpooledFinding | undefined;
   try {
-    let real: string | undefined;
-    try {
-      real = realpathSync(guardDir);
-    } catch {
-      real = undefined;
+    const dirs = [guardDir];
+    if (basename(guardDir) === "guard" && basename(dirname(guardDir)) === "doorman") dirs.push(dirname(dirname(guardDir)));
+    for (const dir of [...dirs]) {
+      try {
+        const real = realpathSync(dir);
+        if (real !== dir) dirs.push(real);
+      } catch {
+        // not there yet: the spelled path is the only one
+      }
     }
-    selfWrite = guardSelfWrite(toolName, input.tool_input, cwd, real === undefined ? [guardDir] : [guardDir, real]);
+    selfWrite = guardSelfWrite(toolName, input.tool_input, cwd, dirs);
   } catch {
     selfWrite = undefined;
   }
+  // Doorman's own controls (decision.ts doormanControl): a CLI command that
+  // turns protection down, answers held calls or hides what was recorded is
+  // held the same way — an agent must not stand down the check it is under.
+  let control: { label: string; invocation: string } | undefined;
+  if (selfWrite === undefined) {
+    try {
+      control = doormanControl(toolName, input.tool_input);
+    } catch {
+      control = undefined;
+    }
+  }
   // A command longer than the detectors' command window (after collapsing
   // padding) had its middle skipped: hold it rather than allow it unseen.
-  if (selfWrite === undefined && decision.decision === "allow" && command !== undefined && command.length > MAX_COMMAND_CHARS && scanWindow(command, MAX_COMMAND_CHARS).length > MAX_COMMAND_CHARS) {
+  if (selfWrite === undefined && control === undefined && decision.decision === "allow" && command !== undefined && command.length > MAX_COMMAND_CHARS && scanWindow(command, MAX_COMMAND_CHARS).length > MAX_COMMAND_CHARS) {
     decision = { decision: "ask", reason: UNINSPECTABLE_REASON, max_severity: "high", detectors: [GUARD_UNINSPECTABLE], warned: decision.warned };
     labels[GUARD_UNINSPECTABLE] = "Too large to inspect";
   }
-  if (selfWrite !== undefined) {
+  if (selfWrite !== undefined || control !== undefined) {
     decision = {
       decision: "ask",
-      reason: `This call would change Doorman's own guard files (${selfWrite.slice(0, 120)}) — approvals, the policy and the guard live there.`,
+      reason:
+        selfWrite !== undefined
+          ? `This call would change Doorman's own files (${selfWrite.slice(0, 120)}) — approvals, the policy, the guard and the person's settings live there.`
+          : `This call would ${control!.label} (${control!.invocation.slice(0, 120)}). Doorman holds its own controls for the person to decide, whatever the rules say; to suggest a rule, use Doorman's doorman_propose_rule tool.`,
       max_severity: "critical",
       detectors: [GUARD_SELF_PROTECTION],
       warned: decision.warned,
     };
     labels[GUARD_SELF_PROTECTION] = "Guard self-protection";
+    const evidence = selfWrite ?? control!.invocation;
     selfFinding = {
       detector: GUARD_SELF_PROTECTION,
       severity: "critical",
-      key_name: "writes to the guard directory",
-      excerpt: sanitizeExcerpt(redact(selfWrite)).slice(0, 160),
+      key_name: selfWrite !== undefined ? "writes to Doorman's own files" : control!.label,
+      excerpt: sanitizeExcerpt(redact(evidence)).slice(0, 160),
       occurrences: 1,
       ...(toolName === undefined ? {} : { tool_name: toolName }),
       ...(target === undefined ? {} : { target }),

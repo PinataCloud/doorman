@@ -15,6 +15,7 @@ under `## Unreleased`; a release renames its part of it.
 - Agents can suggest a rule: Doorman's MCP server has a `doorman_propose_rule` tool. Suggestions wait in Guardrails → Your rules ("Suggested by your agents") and in `doorman custom-rules`, to save (`doorman custom-rules accept <id>`) or dismiss; nothing applies until you save it, and a suggestion can only add a rule, never change one you have ([docs/rules.md](docs/rules.md#rules-your-agent-suggests)).
 
 ### Fixed
+- An agent can no longer stand down the guard it is under. Commands that turn Doorman's protection down, answer held calls (`doorman watch`, including `--stdio`) or hide what it recorded are held for you whatever the rules say, however `doorman` is run, and so is any change to Doorman's data directory, including `prefs.json`. Before, an agent could leave `doorman watch --stdio` answering in the background and approve its own held calls, or run `doorman guard uninstall`, without being held. `doorman_check_tool_call` gives the same answer ([docs/rules.md](docs/rules.md#what-doorman-holds-whatever-the-rules-say)).
 - The floating approval panel grows to fit the held call instead of cutting off its bottom (the shortcuts and the note under the buttons); on a short screen the card scrolls.
 
 ## CLI 0.7.1 — 2026-10-21

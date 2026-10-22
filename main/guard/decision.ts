@@ -1185,6 +1185,117 @@ export function guardSelfWrite(
   return undefined;
 }
 
+// ── Doorman's own controls ──────────────────────────────────────────────────
+//
+// The CLI does what the app's buttons do, and part of that turns protection
+// down or answers held calls. An agent that runs `doorman guard uninstall`, or
+// leaves `doorman watch --stdio` answering in the background, has stood down
+// the very check it is under — and nothing in the policy names Doorman's own
+// commands. So these are held whatever the policy says, like a write into the
+// guard's own directory (guardSelfWrite): the person decides. Whatever only
+// reads, tightens or suggests stays free; an agent's rule goes through the
+// MCP server's doorman_propose_rule, which only suggests.
+//
+// Best effort, like every reading of a shell command here: a subcommand built
+// at runtime that the guard can't read (`doorman "$CMD"`) is held, but an
+// alias or a renamed copy of the binary is not recognised.
+
+/** CLI commands that turn protection down, answer held calls, or hide what
+ * Doorman recorded — each with what it would do, for the approval card. */
+const DOORMAN_CONTROLS: Readonly<Record<string, string>> = {
+  "guard uninstall": "turn Doorman's guard off",
+  "rules set": "change a rule's mode",
+  "rules disable": "switch a rule off",
+  "policy level": "change the security level",
+  "policy confirm": "change how held calls wait and who answers them",
+  "packs disable": "switch a rule pack off",
+  "custom-rules add": "change your own rules",
+  "custom-rules remove": "remove one of your own rules",
+  "custom-rules accept": "save a rule an agent suggested",
+  "exceptions add": "add an exception, so a rule stops firing",
+  watch: "answer held tool calls",
+  "sbx watch": "answer held tool calls in your sandboxes",
+  "mcp recognize": "mark an MCP server as recognized",
+  "gateway unroute": "take an MCP server off the gateway",
+  "findings resolve": "close a finding",
+  "findings review": "close a finding",
+  "findings false-positive": "mark a finding as a false positive",
+  "findings accept-risk": "accept a finding's risk",
+  "model remove": "remove the injection classifier",
+};
+
+/** `config set` keys that change what Doorman keeps or shows. */
+const DOORMAN_CONFIG_HELD = new Set(["retention_days", "confidence_bands", "show_false_positives"]);
+
+/** Commands with a held subcommand: an unreadable subcommand of one is held. */
+const DOORMAN_CONTROL_FAMILIES = new Set(["config", ...Object.keys(DOORMAN_CONTROLS).map((key) => key.split(" ")[0]!)]);
+
+const DOORMAN_PACKAGE_RE = /^@pinata\/doorman(?:@\S*)?$/;
+
+/** The CLI's entry script, as node runs it from a checkout, the npm package
+ * (`…/@pinata/doorman/build/main/cli/index.js`) or the app bundle. */
+function isDoormanCliScript(word: string): boolean {
+  return (/doorman/i.test(word) && /[\\/]cli[\\/]index\.js$/i.test(word)) || /(?:^|[\\/])doorman(?:\.js)?$/i.test(word);
+}
+
+/** The arguments Doorman's CLI gets from one invocation, or undefined when the
+ * head runs something else: `doorman …`, `npx @pinata/doorman …` (and npm
+ * exec, pnpm/yarn dlx, bunx), `node …/cli/index.js …`, and the app's binary
+ * run as node with the script first. */
+function doormanArgs(words: readonly string[], win: boolean): string[] | undefined {
+  const program = programName(words[0] ?? "", win);
+  let rest: string[];
+  if (program === "doorman") rest = words.slice(1);
+  else if (/^(?:npx|bunx|pnpx)$/.test(program) || ((program === "pnpm" || program === "yarn") && words[1] === "dlx") || (program === "npm" && (words[1] === "exec" || words[1] === "x"))) {
+    const at = words.findIndex((word) => DOORMAN_PACKAGE_RE.test(word));
+    if (at < 0) return undefined;
+    const after = words.slice(at + 1);
+    // `npx -p @pinata/doorman doorman watch`: the package, then its bin by name.
+    rest = after[0] === "--" || programName(after[0] ?? "", win) === "doorman" ? after.slice(1) : after;
+  } else if (/^(?:node|nodejs|bun|electron)$/.test(program)) {
+    const at = words.findIndex((word, i) => i > 0 && !word.startsWith("-"));
+    if (at < 0 || !isDoormanCliScript(words[at]!)) return undefined;
+    rest = words.slice(at + 1);
+  } else return undefined;
+  if (rest[0] !== undefined && /\.js$/i.test(rest[0]) && isDoormanCliScript(rest[0])) rest = rest.slice(1);
+  return rest;
+}
+
+/** What a Doorman command line would do, if it is one of DOORMAN_CONTROLS. */
+function doormanControlLabel(args: readonly string[]): string | undefined {
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("-")) i += 1;
+  const [command, sub, key] = args.slice(i);
+  if (command === undefined) return undefined;
+  const unreadable = (word: string | undefined): boolean => word !== undefined && /[$`*?[{]/.test(word);
+  if (unreadable(command) || (DOORMAN_CONTROL_FAMILIES.has(command) && unreadable(sub))) return "run a Doorman command the guard can't read";
+  if (command === "config") return sub === "set" && (key === undefined || unreadable(key) || DOORMAN_CONFIG_HELD.has(key)) ? "change what Doorman keeps or shows" : undefined;
+  const own = (key: string): string | undefined => (Object.hasOwn(DOORMAN_CONTROLS, key) ? DOORMAN_CONTROLS[key] : undefined);
+  return own(command) ?? (sub === undefined ? undefined : own(`${command} ${sub}`));
+}
+
+/**
+ * Does this tool call run one of Doorman's own controls (DOORMAN_CONTROLS)?
+ * Returns what it would do and the invocation that does it, or undefined.
+ */
+export function doormanControl(
+  toolName: string | undefined,
+  toolInput: unknown,
+  platform: NodeJS.Platform = process.platform,
+): { label: string; invocation: string } | undefined {
+  const command = commandOfInput(toolName, toolInput);
+  if (command === undefined) return undefined;
+  const win = platform === "win32";
+  const heads = win ? [...new Set([...invocationHeads(command), ...windowsHeads(command)])] : invocationHeads(command);
+  for (const head of heads) {
+    const args = doormanArgs(shellWords(head), win);
+    if (args === undefined) continue;
+    const label = doormanControlLabel(args);
+    if (label !== undefined) return { label, invocation: head.trim() };
+  }
+  return undefined;
+}
+
 /** What a Windows command touches, as the person would write it: variables
  * expanded (`%APPDATA%` → `C:\Users\…\AppData\Roaming`), and a drive or UNC
  * path with `\` separators, whichever reading of the command found it. */
