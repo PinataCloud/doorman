@@ -53,13 +53,13 @@ maybe("the compiled MCP server over stdio", () => {
 
   const request = (id: number | string, method: string, params?: unknown) => JSON.stringify({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) });
 
-  it("lists its tools with read-only annotations", async () => {
+  it("lists its tools: read-only annotations on the reading four, a write on the proposal tool", async () => {
     const out = await session(`${request(1, "initialize", { protocolVersion: "2025-06-18" })}\n${request(2, "tools/list")}\n`);
     expect(out.code).toBe(0);
     const list = JSON.parse(out.lines[1]!);
-    expect(list.result.tools).toHaveLength(4);
+    expect(list.result.tools).toHaveLength(5);
     for (const tool of list.result.tools) {
-      expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+      expect(tool.annotations.readOnlyHint, tool.name).toBe(tool.name !== "doorman_propose_rule");
     }
   });
 

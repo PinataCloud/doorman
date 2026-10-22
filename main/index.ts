@@ -132,6 +132,7 @@ import { classifyWalletAddress, WALLET_CHAIN_LABELS, walletAddressHash } from ".
 import { randomBytes } from "node:crypto";
 import { customDetectorLabels, parseCustomRules, validateCustomRule, validateCustomRuleList } from "./guard/custom-rules.js";
 import { RULE_PACK_IDS } from "./guard/rule-packs.js";
+import { checkAcceptedProposal, proposalsDir, readProposals, removeProposal } from "./guard/rule-proposals.js";
 import { injectionModelFromEnv, injectionModelSourceFromEnv, policyEnvActive } from "./lib/policy-env.js";
 import { livePolicy as policyFromPrefs } from "./lib/live-policy.js";
 import { readPrefsFile, writePrefsFile } from "./lib/prefs-file.js";
@@ -1190,6 +1191,62 @@ function watchHookDocuments(): void {
     } catch (err) {
       console.warn(`[doorman] couldn't watch ${target.dir}: ${String(err)}`);
     }
+  }
+}
+
+// ---- rule proposals -------------------------------------------------------------
+
+/**
+ * Rules agents suggest over Doorman's MCP server land as files in
+ * `<guard>/proposals/` (guard/rule-proposals.ts) — written by another process,
+ * often while the window is open. Watched the way the hook documents are: the
+ * DIRECTORY, since each proposal arrives by rename, with a short settle so a
+ * burst of events is one read. The ids seen at the last read decide which
+ * proposals are NEW and earn a notice; the ones already waiting at launch are
+ * shown on Guardrails without one (they are not news).
+ */
+let proposalWatcher: FSWatcher | undefined;
+let proposalTimer: NodeJS.Timeout | undefined;
+let proposalIdsSeen: Set<string> | undefined;
+
+function refreshRuleProposals(): void {
+  const proposals = readProposals(guardDir(app.getPath("userData")));
+  const seen = proposalIdsSeen;
+  proposalIdsSeen = new Set(proposals.map((p) => p.id));
+  for (const p of proposals) {
+    if (!seen || seen.has(p.id)) continue;
+    store.pushNotice({
+      id: `rule-proposal-${p.id}`,
+      kind: "info",
+      title: `${p.from} suggests a rule: ${p.rule.label}`,
+      body: p.reason,
+      nav: "rules",
+      at: new Date().toISOString(),
+    });
+  }
+  // A proposal saved or dismissed elsewhere (the CLI) takes its notice along.
+  for (const notice of store.snapshot().notices) {
+    if (notice.id.startsWith("rule-proposal-") && !proposalIdsSeen.has(notice.id.slice("rule-proposal-".length))) store.dismissNotice(notice.id);
+  }
+  store.set({ rule_proposals: proposals });
+}
+
+function watchRuleProposals(): void {
+  refreshRuleProposals();
+  const dir = proposalsDir(guardDir(app.getPath("userData")));
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    proposalWatcher = watch(dir, () => {
+      if (proposalTimer) clearTimeout(proposalTimer);
+      proposalTimer = setTimeout(() => {
+        proposalTimer = undefined;
+        refreshRuleProposals();
+      }, 200);
+      proposalTimer.unref?.();
+    });
+    proposalWatcher.on("error", (err) => console.warn(`[doorman] rule proposal watch error: ${String(err)}`));
+  } catch (err) {
+    console.warn(`[doorman] couldn't watch ${dir}: ${String(err)}`);
   }
 }
 
@@ -2286,6 +2343,30 @@ function registerIpc(): void {
     scheduleRecompute();
     return { ok: true, custom_rules: policy.custom_rules ?? [] };
   });
+  // A rule an agent suggested, as the person saves it from the wizard (perhaps
+  // edited): checked again against the live set as it is NOW — it may only add
+  // a rule — then added exactly like a rule of their own, and the proposal goes.
+  ipcMain.handle("rules:proposal-accept", (_e, id: unknown, raw: unknown) => {
+    if (typeof id !== "string") return { ok: false, problems: [{ field: "proposal", message: "no such suggestion" }] };
+    const dir = guardDir(app.getPath("userData"));
+    const checked = checkAcceptedProposal(dir, id, raw, (livePolicy().custom_rules ?? []).map((r) => r.id));
+    if (!checked.ok) return { ok: false, problems: checked.problems };
+    const prefs = store.prefs();
+    const result = validateCustomRuleList([...(prefs.policy.custom_rules ?? []), checked.rule]);
+    if (!result.ok) return { ok: false, problems: result.problems };
+    store.setPrefs({ policy: { ...prefs.policy, custom_rules: parseCustomRules(result.rules) } });
+    applyGuardSync();
+    scheduleRecompute();
+    removeProposal(dir, id);
+    refreshRuleProposals();
+    return { ok: true };
+  });
+  ipcMain.handle("rules:proposal-dismiss", (_e, id: unknown) => {
+    if (typeof id !== "string") return { ok: false };
+    const removed = removeProposal(guardDir(app.getPath("userData")), id);
+    refreshRuleProposals();
+    return { ok: removed };
+  });
   ipcMain.handle("rules:custom-dry-run", async (_e, raw: unknown, days: unknown) => {
     const result = validateCustomRule(raw);
     if (!result.ok) return { ok: false, problems: result.problems };
@@ -3069,6 +3150,7 @@ if (!app.requestSingleInstanceLock()) {
     const shadowTimer = setInterval(refreshShadowAi, 60 * 60_000);
     shadowTimer.unref?.();
     spool.start();
+    watchRuleProposals();
     sandboxImports = new ImportsWatcher({
       dataDir: app.getPath("userData"),
       ingest: (bundle) => engine.importSandboxBundle(bundle),
@@ -3151,6 +3233,8 @@ if (!app.requestSingleInstanceLock()) {
     releaseLock(app.getPath("userData"), "app", process.pid);
     engine?.stop();
     spool?.stop();
+    proposalWatcher?.close();
+    if (proposalTimer) clearTimeout(proposalTimer);
     sandboxImports?.stop();
     mcpWatch?.stop();
     observed?.stop();

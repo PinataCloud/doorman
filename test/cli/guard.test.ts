@@ -12,6 +12,7 @@ import { main } from "../../main/cli/index.js";
 import { guardDir } from "../../main/enforcement.js";
 import { heartbeatPath } from "../../main/guard/handshake.js";
 import { carriesGuardMarker } from "../../main/guard/policy.js";
+import { readProposals, saveProposal } from "../../main/guard/rule-proposals.js";
 import { renderLauncher } from "../../main/lib/node-launcher.js";
 
 /**
@@ -225,6 +226,26 @@ describe("doorman guard and policy commands", () => {
     expect((await run(["custom-rules", "remove", "no-prod"])).code).toBe(0);
     expect(((prefs().policy as Json).custom_rules as unknown) ?? []).toEqual([]);
     expect((await run(["custom-rules", "remove", "no-prod"])).code).toBe(2);
+  });
+
+  it("accepts and dismisses rules an agent suggested", async () => {
+    const rule = { id: "kubectl_prod", label: "kubectl apply against prod", severity: "high", mode: "ask", when: { command: "kubectl\\s+apply" } };
+    const first = saveProposal(guardDir(dataDir), [], { rule, reason: "prod waits for me", from: "Claude Code" });
+    const second = saveProposal(guardDir(dataDir), [], { rule: { ...rule, id: "other" }, reason: "x", from: "Codex" });
+    if (!first.ok || !second.ok) throw new Error("proposal not saved");
+    expect((await run(["custom-rules"])).out).toContain(first.proposal.id);
+    expect((await run(["custom-rules", "accept", first.proposal.id])).code).toBe(0);
+    expect((guardPolicy().custom_rules as { id: string }[]).map((r) => r.id)).toContain("kubectl_prod");
+    expect(((prefs().policy as Json).custom_rules as { id: string }[]).map((r) => r.id)).toContain("kubectl_prod");
+    expect(readProposals(guardDir(dataDir)).map((p) => p.id)).toEqual([second.proposal.id]);
+    // A suggestion whose id became taken in the meantime is refused, and stays.
+    const file = join(root, "rule.json");
+    writeFileSync(file, JSON.stringify({ ...rule, id: "other" }));
+    expect((await run(["custom-rules", "add", file])).code).toBe(0);
+    expect((await run(["custom-rules", "accept", second.proposal.id])).code).toBe(2);
+    expect((await run(["custom-rules", "dismiss", second.proposal.id])).code).toBe(0);
+    expect(readProposals(guardDir(dataDir))).toEqual([]);
+    expect((await run(["custom-rules", "dismiss", second.proposal.id])).code).toBe(2);
   });
 
   it("watch refuses to start without a terminal, and while another Doorman answers", async () => {

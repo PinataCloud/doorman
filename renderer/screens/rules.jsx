@@ -65,6 +65,8 @@ function RulesScreen({ state }) {
      away the configuration the person gets back by installing the guard, so
      they are reported in the banner instead. */
   const frozen = !installed;
+  // Rules agents suggested, waiting in Your rules (inside Advanced).
+  const suggestedCount = (state.rule_proposals || []).length;
   // The saved choice, for the banner to promise back.
   const wanted = {
     blocking: enforceable.filter((id) => modes[id] === "block").length,
@@ -89,11 +91,19 @@ function RulesScreen({ state }) {
           choice: its children stay in the tree when it is shut, so the browser
           hides them with CSS while the screen's tests still reach the packs,
           the person's own rules and the exceptions. A JS fold renders nothing
-          until it is opened, and the renderer test harness cannot click. */}
-      <details className="rules-adv">
+          until it is opened, and the renderer test harness cannot click.
+
+          Rules an agent suggested wait in Your rules, inside this fold — so
+          while any are waiting the fold opens on its own and its summary
+          counts them; shut, it would hide the one thing that asks for a
+          decision. */}
+      <details className="rules-adv" open={suggestedCount > 0 ? true : undefined}>
         <summary>
           Advanced
           <span className="muted"> · saved sets, rule packs, your own rules, exceptions, my wallets</span>
+          {suggestedCount > 0 ? (
+            <strong> · {suggestedCount} suggested rule{suggestedCount === 1 ? "" : "s"}</strong>
+          ) : null}
         </summary>
 
         <SavedRuleSetsCard state={state} frozen={frozen} />
@@ -2380,14 +2390,15 @@ function RuleWizard({ form, setForm, initialStep, unlocked, problems, dry, savin
 /** Your rules — the list, and the wizard that writes one. */
 function CustomRulesCard({ state, guardOff }) {
   const rules = (state.prefs.policy && state.prefs.policy.custom_rules) || [];
-  // null | { form, at, unlocked, existing }
+  const suggested = state.rule_proposals || [];
+  // null | { form, at, unlocked, existing, proposal }
   const [editing, setEditing] = useState(null);
   const [problems, setProblems] = useState([]);
   const [dry, setDry] = useState(null); // null | {loading} | result
   const [saving, setSaving] = useState(false);
 
   const open = (form, opts) => {
-    setEditing({ form, at: (opts && opts.at) || 0, unlocked: !!(opts && opts.unlocked), existing: !!(opts && opts.existing), nonce: Date.now() });
+    setEditing({ form, at: (opts && opts.at) || 0, unlocked: !!(opts && opts.unlocked), existing: !!(opts && opts.existing), proposal: (opts && opts.proposal) || null, nonce: Date.now() });
     setDry(null);
     setProblems([]);
   };
@@ -2414,6 +2425,21 @@ function CustomRulesCard({ state, guardOff }) {
 
   const upsert = () => {
     const rule = formToRule(editing.form);
+    // A suggestion is saved through its own door: checked again in main (it
+    // may only ADD a rule), added, and the suggestion removed in one step.
+    if (editing.proposal) {
+      setSaving(true);
+      setProblems([]);
+      return window.doorman.acceptRuleProposal(editing.proposal, rule).then((res) => {
+        setSaving(false);
+        if (res && res.ok) {
+          close();
+          return true;
+        }
+        setProblems((res && res.problems) || [{ field: "rule", message: "couldn't save" }]);
+        return false;
+      });
+    }
     // Replace by the NEW id and by the id the rule had when it was opened —
     // a renamed rule must not leave its old self behind.
     const others = rules.filter((r) => r.id !== rule.id && r.id !== editing.form.original_id);
@@ -2438,7 +2464,9 @@ function CustomRulesCard({ state, guardOff }) {
   const hint = editing
     ? editing.existing
       ? "editing a rule"
-      : "new rule"
+      : editing.proposal
+        ? "reviewing a suggestion"
+        : "new rule"
     : rules.length === 0
       ? "none yet"
       : rules.length + " rule" + (rules.length === 1 ? "" : "s");
@@ -2446,7 +2474,7 @@ function CustomRulesCard({ state, guardOff }) {
   return (
     <Card title="Your rules" hint={hint}>
       {editing ? (
-        <WizardPopup title={editing.existing ? "Edit rule" : "New rule"} onClose={close}>
+        <WizardPopup title={editing.existing ? "Edit rule" : editing.proposal ? "Suggested rule" : "New rule"} onClose={close}>
         <RuleWizard
           key={editing.nonce}
           form={editing.form}
@@ -2475,6 +2503,49 @@ function CustomRulesCard({ state, guardOff }) {
             the session. Applies from the next call; dry run it against your last 14 days first.{" "}
             <RulesGuideLink anchor="#your-own-rules">How to write a rule, with examples →</RulesGuideLink>
           </div>
+
+          {suggested.length > 0 ? (
+            /* Rules an agent suggested over Doorman's MCP server. None is live:
+               Review opens the wizard on its Review step, as a NEW rule
+               prefilled from the suggestion, and saving there adds it. */
+            <div className="rule-suggestions" style={{ marginBottom: "var(--s4)" }}>
+              <div className="cardnote" style={{ marginTop: 0 }}>
+                <strong>Suggested by your agents</strong> — nothing applies until you review and save it. A suggestion can
+                only add a rule, never change one you have.
+              </div>
+              <table className="rows">
+                <tbody>
+                  {suggested.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <div>{p.rule.label}</div>
+                        <div className="muted" style={{ fontSize: "var(--t-3)" }}>
+                          {p.from} · {p.rule.mode}
+                        </div>
+                      </td>
+                      <td className="muted" style={{ fontSize: "var(--t-2)" }}>
+                        {describeCustomRule(p.rule)}
+                        {p.reason ? <div style={{ fontSize: "var(--t-3)" }}>“{p.reason}”</div> : null}
+                      </td>
+                      <td style={{ width: 140 }}>
+                        <div className="row" style={{ gap: "var(--s2)" }}>
+                          <button
+                            className="linkbtn"
+                            onClick={() => open(ruleToForm(p.rule), { at: RULE_STEPS.length - 1, unlocked: true, existing: false, proposal: p.id })}
+                          >
+                            Review
+                          </button>
+                          <button className="linkbtn" aria-label={"Dismiss " + p.rule.label} onClick={() => window.doorman.dismissRuleProposal(p.id)}>
+                            Dismiss
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
 
           {rules.length > 0 ? (
             <table className="rows">

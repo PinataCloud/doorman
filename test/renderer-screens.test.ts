@@ -2711,6 +2711,44 @@ describe("My wallets on Guardrails (renderer/screens/rules.jsx)", () => {
   });
 });
 
+describe("rules agents suggest, on Guardrails (renderer/screens/rules.jsx)", () => {
+  const ctx = loadApp();
+
+  it("shows each suggestion with who sent it, the rule in words, the reason, Review and Dismiss — and counts them on Advanced", () => {
+    const state = blankState();
+    ctx.__state = {
+      ...state,
+      rule_proposals: [
+        {
+          id: "p-0123456789ab",
+          at: "2026-10-21T10:00:00Z",
+          from: "Claude Code",
+          reason: "prod deploys should wait for you",
+          rule: { id: "kubectl_prod", label: "kubectl apply against prod", severity: "high", mode: "ask", when: { command: "kubectl\\s+apply" } },
+        },
+      ],
+    };
+    const nodes = (tag: string) =>
+      runInContext(
+        `__nodes(RulesScreen({ state: __state }), ${JSON.stringify(tag)}, [], 0)
+          .map(function (n) { return { kids: JSON.stringify(n.kids), aria: (n.props && n.props["aria-label"]) || "", open: !!(n.props && n.props.open) }; })`,
+        ctx as object,
+        { filename: "rules-suggestions" },
+      ) as Array<{ kids: string; aria: string; open: boolean }>;
+    const text = nodes("td").map((n) => n.kids).join("\n");
+    expect(text).toContain("Claude Code");
+    expect(text).toContain("kubectl apply against prod");
+    expect(text).toContain("Fires when command matches");
+    expect(text).toContain("prod deploys should wait for you");
+    const buttons = nodes("button");
+    expect(buttons.some((b) => b.kids.includes("Review"))).toBe(true);
+    expect(buttons.some((b) => b.aria === "Dismiss kubectl apply against prod")).toBe(true);
+    const details = nodes("details").find((d) => d.kids.includes("Advanced"));
+    expect(details?.open).toBe(true);
+    expect(details?.kids).toContain("suggested rule");
+  });
+});
+
 describe("the wizard popup (renderer/screens/rules.jsx)", () => {
   const ctx = loadApp();
 

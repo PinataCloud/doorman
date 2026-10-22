@@ -246,9 +246,11 @@ sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doo
   tool-poisoning findings, a personal "recognized" list, and an optional
   stdio gateway that scans live tool descriptions (`main/gateway/`).
 - **Doorman's own MCP server** (`main/mcp/doorman-mcp.ts`): lets an agent ask
-  the guard before acting, using four tools: `doorman_check_tool_call`,
-  `doorman_explain_last_block`, `doorman_session_spend` and `doorman_status`.
-  All four are answered from disk, so they work with the app closed.
+  the guard before acting, using five tools: `doorman_check_tool_call`,
+  `doorman_explain_last_block`, `doorman_session_spend`, `doorman_status` and
+  `doorman_propose_rule`. All five work from disk, so they work with the app
+  closed; the last only saves a suggested rule for you to review
+  ([docs/rules.md](docs/rules.md#rules-your-agent-suggests)).
 - **VS Code companion** (`vscode-extension/`): shows today's token usage and
   the guard's state in the status bar, and lets you answer held calls in the
   editor. It is packaged into a `.vsix` at build time and installed through the

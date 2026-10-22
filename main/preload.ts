@@ -68,6 +68,8 @@ const api = {
    * before a save, never a precondition of one. */
   setCustomRules: (rules: unknown) => ipcRenderer.invoke("rules:custom-set", rules),
   dryRunCustomRule: (rule: unknown, days?: number) => ipcRenderer.invoke("rules:custom-dry-run", rule, days),
+  acceptRuleProposal: (id: string, rule: unknown) => ipcRenderer.invoke("rules:proposal-accept", id, rule),
+  dismissRuleProposal: (id: string) => ipcRenderer.invoke("rules:proposal-dismiss", id),
   /** Shipped rule packs on/off. */
   setRulePack: (packId: string, on: boolean) => ipcRenderer.invoke("rules:pack", packId, on),
   /** My wallets: the chains watched + unknown-address posture (patch), and the

@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MCP_FILES } from "../main/mcp-install.js";
 import {
@@ -108,27 +109,32 @@ describe("JSON-RPC over stdio", () => {
     expect(JSON.parse(handleMessage(call(3, "doorman_nothing"), PATHS, io({}))!).error.code).toBe(-32602);
   });
 
-  it("lists four tools, each with an input schema", () => {
+  it("lists five tools, each with an input schema", () => {
     const parsed = JSON.parse(handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" }), PATHS, io({}))!);
     expect(parsed.result.tools.map((t: { name: string }) => t.name)).toEqual([
       "doorman_check_tool_call",
       "doorman_explain_last_block",
       "doorman_session_spend",
       "doorman_status",
+      "doorman_propose_rule",
     ]);
     for (const tool of TOOLS) expect(tool.inputSchema.type).toBe("object");
   });
 
-  it("declares every tool read-only, with a title — Codex under approval_policy=never refuses any other", () => {
+  it("declares the reading tools read-only and the proposal tool as a write, each with a title", () => {
     const parsed = JSON.parse(handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" }), PATHS, io({}))!);
     for (const tool of parsed.result.tools) {
       expect(tool.title, tool.name).toMatch(/\S/);
-      expect(tool.annotations, tool.name).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+      expect(tool.annotations, tool.name).toEqual(
+        tool.name === "doorman_propose_rule"
+          ? { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+          : { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      );
     }
   });
 
-  it("lists Doorman's read-only tools exactly as the guard exempts them", () => {
-    expect(TOOLS.map((t) => t.name)).toEqual([...DOORMAN_READ_ONLY_MCP_TOOLS]);
+  it("exempts from the guard exactly the read-only tools, never the proposal tool", () => {
+    expect(TOOLS.filter((t) => t.annotations.readOnlyHint).map((t) => t.name)).toEqual([...DOORMAN_READ_ONLY_MCP_TOOLS]);
   });
 
   it("answers an unsupported protocol revision with its own newest one", () => {
@@ -555,5 +561,41 @@ describe("doorman_status", () => {
   it("says when holding is switched off", () => {
     const files = { [join(PATHS.guardDir, "policy.json")]: JSON.stringify({ version: 1, confirm: { interactive: false } }) };
     expect(text(handleMessage(call(74, "doorman_status"), PATHS, io(files)))).toContain("Holding is switched off");
+  });
+});
+
+describe("doorman_propose_rule", () => {
+  const RULE = { id: "kubectl_apply_prod", label: "kubectl apply against prod", severity: "high", mode: "ask", when: { command: "kubectl\\s+apply\\b.*prod" } };
+  let guardDir: string;
+  let paths: McpPaths;
+  let policyText: string;
+  beforeEach(() => {
+    guardDir = mkdtempSync(join(tmpdir(), "doorman-mcp-propose-"));
+    paths = { guardDir, storeDir: join(guardDir, "store") };
+    policyText = JSON.stringify({ version: 1, custom_rules: [{ id: "publish_actions--npm_publish", label: "npm publish", severity: "medium", mode: "warn", pack: "publish_actions", when: { command: "npm publish" } }] });
+    writeFileSync(join(guardDir, "policy.json"), policyText);
+  });
+  afterEach(() => rmSync(guardDir, { recursive: true, force: true }));
+  const diskIo = () => ({ ...io({}), readText: (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : undefined) });
+
+  it("saves the suggestion under the guard directory, names the agent, and leaves the policy untouched", () => {
+    const session: McpSession = {};
+    handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "claude-code" } } }), paths, diskIo(), session);
+    const out = text(handleMessage(call(2, "doorman_propose_rule", { rule: RULE, reason: "prod deploys should wait for me" }), paths, diskIo(), session));
+    expect(out).toContain("doorman custom-rules accept p-");
+    const files = readdirSync(join(guardDir, "proposals"));
+    expect(files).toHaveLength(1);
+    const saved = JSON.parse(readFileSync(join(guardDir, "proposals", files[0]!), "utf8"));
+    expect(saved.from).toBe("Claude Code");
+    expect(saved.rule.id).toBe("kubectl_apply_prod");
+    expect(readFileSync(join(guardDir, "policy.json"), "utf8")).toBe(policyText);
+  });
+
+  it("refuses an invalid rule, or one reusing a live pack rule's id, listing each problem", () => {
+    const bad = JSON.parse(handleMessage(call(3, "doorman_propose_rule", { rule: { ...RULE, id: "publish_actions--npm_publish", when: { command: "(" } }, reason: "x" }), paths, diskIo())!);
+    expect(bad.result.isError).toBe(true);
+    expect(bad.result.content[0].text).toMatch(/when\.command: /);
+    expect(bad.result.content[0].text).toMatch(/id: /);
+    expect(existsSync(join(guardDir, "proposals"))).toBe(false);
   });
 });

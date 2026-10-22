@@ -101,6 +101,9 @@ export const GUARD_FILES = [
   "redact.js",
   "remedy.js",
   "rule-packs.js",
+  // Agent-suggested rules, written by Doorman's MCP server
+  // (mcp/doorman-mcp.ts imports ../guard/rule-proposals.js).
+  "rule-proposals.js",
   // Which rules the app shows — policy.js narrows ALL_DETECTORS
   // through it, so the copied guard needs it too.
   "rule-scope.js",

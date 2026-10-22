@@ -12,6 +12,7 @@ import { CONFIDENCE_BANDS, type FindingConfidence, type FindingRow, type RadarSu
 import type { GuardIntegrityReport } from "./lib/guard-integrity.js";
 import type { GuardHostFailure, GuardHostSummary } from "./enforcement.js";
 import { parseCustomRules } from "./guard/custom-rules.js";
+import type { RuleProposal } from "./guard/rule-proposals.js";
 import { RULE_PACKS, RULE_PACK_IDS, defaultEnabledPacks } from "./guard/rule-packs.js";
 import type { SpendGraphs } from "./lib/spend.js";
 import type { PlanWindowReading } from "./lib/turns.js";
@@ -549,7 +550,7 @@ export interface AppNotice {
   title: string;
   body: string;
   /** Screen the notice's open action navigates to. */
-  nav?: "radar" | "spend" | "ledger" | "settings" | "integrations";
+  nav?: "radar" | "spend" | "ledger" | "settings" | "integrations" | "rules";
   /** Sticky notices wait for an explicit dismiss; the rest auto-expire. */
   sticky?: boolean;
   /** Override how long this one waits before retiring itself (renderer
@@ -717,6 +718,10 @@ export interface AppState {
    * rather than invented per surface. One table, two readers.
    */
   detector_guidance: Record<string, { blurb: string; fix: string }>;
+  /** Rules agents suggested over Doorman's MCP server (guard/rule-proposals.ts),
+   * newest first — waiting in Guardrails → Your rules for the person to save
+   * or dismiss. None of them is live. */
+  rule_proposals: RuleProposal[];
   /**
    * The whole security-level ladder, carried in the snapshot for the
    * same reason as `default_modes`: static per build, and the renderer must
@@ -1067,6 +1072,7 @@ export class Store {
         ALL_DETECTORS.map((id) => [id, DEFAULT_MODES[id] ?? "observe"]),
       ) as Record<SecurityDetectorId, EnforcementMode>,
       detector_guidance: DETECTOR_GUIDANCE,
+      rule_proposals: [],
       level_modes: Object.fromEntries(
         SECURITY_LEVELS.map((level) => [
           level,

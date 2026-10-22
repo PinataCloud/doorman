@@ -4,7 +4,7 @@
  * Copilot's agent mode in VS Code and the Copilot CLI (and every other MCP
  * host on this Mac) can spawn this instead of guessing what the guard will do:
  *   command: node   args: ["<userData>/doorman/mcp/doorman-mcp.js"]
- * Four tools, all answered from what is already on this disk, so they work
+ * Five tools, all answered from what is already on this disk, so they work
  * with the app closed:
  *   · doorman_check_tool_call  — run the SAME detectors and policy the
  *     PreToolUse guard runs, on a call the agent is about to make. The
@@ -20,13 +20,21 @@
  *     configs keep working.
  *   · doorman_status           — is the guard installed, is the app (or
  *     `doorman watch`) answering, which rules hold or block.
- * Every tool is annotated read-only: Codex under `approval_policy=never`
- * refuses a tool that does not say so.
+ *   · doorman_propose_rule     — suggest a custom rule (the custom-rules
+ *     format). It is only SAVED for review (guard/rule-proposals.ts, beside
+ *     the policy, never in it): nothing applies until the person saves it in
+ *     the app or runs `doorman custom-rules accept`, and a proposal can only
+ *     add a new rule — never change, switch off or shadow one they have.
+ * The four that read are annotated read-only: Codex under
+ * `approval_policy=never` refuses a tool that does not say so. The proposal
+ * tool says honestly that it writes, and the guard does not exempt it
+ * (decision.ts isDoormanReadOnlyTool covers the read-only four).
  *
  * NEVER a value: the check returns rule names and counts, never the redacted
  * excerpt; the spool rows are already masked and only their names travel —
  * flattened to one line, since a tool name is whatever an MCP server chose;
- * usage is numbers. Nothing here writes anything.
+ * usage is numbers. The one write is a proposal file under the guard
+ * directory; the policy is never touched.
  *
  * Wire: newline-delimited JSON-RPC 2.0 (the MCP stdio transport). We print
  * one line per response and nothing else on stdout; diagnostics go to stderr.
@@ -41,13 +49,14 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { customDetectorId, customDetectorLabels } from "../guard/custom-rules.js";
+import { customDetectorId, customDetectorLabels, parseCustomRules } from "../guard/custom-rules.js";
 import { DOORMAN_MCP_SERVER_NAME, evaluateToolCall, type GuardHookInput } from "../guard/decision.js";
 import { appListening, heartbeatPath, readPresence } from "../guard/handshake.js";
 import { HOSTS, hostLabel } from "../guard/hosts/index.js";
 import { DETECTOR_LABELS, HOOK_TIMEOUT_SLACK_SECONDS, isGuardCommand, parsePolicy, type GuardPolicy } from "../guard/policy.js";
 import { agentFacingReason, remedyFor, type HoldResolution } from "../guard/remedy.js";
 import { rulePackShown, ruleShown } from "../guard/rule-scope.js";
+import { describeRule, proposerLabel, saveProposal } from "../guard/rule-proposals.js";
 
 export const MCP_SERVER_NAME = DOORMAN_MCP_SERVER_NAME;
 export const MCP_SERVER_VERSION = "1";
@@ -135,8 +144,11 @@ export function realIo(): McpReadIo {
 
 // ---- tools ------------------------------------------------------------------
 
-/** All four tools only read Doorman's own files (MCP 2025-06-18 ToolAnnotations). */
+/** The four reading tools only read Doorman's own files (MCP 2025-06-18 ToolAnnotations). */
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+/** The proposal tool writes one file, adds nothing live, and each call is a
+ * new proposal — said as it is. */
+const PROPOSES = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
 
 export const TOOLS = [
   {
@@ -204,6 +216,51 @@ export const TOOLS = [
       "Whether Doorman's guard is installed, whether the Doorman app or `doorman watch` is running to answer holds, which rules currently hold or block a call, and which agent hosts the guard knows.",
     inputSchema: { type: "object", properties: {} },
     annotations: READ_ONLY,
+  },
+  {
+    name: "doorman_propose_rule",
+    title: "Suggest a Doorman rule",
+    description:
+      "Suggest a new custom rule to the person who runs Doorman — for example when they ask you to make Doorman hold or block a kind of command, or you notice a risky pattern their rules do not cover. The rule is only saved as a suggestion: the person reviews it in Doorman (Guardrails → Your rules) or with `doorman custom-rules accept <id>`, may edit it, and nothing applies until they save it. A suggestion can only ADD a rule: it cannot change, switch off or replace a rule they already have, so use an id that is not taken. Every clause is a case-insensitive regular expression. Call doorman_status first if you need to know which rules exist.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        rule: {
+          type: "object",
+          description:
+            'The rule, in Doorman\'s custom rule format. Example: { "id": "kubectl_apply_prod", "label": "kubectl apply against prod", "severity": "high", "mode": "ask", "when": { "command": "\\\\bkubectl\\\\b[^|;]*\\\\bapply\\\\b[^|;]*--context[= ]\\\\S*prod" } }.',
+          properties: {
+            id: { type: "string", description: "1–48 lowercase letters, digits, - or _; must not be an id already in use." },
+            label: { type: "string", description: "A short name the person will read, up to 80 characters." },
+            blurb: { type: "string", description: "Optional: one sentence on what it catches." },
+            severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
+            mode: { type: "string", enum: ["observe", "warn", "ask", "block"], description: "observe records, warn tells the agent, ask holds the call for the person, block refuses it." },
+            when: {
+              type: "object",
+              description: "What the call is; every clause given must match. At least one clause.",
+              properties: {
+                tool: { type: "string", description: "Regex over the tool name (^Bash$, ^mcp__slack__send)." },
+                command: { type: "string", description: "Regex over a shell call's command." },
+                server: { type: "string", description: "Regex over the MCP server of mcp__<server>__<tool>." },
+                target: { type: "string", description: "Regex over the call's target: a program name or a file path." },
+                arg: { type: "object", description: "Argument field (dotted paths reach nested fields) → regex over its value.", additionalProperties: { type: "string" } },
+              },
+            },
+            after: {
+              type: "object",
+              description: "Optional: only after this kind of data entered the session.",
+              properties: { taint: { type: "string", enum: ["secret", "injection", "untrusted_fetch", "private_data", "sql_result"] } },
+            },
+            scope: { type: "object", description: "Optional: only under this directory.", properties: { cwd_prefix: { type: "string" } } },
+          },
+          required: ["id", "label", "severity", "mode", "when"],
+        },
+        reason: { type: "string", description: "One line for the person: why this rule is worth having (up to 300 characters)." },
+        cwd: { type: "string", description: "Optional: the working directory you are in, shown to the person with the suggestion." },
+      },
+      required: ["rule", "reason"],
+    },
+    annotations: PROPOSES,
   },
 ] as const;
 
@@ -280,6 +337,42 @@ function hiddenCustomRules(policy: GuardPolicy): Set<string> {
 
 function labelOf(id: string, labels?: Record<string, string>): string {
   return labels?.[id] ?? (DETECTOR_LABELS as Record<string, string>)[id] ?? id;
+}
+
+const PROPOSE_ARGS: Readonly<Record<string, ArgKind>> = { rule: "object", reason: "string", cwd: "string" };
+
+/**
+ * Save a suggested rule for the person's review. The ids it must not reuse are
+ * every rule the guard runs — the policy's `custom_rules` already carries the
+ * enabled packs' rules under their `<pack>--<rule>` ids next to the person's
+ * own — plus any other pending suggestion's (saveProposal reads those).
+ */
+export function proposeRule(args: Record<string, unknown>, paths: McpPaths, io: McpReadIo, session: McpSession): ToolResult {
+  const problem = argProblem(args, PROPOSE_ARGS);
+  if (problem) return { text: problem, isError: true };
+  const reason = str(args.reason);
+  if (obj(args.rule) === undefined || reason === undefined) return { text: "`rule` (an object) and `reason` (a string) are both required.", isError: true };
+  const cwd = str(args.cwd);
+  const result = saveProposal(paths.guardDir, parseCustomRules(readPolicy(paths, io).policy.custom_rules).map((r) => r.id), {
+    rule: args.rule,
+    reason,
+    from: proposerLabel(session.clientName),
+    ...(cwd === undefined ? {} : { cwd }),
+    now: new Date(io.now()),
+  });
+  if (!result.ok) {
+    return {
+      text: ["Doorman did not save this suggestion:", ...result.problems.map((p) => `- ${p.field}: ${oneLine(p.message, 200)}`)].join("\n"),
+      isError: true,
+    };
+  }
+  const { proposal } = result;
+  return {
+    text: [
+      `Saved for the person's review as suggestion ${proposal.id}: "${oneLine(proposal.rule.label, 80)}" (${proposal.rule.mode}). ${oneLine(describeRule(proposal.rule), 600)}`,
+      `Nothing applies until they save it — in Doorman → Guardrails → Your rules, or with \`doorman custom-rules accept ${proposal.id}\`. Tell them it is waiting for their review.`,
+    ].join("\n"),
+  };
 }
 
 const CHECK_ARGS: Readonly<Record<string, ArgKind>> = { tool_name: "string", tool_input: "object", command: "string", cwd: "string", session_id: "string" };
@@ -681,6 +774,8 @@ export function status(paths: McpPaths, io: McpReadIo): ToolResult {
 /** Per-connection state: the revision `initialize` settled on. */
 export interface McpSession {
   protocolVersion?: string;
+  /** `initialize` clientInfo.name — who a rule proposal says it came from. */
+  clientName?: string;
 }
 
 /** A response line. `idJson` is the id as JSON TEXT, so an id beyond 2^53
@@ -768,6 +863,8 @@ function handleOne(value: unknown, rawId: string | undefined, paths: McpPaths, i
       const requested = str(params.protocolVersion);
       const version = requested !== undefined && SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_PROTOCOL_VERSION;
       session.protocolVersion = version;
+      const clientName = str(obj(params.clientInfo)?.name);
+      if (clientName !== undefined) session.clientName = clientName;
       return reply(idJson, {
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },
@@ -797,6 +894,9 @@ function handleOne(value: unknown, rawId: string | undefined, paths: McpPaths, i
             break;
           case "doorman_status":
             result = status(paths, io);
+            break;
+          case "doorman_propose_rule":
+            result = proposeRule(args, paths, io, session);
             break;
           default:
             // The caller's own string is not echoed back.

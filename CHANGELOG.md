@@ -12,6 +12,7 @@ under `## Unreleased`; a release renames its part of it.
 
 ### New
 - A guide to rules: modes, severity, security levels, rule packs, exceptions and writing your own rules, with examples ([docs/rules.md](docs/rules.md)). Guardrails → Advanced links to it from Rule packs and Your rules, and so does `doorman custom-rules --help`. [CONTRIBUTING.md](CONTRIBUTING.md) says how to add a rule pack or a built-in rule.
+- Agents can suggest a rule: Doorman's MCP server has a `doorman_propose_rule` tool. Suggestions wait in Guardrails → Your rules ("Suggested by your agents") and in `doorman custom-rules`, to save (`doorman custom-rules accept <id>`) or dismiss; nothing applies until you save it, and a suggestion can only add a rule, never change one you have ([docs/rules.md](docs/rules.md#rules-your-agent-suggests)).
 
 ### Fixed
 - The floating approval panel grows to fit the held call instead of cutting off its bottom (the shortcuts and the note under the buttons); on a short screen the card scrolls.

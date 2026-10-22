@@ -418,6 +418,37 @@ with a few examples. It changes nothing, and saving doesn't require one. A rule
 that matches hundreds of calls a day will hold you up all day: narrow it before
 choosing `ask`.
 
+### Rules your agent suggests
+
+An agent can suggest a rule for you to review. It needs Doorman's own MCP
+server: **Settings → Agents can ask Doorman** (or `doorman mcp server install`)
+registers it with VS Code (Copilot agent mode) and Copilot CLI. Other agents
+add it themselves; on macOS:
+
+```sh
+claude mcp add doorman -- node "$HOME/Library/Application Support/Doorman/doorman/mcp/doorman-mcp.js"
+codex mcp add doorman -- node "$HOME/Library/Application Support/Doorman/doorman/mcp/doorman-mcp.js"
+```
+
+(The script is there once the setting is on; on Linux it is under
+`~/.config/Doorman`, on Windows under `%APPDATA%\Doorman`.) Then ask, for
+example: "propose a Doorman rule that holds kubectl apply against prod". The
+agent writes the rule in the format above and sends it with a one-line reason.
+
+The suggestion shows up in **Guardrails → Advanced → Your rules**, under
+"Suggested by your agents" (Advanced opens on its own and counts them while any
+are waiting), and the app says so when one arrives. **Review** opens it in the
+rule editor on its last step, where you can change anything and dry run it;
+saving adds it to your rules. **Dismiss** drops it. From the terminal,
+`doorman custom-rules` lists suggestions with their ids,
+`doorman custom-rules accept <id>` saves one and
+`doorman custom-rules dismiss <id>` drops it.
+
+Nothing applies until you save it. A suggestion can only add a new rule: one
+that would change, switch off or replace a rule you already have (your own or a
+pack's), or that reuses another suggestion's id, is refused. At most 20 wait at
+once.
+
 ## Where it is all stored
 
 Everything lives in Doorman's data directory, shared by the app and the CLI:

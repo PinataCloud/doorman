@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parseCustomRules, validateCustomRule, validateCustomRuleList, type CustomRule, type CustomRuleProblem } from "../../guard/custom-rules.js";
 import type { GuardPolicy } from "../../guard/policy.js";
+import { checkAcceptedProposal, describeRule, readProposal, readProposals, removeProposal } from "../../guard/rule-proposals.js";
 import type { CliCommand } from "../command.js";
 import type { CliContext } from "../context.js";
 import { CliError } from "../output.js";
@@ -48,6 +49,7 @@ const customList: CliCommand = {
   examples: [
     ["doorman custom-rules dry-run rule.json", "what a rule would have caught, before saving it"],
     ["doorman custom-rules add rule.json", "save it"],
+    ["doorman custom-rules accept <suggestion-id>", "save a rule an agent suggested"],
   ],
   async run(ctx) {
     const own = ctx.prefs().policy.custom_rules ?? [];
@@ -61,7 +63,17 @@ const customList: CliCommand = {
         ? ["No custom rules.", ui.next("`doorman custom-rules add <file.json>` adds one.")]
         : [ui.section("Custom rules"), ...rulesTable(own)];
     if (fromPacks.length > 0) text.push("", ui.section("From packs"), ...rulesTable(fromPacks));
-    return { data: { custom_rules: own, pack_rules: fromPacks }, text };
+    // Rules an agent suggested over Doorman's MCP server: shown apart, since
+    // none of them is live until the person accepts it.
+    const suggested = readProposals(ctx.guardDir);
+    if (suggested.length > 0) {
+      text.push("", ui.section("Suggested by your agents"));
+      for (const p of suggested) {
+        text.push(`  ${p.id}  ${p.rule.mode}  ${p.rule.label}  ${s.dim(`from ${p.from}`)}`, `    ${s.dim(describeRule(p.rule))}`, `    ${s.dim(p.reason)}`);
+      }
+      text.push(ui.next("`doorman custom-rules accept <id>` saves one; `doorman custom-rules dismiss <id>` drops it."));
+    }
+    return { data: { custom_rules: own, pack_rules: fromPacks, suggested }, text };
   },
 };
 
@@ -164,4 +176,46 @@ const customDryRun: CliCommand = {
   },
 };
 
-export const customRulesCommands: CliCommand[] = [customList, customAdd, customRemove, customDryRun];
+const customAccept: CliCommand = {
+  name: "custom-rules accept",
+  summary: "Save a rule an agent suggested",
+  usage: "<suggestion-id>",
+  notes: [
+    "Agents suggest rules with Doorman's MCP tool doorman_propose_rule; `doorman custom-rules` lists them.",
+    "A suggestion only ever adds a new rule: one whose id is already taken is refused.",
+  ],
+  examples: [["doorman custom-rules accept p-1a2b3c4d5e6f", "add the suggested rule to your own"]],
+  positionals: { min: 1, max: 1 },
+  async run(ctx, args) {
+    const id = args.positionals[0]!;
+    const proposal = readProposal(ctx.guardDir, id);
+    if (!proposal) throw new CliError(`No suggested rule "${id}".`, 2, "`doorman custom-rules` lists them.");
+    const { syncError } = saveRules(ctx, "Accept a suggested rule", (own) => {
+      // Checked inside the save, against the live set as it is now.
+      const checked = checkAcceptedProposal(ctx.guardDir, id, proposal.rule, (ctx.policy().custom_rules ?? []).map((r) => r.id));
+      if (!checked.ok) throw problemsError(checked.problems);
+      return [...own, checked.rule];
+    });
+    removeProposal(ctx.guardDir, id);
+    return {
+      data: { accepted: id, rule: proposal.rule.id, ...(syncError ? { sync_error: syncError } : {}) },
+      text: [ctx.ui.mark("ok", `Saved ${proposal.rule.id} (${proposal.rule.label}).`), ...syncNote(ctx, syncError)],
+    };
+  },
+};
+
+const customDismiss: CliCommand = {
+  name: "custom-rules dismiss",
+  summary: "Drop a rule an agent suggested",
+  usage: "<suggestion-id>",
+  examples: [["doorman custom-rules dismiss p-1a2b3c4d5e6f", "drop the suggestion; nothing was ever applied"]],
+  positionals: { min: 1, max: 1 },
+  async run(ctx, args) {
+    const id = args.positionals[0]!;
+    ctx.requireWritable("Dismiss a suggested rule");
+    if (!removeProposal(ctx.guardDir, id)) throw new CliError(`No suggested rule "${id}".`, 2, "`doorman custom-rules` lists them.");
+    return { data: { dismissed: id }, text: [ctx.ui.mark("off", `Dismissed ${id}.`)] };
+  },
+};
+
+export const customRulesCommands: CliCommand[] = [customList, customAdd, customRemove, customDryRun, customAccept, customDismiss];
