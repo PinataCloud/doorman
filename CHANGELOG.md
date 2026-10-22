@@ -10,12 +10,23 @@ under `## Unreleased`; a release renames its part of it.
 
 ## Unreleased
 
+## CLI 0.8.0 — 2026-10-21
+
 ### New
-- A guide to rules: modes, severity, security levels, rule packs, exceptions and writing your own rules, with examples ([docs/rules.md](docs/rules.md)). Guardrails → Advanced links to it from Rule packs and Your rules, and so does `doorman custom-rules --help`. [CONTRIBUTING.md](CONTRIBUTING.md) says how to add a rule pack or a built-in rule.
-- Agents can suggest a rule: Doorman's MCP server has a `doorman_propose_rule` tool. Suggestions wait in Guardrails → Your rules ("Suggested by your agents") and in `doorman custom-rules`, to save (`doorman custom-rules accept <id>`) or dismiss; nothing applies until you save it, and a suggestion can only add a rule, never change one you have ([docs/rules.md](docs/rules.md#rules-your-agent-suggests)).
+- Agents can suggest a rule: Doorman's MCP server has a `doorman_propose_rule` tool. `doorman custom-rules` lists suggestions with their ids; `doorman custom-rules accept <id>` saves one and `doorman custom-rules dismiss <id>` drops it. Nothing applies until you save it, and a suggestion can only add a rule, never change, switch off or replace one you have ([docs/rules.md](https://github.com/PinataCloud/doorman/blob/main/docs/rules.md#rules-your-agent-suggests)).
+- A guide to rules: modes, severity, security levels, rule packs, exceptions and writing your own rules, with examples ([docs/rules.md](https://github.com/PinataCloud/doorman/blob/main/docs/rules.md)); `doorman custom-rules --help` links to it.
 
 ### Fixed
-- An agent can no longer stand down the guard it is under. Commands that turn Doorman's protection down, answer held calls (`doorman watch`, including `--stdio`) or hide what it recorded are held for you whatever the rules say, however `doorman` is run, and so is any change to Doorman's data directory, including `prefs.json`. Before, an agent could leave `doorman watch --stdio` answering in the background and approve its own held calls, or run `doorman guard uninstall`, without being held. `doorman_check_tool_call` gives the same answer ([docs/rules.md](docs/rules.md#what-doorman-holds-whatever-the-rules-say)).
+- An agent can no longer stand down the guard it is under. Commands that turn Doorman's protection down, answer held calls (`doorman watch`, including `--stdio`) or hide what it recorded are held for you whatever the rules say, however `doorman` is run, and so is any change to Doorman's data directory, including `prefs.json`. Before, an agent could leave `doorman watch --stdio` answering in the background and approve its own held calls, or run `doorman guard uninstall`, without being held. `doorman_check_tool_call` gives the same answer.
+
+## App 0.8.0 — 2026-10-21
+
+### New
+- Agents can suggest a rule: Doorman's MCP server has a `doorman_propose_rule` tool. Suggestions appear in Guardrails → Your rules under "Suggested by your agents", with a notice when one arrives; Review opens it in the rule editor to change, dry run and save, Dismiss drops it. Nothing applies until you save it, and a suggestion can only add a rule, never change, switch off or replace one you have.
+- A guide to rules: modes, severity, security levels, rule packs, exceptions and writing your own rules, with examples ([docs/rules.md](https://github.com/PinataCloud/doorman/blob/main/docs/rules.md)). Guardrails → Advanced links to it from Rule packs and Your rules.
+
+### Fixed
+- An agent can no longer stand down the guard it is under. Commands that turn Doorman's protection down, answer held calls or hide what it recorded are held for you whatever the rules say, and so is any change to Doorman's data directory, including your settings. Before, an agent could leave `doorman watch --stdio` answering in the background and approve its own held calls, or run `doorman guard uninstall`, without being held.
 - The floating approval panel grows to fit the held call instead of cutting off its bottom (the shortcuts and the note under the buttons); on a short screen the card scrolls.
 
 ## CLI 0.7.1 — 2026-10-21
