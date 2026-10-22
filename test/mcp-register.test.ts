@@ -4,8 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   MCP_REGISTRATION_TARGETS,
   MCP_SERVER_KEY,
+  copilotMcpConfigPath,
+  documentProblem,
   isOurEntry,
   mergeRegistration,
+  registeredKey,
   registrationInstalled,
   removeRegistration,
 } from "../main/lib/mcp-register.js";
@@ -23,13 +26,16 @@ const copilot = MCP_REGISTRATION_TARGETS.find((t) => t.host === "copilot-cli")!;
  * meaning, malformed JSON is refused, and the two hosts get their own shapes.
  */
 describe("MCP registration surgery", () => {
-  it("knows VS Code's mcp.json and Copilot CLI's mcp-config.json, with COPILOT_HOME honoured", () => {
-    // VS Code's user data per platform: macOS, Windows (%APPDATA%), Linux.
-    const appData = process.platform === "darwin" ? "Library/Application Support" : process.platform === "win32" ? "AppData/Roaming" : ".config";
-    expect(vscode.path("/Users/dev", {})).toBe(join("/Users/dev", appData, "Code", "User", "mcp.json"));
-    expect(copilot.path("/Users/dev", {})).toBe("/Users/dev/.copilot/mcp-config.json");
-    expect(copilot.path("/Users/dev", { COPILOT_HOME: "/tmp/ch/" })).toBe("/tmp/ch/mcp-config.json");
-    for (const t of MCP_REGISTRATION_TARGETS) expect(t.presencePaths.length).toBeGreaterThan(0);
+  it("knows Copilot CLI's mcp-config.json, with COPILOT_HOME honoured (either trailing separator)", () => {
+    expect(copilotMcpConfigPath("/Users/dev", {})).toBe(join("/Users/dev", ".copilot", "mcp-config.json"));
+    expect(copilotMcpConfigPath("/Users/dev", { COPILOT_HOME: "/tmp/ch/" })).toBe(join("/tmp/ch", "mcp-config.json"));
+    // A Windows `D:\cp\` must not come out as `D:\cp\/mcp-config.json`.
+    expect(copilotMcpConfigPath("/Users/dev", { COPILOT_HOME: "D:\\cp\\" })).not.toMatch(/\\[\\/]mcp-config/);
+    expect(copilotMcpConfigPath("/Users/dev", { COPILOT_HOME: "  " })).toBe(join("/Users/dev", ".copilot", "mcp-config.json"));
+    // Present when the COPILOT_HOME folder is, not only ~/.copilot.
+    const io = { exists: (p: string) => p === "/tmp/ch", listDir: () => [] };
+    expect(copilot.present("/Users/dev", { COPILOT_HOME: "/tmp/ch" }, io)).toBe(true);
+    expect(copilot.present("/Users/dev", {}, io)).toBe(false);
   });
 
   it("writes each host its own entry shape under its own root key", () => {
@@ -66,17 +72,77 @@ describe("MCP registration surgery", () => {
     expect(JSON.parse(removed)).toEqual(JSON.parse(before));
   });
 
-  it("remove takes only OUR key, drops an emptied root, and reports nothing to do honestly", () => {
+  it("remove takes every entry of ours (renamed too), drops an emptied root, and reports nothing to do honestly", () => {
     const ours = mergeRegistration(undefined, copilot, SCRIPT);
     expect(JSON.parse(removeRegistration(ours, copilot)!)).toEqual({});
     expect(removeRegistration(undefined, copilot)).toBeUndefined();
     expect(removeRegistration(JSON.stringify({ mcpServers: { other: { command: "x" } } }), copilot)).toBeUndefined();
-    // A user who renamed our entry keeps it: the key is not ours any more.
-    const renamed = JSON.stringify({ mcpServers: { "my-doorman": { type: "local", command: "node", args: [SCRIPT] } } });
-    expect(removeRegistration(renamed, copilot)).toBeUndefined();
-    // …and a foreign server that happens to sit under our key is not ours either.
+    // A renamed copy still runs Doorman's server: switching it off takes it out.
+    const renamed = JSON.stringify({ mcpServers: { "my-doorman": { type: "local", command: "node", args: [SCRIPT] }, other: { command: "x" } } });
+    expect(JSON.parse(removeRegistration(renamed, copilot)!)).toEqual({ mcpServers: { other: { command: "x" } } });
+    // …but a foreign server that happens to sit under our key is not ours.
     const squatted = JSON.stringify({ mcpServers: { doorman: { command: "npx", args: ["something-else"] } } });
     expect(removeRegistration(squatted, copilot)).toBeUndefined();
+  });
+
+  it("never overwrites a server of the person's own named doorman", () => {
+    const theirs = `{"mcpServers":{"doorman":{"command":"python","args":["-m","my_doorman_tool"]}}}`;
+    expect(() => mergeRegistration(theirs, copilot, SCRIPT)).toThrow(/already has a server named "doorman" that isn't Doorman's.*Rename that server/);
+    expect(registrationInstalled(theirs, copilot, SCRIPT)).toBe(false);
+  });
+
+  it("refuses a server container that isn't an object instead of replacing it", () => {
+    const list = `{"mcpServers":[{"name":"x","command":"y"}],"other":1}`;
+    expect(() => mergeRegistration(list, copilot, SCRIPT)).toThrow(/"mcpServers" as a list, not an object of servers; not touching it/);
+    expect(() => mergeRegistration(`{"servers":null}`, vscode, SCRIPT)).toThrow(/as null/);
+    expect(removeRegistration(list, copilot)).toBeUndefined();
+    expect(documentProblem(list, copilot)).toMatch(/not touching it/);
+    expect(documentProblem(`{"mcpServers":{}}`, copilot)).toBeUndefined();
+  });
+
+  it("edits VS Code's JSONC mcp.json in place: comments, trailing commas, BOM and indentation survive, and remove gives the exact bytes back", () => {
+    const before =
+      "\uFEFF{\n    // my servers\n    \"servers\": {\n        \"playwright\": { \"command\": \"npx\", \"args\": [\"@playwright/mcp\"] }, // browser\n    },\n    /* inputs */\n    \"inputs\": [],\n}\n";
+    const merged = mergeRegistration(before, vscode, SCRIPT);
+    expect(merged).toContain("// my servers");
+    expect(merged).toContain("// browser");
+    expect(merged).toContain("/* inputs */");
+    expect(merged.startsWith("\uFEFF{\n    // my servers")).toBe(true);
+    expect(registrationInstalled(merged, vscode, SCRIPT)).toBe(true);
+    expect(removeRegistration(merged, vscode)).toBe(before);
+    // Uninstall with nothing of ours in a commented file is a no-op, not a refusal.
+    expect(removeRegistration(before, vscode)).toBeUndefined();
+  });
+
+  it("edits a strict JSON file byte-preservingly too (tabs, one-line), and still refuses comments where the host is strict", () => {
+    const tabs = `{\n\t"mcpServers": {\n\t\t"precious": {"command": "keep-me"}\n\t}\n}`;
+    const merged = mergeRegistration(tabs, copilot, SCRIPT);
+    expect(merged).toContain(`\t\t"precious": {"command": "keep-me"}`);
+    expect(removeRegistration(merged, copilot)).toBe(tabs);
+    const oneLine = `{"mcpServers":{"a":{"command":"x"}},"z":1}`;
+    expect(removeRegistration(mergeRegistration(oneLine, copilot, SCRIPT), copilot)).toBe(oneLine);
+    expect(() => mergeRegistration(`// c\n{"mcpServers":{}}`, copilot, SCRIPT)).toThrow(/not valid JSON/);
+  });
+
+  it("treats our entry as registered in any key order, and keeps fields the person added", () => {
+    const desired = copilot.entry(SCRIPT);
+    const reordered = JSON.stringify({ mcpServers: { doorman: { tools: desired.tools, args: desired.args, command: desired.command, type: desired.type, env: { DEBUG: "1" } } } });
+    expect(registrationInstalled(reordered, copilot, SCRIPT)).toBe(true);
+    expect(mergeRegistration(reordered, copilot, SCRIPT)).toBe(reordered);
+    // A stale path is re-pointed; the person's `env` stays.
+    const moved = JSON.parse(mergeRegistration(reordered, copilot, "/elsewhere/doorman-mcp.js"));
+    expect(moved.mcpServers.doorman.args).toEqual(["/elsewhere/doorman-mcp.js"]);
+    expect(moved.mcpServers.doorman.env).toEqual({ DEBUG: "1" });
+  });
+
+  it("counts a renamed live copy as the registration, and drops a renamed stale one", () => {
+    const live = JSON.stringify({ mcpServers: { "my-doorman": copilot.entry(SCRIPT) } });
+    expect(registeredKey(live, copilot, SCRIPT)).toBe("my-doorman");
+    expect(mergeRegistration(live, copilot, SCRIPT)).toBe(live);
+    const stale = JSON.stringify({ mcpServers: { "doorman-old": copilot.entry("/old/install/doorman-mcp.js"), other: { command: "x" } } });
+    const next = JSON.parse(mergeRegistration(stale, copilot, SCRIPT));
+    expect(Object.keys(next.mcpServers).sort()).toEqual(["doorman", "other"]);
+    expect(registeredKey(JSON.stringify(next), copilot, SCRIPT)).toBe("doorman");
   });
 
   it("recognizes and removes our entry when the script path is a Windows one", () => {

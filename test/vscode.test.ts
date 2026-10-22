@@ -702,6 +702,37 @@ describe("MCP documents across builds and profiles", () => {
     expect(all.map((d) => d.path)).toContain(join(userDir(VSCODE_VARIANTS[0]!, HOME), "mcp.json"));
   });
 
+  it("on a machine with only Insiders, writes Insiders' mcp.json and never creates stable VS Code's", () => {
+    const insiders = userDir(VSCODE_VARIANTS[1]!, HOME);
+    const io = { exists: (p: string) => p === insiders, listDir: () => [] };
+    const paths = resolveRegistrationDocuments(HOME, {}, io).map((d) => d.path);
+    expect(paths).toEqual([join(insiders, "mcp.json")]);
+  });
+
+  it("takes only folders in profiles/ as profiles — never Finder's .DS_Store or a stray file", () => {
+    const stable = userDir(VSCODE_VARIANTS[0]!, HOME);
+    const profilesDir = join(stable, "profiles");
+    const entries = [".DS_Store", "notes.txt", "work"];
+    const io = {
+      exists: (p: string) => p === stable || p === profilesDir || entries.some((e) => p === join(profilesDir, e)),
+      listDir: (p: string) => (p === profilesDir ? entries : []),
+      isDir: (p: string) => p === stable || p === profilesDir || p === join(profilesDir, "work"),
+    };
+    expect(resolveRegistrationDocuments(HOME, {}, io).map((d) => d.label)).toEqual(["VS Code", "VS Code · work"]);
+    // Without isDir (a caller that can't tell), the dot-file is still skipped.
+    const { isDir: _isDir, ...noIsDir } = io;
+    expect(resolveRegistrationDocuments(HOME, {}, noIsDir).map((d) => d.label)).not.toContain("VS Code · .DS_Store");
+  });
+
+  it("finds Copilot CLI under $COPILOT_HOME, for registration and for the inventory", () => {
+    const io = { exists: (p: string) => p === "/elsewhere/copilot", listDir: () => [] };
+    const env = { COPILOT_HOME: "/elsewhere/copilot/" };
+    expect(resolveRegistrationDocuments(HOME, env, io).map((d) => d.path)).toEqual([join("/elsewhere/copilot", "mcp-config.json")]);
+    const paths = mcpConfigPaths(HOME, io, process.platform, env);
+    expect(paths).toContain(join("/elsewhere/copilot", "mcp-config.json"));
+    expect(paths).not.toContain(join(HOME, ".copilot", "mcp-config.json"));
+  });
+
   it("scans every build's mcp.json and every profile's for poisoning", () => {
     const stable = userDir(VSCODE_VARIANTS[0]!, HOME);
     const io = {

@@ -23,10 +23,12 @@
 
 import { join } from "node:path";
 import { redact } from "../guard/redact.js";
+import { parseJsonc } from "../guard/jsonc.js";
 import { mcpServerRoots } from "../guard/mcp-poison.js";
 import type { McpPermissionSet, McpToolClass } from "../guard/policy.js";
 import { GATEWAY_MARKER } from "./gateway-config.js";
 import type { FindingRow } from "./findings.js";
+import { copilotMcpConfigPath } from "./mcp-register.js";
 import type { LedgerTurn } from "./turns.js";
 import { appDataRel, profiles, vscodeVariants } from "./vscode.js";
 
@@ -56,6 +58,10 @@ export interface McpConfigServer {
   entry?: string;
   /** Currently routed through the Doorman gateway (phase 1). */
   gatewayed?: boolean;
+  /** For a per-project block inside a user-level config (`~/.claude.json`
+   * `projects["/repo"].mcpServers`): that project's path. Absent for a
+   * file's top level and for a repo's own `.mcp.json`. */
+  project?: string;
 }
 
 export interface McpServerRisk {
@@ -191,13 +197,19 @@ export function discoveredMcpConfig(
  * them: on Windows `C:\Users\me\.cursor\mcp.json`, the same string the CLI's
  * `resolve()` makes of a path a person types, and the same key as the
  * watcher's own `join(home, ".claude.json")`.
+ *
+ * `$COPILOT_HOME` moves Copilot CLI's config, exactly as registration
+ * (mcp-register.ts copilotMcpConfigPath) resolves it.
  */
 export function mcpConfigPaths(
   home: string,
-  io: { exists(path: string): boolean; listDir(path: string): string[] },
+  io: { exists(path: string): boolean; listDir(path: string): string[]; isDir?(path: string): boolean },
   platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const base = userMcpConfigs(platform).map((entry) => join(home, entry.rel));
+  const base = userMcpConfigs(platform).map((entry) =>
+    entry.host === "copilot-cli" && env.COPILOT_HOME?.trim() ? copilotMcpConfigPath(home, env) : join(home, entry.rel),
+  );
   const profilePaths = vscodeVariants(platform).flatMap((variant) =>
     profiles(variant, home, io)
       .filter((profile) => !profile.default)
@@ -229,27 +241,22 @@ export function mcpConfigHost(path: string): { host: string; label: string } | u
  * not the other would mean a server that lists and is never scanned.
  */
 export function extractMcpServers(json: string, filePath: string): McpConfigServer[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return [];
-  }
-  if (!parsed || typeof parsed !== "object") return [];
-  const doc = parsed as Record<string, unknown>;
+  // JSONC: Cursor, Zed (whose default settings.json opens with a comment),
+  // Windsurf and VS Code all read comments, trailing commas and a BOM — a
+  // strict parse made every server in such a file silently vanish.
+  const doc = parseJsonc(json);
+  if (!doc) return [];
 
-  const roots: Array<[scope: "user" | "project", servers: unknown]> = mcpServerRoots(
-    doc,
-    filePath,
-  ).map(({ projectPath, servers }) => [
+  const roots = mcpServerRoots(doc, filePath).map(({ projectPath, servers }) => ({
     // A repo's own `.mcp.json` and a per-project block inside a user config are
     // both project scope; the top level of a user-level file is user scope.
-    projectPath !== "" || /(?:^|[\\/])\.mcp\.json$/.test(filePath) ? "project" : "user",
+    scope: projectPath !== "" || /(?:^|[\\/])\.mcp\.json$/.test(filePath) ? ("project" as const) : ("user" as const),
+    project: projectPath,
     servers,
-  ]);
+  }));
 
   const out: McpConfigServer[] = [];
-  for (const [scope, servers] of roots) {
+  for (const { scope, project, servers } of roots) {
     if (!servers || typeof servers !== "object") continue;
     for (const [name, config] of Object.entries(servers as Record<string, unknown>)) {
       if (!config || typeof config !== "object") continue;
@@ -279,6 +286,7 @@ export function extractMcpServers(json: string, filePath: string): McpConfigServ
         transport: url ? "http" : "stdio",
         ...(entry === undefined ? {} : { entry }),
         ...(gatewayed ? { gatewayed: true } : {}),
+        ...(project === "" ? {} : { project }),
       });
     }
   }
@@ -334,6 +342,15 @@ export function riskProfileFor(name: string): McpServerRisk | undefined {
   return undefined;
 }
 
+/**
+ * The identity of a server name: case-insensitive and Unicode-normalized
+ * (NFC), so a name typed on a keyboard that composes `é` matches the same
+ * name decomposed (`e` + U+0301) in a config file.
+ */
+export function serverKey(name: string): string {
+  return name.normalize("NFC").toLowerCase();
+}
+
 /** Merge config, usage and findings into the inventory rows, worst-news-first:
  * open poisoning, then unrecognized-with-usage, then by recency. */
 export function buildMcpInventory(
@@ -354,7 +371,7 @@ export function buildMcpInventory(
   const displayName = new Map<string, string>();
 
   const rowFor = (name: string): McpServerRow => {
-    const key = name.toLowerCase();
+    const key = serverKey(name);
     let row = rows.get(key);
     if (!row) {
       row = {
@@ -379,7 +396,7 @@ export function buildMcpInventory(
   };
 
   for (const server of configServers) {
-    displayName.set(server.name.toLowerCase(), server.name);
+    displayName.set(serverKey(server.name), server.name);
     const row = rowFor(server.name);
     row.name = server.name;
     row.observed_only = false;
@@ -405,7 +422,7 @@ export function buildMcpInventory(
       row.calls += 1;
       if (!row.first_used_at || turn.at < row.first_used_at) row.first_used_at = turn.at;
       if (!row.last_used_at || turn.at > row.last_used_at) row.last_used_at = turn.at;
-      const key = server.toLowerCase();
+      const key = serverKey(server);
       let sessions = sessionsByServer.get(key);
       if (!sessions) sessionsByServer.set(key, (sessions = new Set()));
       sessions.add(turn.session_id);
@@ -447,12 +464,12 @@ export function buildMcpInventory(
     if (row.observed_tools.length > TOOLS_CAP * 2) row.observed_tools = row.observed_tools.slice(0, TOOLS_CAP * 2);
   }
 
-  const recognized = new Set(opts.recognized.map((s) => s.toLowerCase()));
+  const recognized = new Set(opts.recognized.map((s) => serverKey(s)));
   const recognizedAt = new Map(
-    Object.entries(opts.recognizedAt ?? {}).map(([name, at]) => [name.toLowerCase(), at] as const),
+    Object.entries(opts.recognizedAt ?? {}).map(([name, at]) => [serverKey(name), at] as const),
   );
   const permissions = new Map(
-    Object.entries(opts.permissions ?? {}).map(([name, set]) => [name.toLowerCase(), set] as const),
+    Object.entries(opts.permissions ?? {}).map(([name, set]) => [serverKey(name), set] as const),
   );
   let stale = 0;
   let gatewayed = 0;
@@ -480,5 +497,9 @@ export function buildMcpInventory(
     const bAt = b.last_used_at ?? "";
     return aAt < bAt ? 1 : aAt > bAt ? -1 : a.name.localeCompare(b.name);
   });
-  return { servers: sorted, recognized_count: recognized.size, stale_recognitions: stale, gatewayed_count: gatewayed };
+  // Recognized ROWS, not names: a name recognized for a server that isn't
+  // configured or seen here (a typo, a server since removed) is not one of
+  // the servers this inventory lists, so "N, R recognized, U unknown" adds up.
+  const recognizedRows = sorted.filter((row) => row.recognized).length;
+  return { servers: sorted, recognized_count: recognizedRows, stale_recognitions: stale, gatewayed_count: gatewayed };
 }

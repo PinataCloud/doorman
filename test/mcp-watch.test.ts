@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -70,6 +70,44 @@ describe("McpConfigWatcher", () => {
     watcher = make([join(root, "nowhere")]);
     watcher.sweep();
     expect(rows).toEqual([]);
+  });
+
+  it("keeps hearing a config an editor saves atomically (temp file renamed over it)", () => {
+    const config = join(root, ".claude.json");
+    // fs.watch as the OS behaves: a handle follows the INODE it was opened on.
+    // A rename over the path fires "rename" on the handles of the old inode,
+    // which then hear nothing more; only a handle opened afterwards hears the
+    // next save.
+    let inode = 0;
+    const handles: { inode: number; closed: boolean; listener(event: string): void }[] = [];
+    const save = (servers: Record<string, unknown>) => {
+      writeFileSync(`${config}.tmp`, JSON.stringify({ mcpServers: servers }));
+      renameSync(`${config}.tmp`, config);
+      const old = inode++;
+      for (const h of handles.filter((h) => !h.closed && h.inode === old)) h.listener("rename");
+    };
+    const seen: string[][] = [];
+    writeFileSync(config, JSON.stringify({ mcpServers: { a: { command: "x" } } }));
+    watcher = new McpConfigWatcher({
+      claudeConfigPath: config,
+      knownCwds: () => [],
+      onFindings: () => {},
+      onServers: (servers) => seen.push(servers.map((s) => s.name).sort()),
+      log: () => {},
+      watch: (_path, listener) => {
+        const handle = { inode, closed: false, listener };
+        handles.push(handle);
+        return { close: () => void (handle.closed = true), on: () => undefined };
+      },
+    });
+    watcher.sweep();
+    save({ a: { command: "x" }, b: { command: "y" } });
+    expect(seen.at(-1)).toEqual(["a", "b"]);
+    // The SECOND save is the one a watcher left on the old inode misses.
+    save({ c: { command: "z" } });
+    expect(seen.at(-1)).toEqual(["c"]);
+    save({ c: { command: "z" }, d: { command: "w" } });
+    expect(seen.at(-1)).toEqual(["c", "d"]);
   });
 });
 

@@ -7,20 +7,29 @@
  * a moved userData or an upgraded script is re-pointed); off → our entry
  * removed from each document, nothing else touched.
  *
- * Same write discipline as the guard's hook documents and the gateway routes:
- * a backup of the previous text, an atomic rename into place, malformed JSON
- * refused rather than overwritten, and no write at all in a sandboxed run
- * (lib/sandbox.ts hookWritesAllowed).
+ * Write discipline (lib/config-file.ts): a config that exists but can't be
+ * read is refused, never treated as absent; the edit is byte-preserving; the
+ * pre-Doorman original is kept once as `<config>.doorman.bak` with the
+ * original's mode; symlinks are written through and read-only files refused;
+ * malformed JSON is refused rather than overwritten; and nothing is written in
+ * a sandboxed run (lib/sandbox.ts hookWritesAllowed).
+ *
+ * Uninstall gives the original back: when the document, minus our entry,
+ * reads the same as the kept original, the original's exact bytes are
+ * restored (and the backup, now redundant, removed); a file Doorman created
+ * and left holding nothing is deleted.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { refreshGuardBundle, writeDocumentAtomically } from "./enforcement.js";
-import { readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { refreshGuardBundle } from "./enforcement.js";
+import { jsonEqual, parseJsonc } from "./guard/jsonc.js";
+import { backupOnce, readBackup, readConfigFile, removeBackup, removeConfigFile, writeConfigFile, type ConfigRead } from "./lib/config-file.js";
 import {
   MCP_SCRIPT_BASENAME,
+  documentProblem,
   mergeRegistration,
-  registrationInstalled,
+  registeredKey,
   removeRegistration,
   resolveRegistrationDocuments,
   type McpRegistrationDocument,
@@ -36,6 +45,13 @@ const REGISTRATION_IO: RegistrationIo = {
       return readdirSync(path);
     } catch {
       return [];
+    }
+  },
+  isDir: (path) => {
+    try {
+      return statSync(path).isDirectory();
+    } catch {
+      return false;
     }
   },
 };
@@ -73,35 +89,35 @@ export interface McpHostStatus {
   present: boolean;
   /** Our entry is in the document, pointing at this install's script. */
   registered: boolean;
-  /** The document exists but cannot be parsed — we refuse to touch it. */
+  /** The server name our entry sits under (`doorman`, or the person's own
+   * name for a renamed copy). Only when registered. */
+  key?: string;
+  /** The document exists but can't be read or parsed — we refuse to touch it. */
   unreadable?: boolean;
+  /** Why, when unreadable. */
+  problem?: string;
 }
 
 export interface McpInstallOutcome {
   ok: boolean;
+  /** Every failure, one sentence per document, newline-separated. */
   error?: string;
+  /** The same failures, one per document. */
+  errors?: string[];
   hosts: McpHostStatus[];
 }
 
-function readDoc(path: string): string | undefined {
-  try {
-    return existsSync(path) ? readFileSync(path, "utf8") : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function statusOf(document: McpRegistrationDocument, userDataDir: string): McpHostStatus {
-  const doc = readDoc(document.path);
-  let unreadable = false;
-  if (doc !== undefined && doc.trim() !== "") {
-    try {
-      const parsed = JSON.parse(doc);
-      unreadable = !parsed || typeof parsed !== "object" || Array.isArray(parsed);
-    } catch {
-      unreadable = true;
-    }
+  let read: ConfigRead;
+  let problem: string | undefined;
+  try {
+    read = readConfigFile(document.path, `${document.label}'s MCP config`);
+    problem = read.exists ? documentProblem(read.text, document) : undefined;
+  } catch (err) {
+    read = { exists: false };
+    problem = err instanceof Error ? err.message : String(err);
   }
+  const key = read.exists ? registeredKey(read.text, document, mcpScript(userDataDir)) : undefined;
   return {
     host: document.host,
     label: document.label,
@@ -109,8 +125,9 @@ function statusOf(document: McpRegistrationDocument, userDataDir: string): McpHo
     // Resolution already required the host to be here, so a returned document
     // is by construction one something on this Mac reads.
     present: true,
-    registered: registrationInstalled(doc, document, mcpScript(userDataDir)),
-    ...(unreadable ? { unreadable: true } : {}),
+    registered: key !== undefined,
+    ...(key === undefined ? {} : { key }),
+    ...(problem === undefined ? {} : { unreadable: true, problem }),
   };
 }
 
@@ -120,64 +137,86 @@ export function mcpServerStatus(userDataDir: string, home: string, env: NodeJS.P
   return resolveRegistrationDocuments(home, env, REGISTRATION_IO).map((d) => statusOf(d, userDataDir));
 }
 
-function writeWithBackup(path: string, before: string | undefined, next: string): void {
-  mkdirSync(join(path, ".."), { recursive: true });
-  if (before !== undefined) {
-    try {
-      writeFileSync(`${path}.doorman.bak`, before);
-    } catch {
-      // best effort — the atomic write below is what matters
-    }
-  }
-  writeDocumentAtomically(path, next);
-}
-
-/** Register the server with every host present on this Mac. A host whose
- * document we cannot parse is reported and skipped; the others still land. */
-export function installMcpServer(userDataDir: string, home: string, env: NodeJS.ProcessEnv = process.env): McpInstallOutcome {
-  if (!hookWritesAllowed(env)) return { ok: false, error: SANDBOX_READ_ONLY, hosts: mcpServerStatus(userDataDir, home, env) };
-  refreshMcpBundle(userDataDir);
-  const script = mcpScript(userDataDir);
-  const errors: string[] = [];
-  for (const document of resolveRegistrationDocuments(home, env, REGISTRATION_IO)) {
-    const before = readDoc(document.path);
-    try {
-      const next = mergeRegistration(before, document, script);
-      if (next !== before) writeWithBackup(document.path, before, next);
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-    }
-  }
+function outcome(errors: string[], userDataDir: string, home: string, env: NodeJS.ProcessEnv): McpInstallOutcome {
   return {
     ok: errors.length === 0,
-    ...(errors.length > 0 ? { error: errors.join(" ") } : {}),
+    ...(errors.length > 0 ? { error: errors.join("\n"), errors } : {}),
     hosts: mcpServerStatus(userDataDir, home, env),
   };
 }
 
+/** Register the server with every host present on this Mac. A host whose
+ * document we cannot read, parse or safely edit is reported and skipped; the
+ * others still land. */
+export function installMcpServer(userDataDir: string, home: string, env: NodeJS.ProcessEnv = process.env): McpInstallOutcome {
+  if (!hookWritesAllowed(env, home)) return outcome([SANDBOX_READ_ONLY], userDataDir, home, env);
+  refreshMcpBundle(userDataDir);
+  const script = mcpScript(userDataDir);
+  const errors: string[] = [];
+  for (const document of resolveRegistrationDocuments(home, env, REGISTRATION_IO)) {
+    try {
+      if (!hookWritesAllowed(env, document.path)) throw new Error(SANDBOX_READ_ONLY);
+      const label = `${document.label}'s MCP config`;
+      const before = readConfigFile(document.path, label);
+      const next = mergeRegistration(before.exists ? before.text : undefined, document, script);
+      if (before.exists && next === before.text) continue;
+      if (before.exists) backupOnce(document.path, before.text, before.mode);
+      else mkdirSync(dirname(document.path), { recursive: true });
+      writeConfigFile(document.path, next, label);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return outcome(errors, userDataDir, home, env);
+}
+
+/** The value a document's text reads as, `{}` for a blank one; undefined
+ * when it doesn't parse. */
+function valueOf(text: string): Record<string, unknown> | undefined {
+  return text.trim() === "" ? {} : parseJsonc(text);
+}
+
 /** Remove our entry from every host document that carries it. */
 export function uninstallMcpServer(userDataDir: string, home: string, env: NodeJS.ProcessEnv = process.env): McpInstallOutcome {
-  if (!hookWritesAllowed(env)) return { ok: false, error: SANDBOX_READ_ONLY, hosts: mcpServerStatus(userDataDir, home, env) };
+  if (!hookWritesAllowed(env, home)) return outcome([SANDBOX_READ_ONLY], userDataDir, home, env);
   const errors: string[] = [];
   // `requirePresence: false` — taking our entry OUT must reach a document whose
   // owner this app can no longer see (an editor uninstalled since we wrote to
   // it, a profile deleted from the app but still on disk). A document that
   // isn't there is skipped by the read below anyway.
   for (const document of resolveRegistrationDocuments(home, env, REGISTRATION_IO, undefined, { requirePresence: false })) {
-    const before = readDoc(document.path);
-    if (before === undefined) continue;
     try {
-      const next = removeRegistration(before, document);
-      if (next !== undefined) writeWithBackup(document.path, before, next);
+      const label = `${document.label}'s MCP config`;
+      const before = readConfigFile(document.path, label);
+      if (!before.exists) continue;
+      const next = removeRegistration(before.text, document);
+      if (next === undefined) continue;
+      if (!hookWritesAllowed(env, document.path)) throw new Error(SANDBOX_READ_ONLY);
+      const original = readBackup(document.path);
+      const nextValue = valueOf(next);
+      const originalValue = original === undefined ? undefined : valueOf(original);
+      // Removal drops a container our entry emptied; the original may have
+      // had it empty already (`"mcpServers": {}`), which still counts as same.
+      const same =
+        nextValue !== undefined &&
+        originalValue !== undefined &&
+        (jsonEqual(nextValue, originalValue) || (!(document.root in nextValue) && jsonEqual({ ...nextValue, [document.root]: {} }, originalValue)));
+      if (original !== undefined && same) {
+        // Nothing but our entry changed since Doorman's first edit: the
+        // original's own bytes, not a re-rendering of them.
+        writeConfigFile(document.path, original, label);
+        removeBackup(document.path);
+      } else if (original === undefined && next.replace(/\s/g, "") === "{}") {
+        // No original was kept because there was no file: Doorman made it.
+        removeConfigFile(document.path, label);
+      } else {
+        writeConfigFile(document.path, next, label);
+      }
     } catch (err) {
       errors.push(err instanceof Error ? err.message : String(err));
     }
   }
-  return {
-    ok: errors.length === 0,
-    ...(errors.length > 0 ? { error: errors.join(" ") } : {}),
-    hosts: mcpServerStatus(userDataDir, home, env),
-  };
+  return outcome(errors, userDataDir, home, env);
 }
 
 /** The prefs the `mcp_answers` switch reads and writes. */
@@ -187,9 +226,11 @@ export interface McpAnswersPrefs {
 }
 
 /** The `mcp_answers` switch moved: register the server with every MCP-capable
- * host present, or take our entry back out. Our own server is recognized in
- * the same breath, so the inventory never reports it as an MCP server nobody
- * approved. Shared by the app (index.ts applyMcpAnswers) and the CLI. */
+ * host present, or take our entry back out. Our own server is recognized —
+ * under every name it is registered as — as soon as it is in ANY host's config
+ * (one failing host must not leave the others listing an unknown `doorman`),
+ * so the inventory never reports it as an MCP server nobody approved. Shared
+ * by the app (index.ts applyMcpAnswers) and the CLI. */
 export function switchMcpAnswers(
   enabled: boolean,
   userDataDir: string,
@@ -197,15 +238,17 @@ export function switchMcpAnswers(
   prefs: McpAnswersPrefs,
   env: NodeJS.ProcessEnv = process.env,
 ): McpInstallOutcome {
-  const outcome = enabled ? installMcpServer(userDataDir, home, env) : uninstallMcpServer(userDataDir, home, env);
-  if (enabled && outcome.ok) {
-    const current = prefs.get().mcp_recognized ?? [];
-    if (!current.includes("doorman")) {
-      prefs.set({
-        mcp_recognized: [...current, "doorman"],
-        mcp_recognized_at: { ...(prefs.get().mcp_recognized_at ?? {}), doorman: new Date().toISOString() },
-      });
-    }
+  const result = enabled ? installMcpServer(userDataDir, home, env) : uninstallMcpServer(userDataDir, home, env);
+  if (!enabled) return result;
+  const keys = [...new Set(result.hosts.flatMap((h) => (h.key === undefined ? [] : [h.key.normalize("NFC")])))];
+  const current = prefs.get().mcp_recognized ?? [];
+  const missing = keys.filter((key) => !current.some((name) => name.normalize("NFC").toLowerCase() === key.toLowerCase()));
+  if (missing.length > 0) {
+    const at = new Date().toISOString();
+    prefs.set({
+      mcp_recognized: [...current, ...missing],
+      mcp_recognized_at: { ...(prefs.get().mcp_recognized_at ?? {}), ...Object.fromEntries(missing.map((key) => [key, at])) },
+    });
   }
-  return outcome;
+  return result;
 }

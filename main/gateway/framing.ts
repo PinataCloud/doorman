@@ -11,10 +11,17 @@
  * forwarded bytes; a line the gateway decides to hold or refuse is a decision
  * mcp-gateway.ts makes with what this file parsed.
  *
+ * Lines are split as BYTES (ByteLineBuffer): a pipe chunk can end in the middle
+ * of a multi-byte character, and decoding chunks one at a time turns that
+ * character into U+FFFD. A line is only decoded once it is complete, and the
+ * bytes forwarded are the bytes that arrived.
+ *
  * Self-containment rule: this directory is compiled and copied verbatim into
  * userData, where an agent spawns it with plain `node`. It may import from the
  * sibling guard bundle (`../guard/*.js`, copied alongside) and nothing else.
  */
+
+import { isPlainObject as isRecord } from "../guard/jsonc.js";
 
 /** One observed tool, as the app's poisoning scan wants it. */
 export interface ObservedTool {
@@ -29,97 +36,210 @@ export interface ObservedTool {
 
 export type McpToolClass = "read" | "write" | "act";
 
+/** `raw.first`: this run starts the oversized line (its first bytes hold the
+ * message's opening, an id included). */
+export type ByteSegment = { kind: "line"; bytes: Buffer } | { kind: "raw"; bytes: Buffer; first: boolean };
+
+const NEWLINE = 0x0a;
+
 /**
- * A line-buffered splitter. Feed it stdout chunks; it yields complete lines and
- * keeps any partial tail for the next feed. Bounded: a single line past
- * MAX_LINE_BYTES is dropped (an MCP message that large is not a tools/list we
- * need to parse, and buffering it unboundedly would be the observer leaking
- * memory the passthrough doesn't).
+ * A byte-level line splitter. Feed it chunks; it yields complete lines (each
+ * WITH its terminating `\n`, so writing them reproduces the input) and keeps
+ * the partial tail for the next feed.
+ *
+ * Bounded: a partial line past `maxLineBytes` is handed back as `raw` bytes as
+ * it arrives instead of being buffered — the caller forwards them verbatim and
+ * gives up on parsing that one line. The bytes are never dropped: on the
+ * client→server side a dropped line was a lost tool call. Writing every
+ * segment in order reproduces the input byte for byte.
  */
-export class LineBuffer {
-  private buf = "";
-  /** Bytes of the current line already handed back as an `overflow` chunk. */
-  private spilled = 0;
-  /**
-   * @param maxLineBytes past this, a partial line is handed back as it arrives
-   *   (`overflow`) instead of being buffered — the caller forwards the bytes
-   *   verbatim and gives up on observing that one line. The bytes are never
-   *   dropped: on the client→server side a dropped line was a lost tool call.
-   */
+export class ByteLineBuffer {
+  private parts: Buffer[] = [];
+  private size = 0;
+  /** Inside an oversized line: everything up to its newline is `raw`. */
+  private spilling = false;
+
   constructor(private readonly maxLineBytes = 4 * 1024 * 1024) {}
 
-  push(chunk: string): string[] {
-    return this.pushSegments(chunk)
-      .filter((s): s is { kind: "line"; text: string } => s.kind === "line")
-      .map((s) => s.text);
-  }
-
-  /**
-   * The chunk as an ORDERED list of segments: complete `line`s (newline
-   * stripped, to be parsed and re-terminated by the caller) and `raw` byte
-   * runs belonging to an oversized line, to be forwarded verbatim and never
-   * parsed. Once a line spills, the rest of it up to and including its newline
-   * keeps arriving as `raw`, so a caller that writes segments in order
-   * reproduces the input byte-for-byte; observation resumes with the next line.
-   */
-  pushSegments(chunk: string): LineSegment[] {
-    const out: LineSegment[] = [];
-    let rest = chunk;
-    if (this.spilled > 0) {
-      // Mid-spill: pass through up to the newline, then resume buffering.
-      const nl = rest.indexOf("\n");
-      if (nl < 0) {
-        this.spilled += rest.length;
-        return [{ kind: "raw", text: rest }];
+  push(chunk: Buffer): ByteSegment[] {
+    const out: ByteSegment[] = [];
+    let start = 0;
+    while (start < chunk.length) {
+      const nl = chunk.indexOf(NEWLINE, start);
+      if (this.spilling) {
+        if (nl < 0) {
+          out.push({ kind: "raw", bytes: chunk.subarray(start), first: false });
+          return out;
+        }
+        out.push({ kind: "raw", bytes: chunk.subarray(start, nl + 1), first: false });
+        this.spilling = false;
+        start = nl + 1;
+        continue;
       }
-      out.push({ kind: "raw", text: rest.slice(0, nl + 1) });
-      this.spilled = 0;
-      rest = rest.slice(nl + 1);
-    }
-    this.buf += rest;
-    if (this.buf.length > this.maxLineBytes && !this.buf.includes("\n")) {
-      // A single oversized partial line: hand it back for passthrough and
-      // remember that the rest of this line is not ours to parse.
-      out.push({ kind: "raw", text: this.buf });
-      this.spilled = this.buf.length;
-      this.buf = "";
-      return out;
-    }
-    let idx: number;
-    while ((idx = this.buf.indexOf("\n")) >= 0) {
-      out.push({ kind: "line", text: this.buf.slice(0, idx) });
-      this.buf = this.buf.slice(idx + 1);
-    }
-    // The tail left after the last newline may itself already be oversized:
-    // spill it now rather than holding it until the next chunk.
-    if (this.buf.length > this.maxLineBytes) {
-      out.push({ kind: "raw", text: this.buf });
-      this.spilled = this.buf.length;
-      this.buf = "";
+      if (nl < 0) {
+        const tail = chunk.subarray(start);
+        if (this.size + tail.length > this.maxLineBytes) {
+          out.push({ kind: "raw", bytes: this.take(tail), first: true });
+          this.spilling = true;
+        } else {
+          this.parts.push(tail);
+          this.size += tail.length;
+        }
+        return out;
+      }
+      out.push({ kind: "line", bytes: this.take(chunk.subarray(start, nl + 1)) });
+      start = nl + 1;
     }
     return out;
   }
+
+  /** At end of input: the unterminated last line, if any, as a `line` with no
+   * newline (a client may end its final message with EOF instead of `\n`). */
+  end(): ByteSegment[] {
+    if (this.spilling || this.size === 0) {
+      this.spilling = false;
+      return [];
+    }
+    return [{ kind: "line", bytes: this.take(Buffer.alloc(0)) }];
+  }
+
+  /** True while a line has started but not ended. */
+  get midLine(): boolean {
+    return this.spilling || this.size > 0;
+  }
+
+  private take(last: Buffer): Buffer {
+    const whole = this.size === 0 ? last : Buffer.concat([...this.parts, last]);
+    this.parts = [];
+    this.size = 0;
+    return whole;
+  }
 }
 
-export type LineSegment = { kind: "line"; text: string } | { kind: "raw"; text: string };
+/** One JSON-RPC message from a line, with its id exactly as it was spelled. */
+export interface RpcMessage {
+  msg: Record<string, unknown>;
+  /** The id's JSON source text (`9007199254740993`, `"a"`, `null`, `{…}`);
+   * undefined when the message has no id member at all. */
+  rawId?: string;
+}
 
-/** Parse one JSON-RPC line; undefined for anything that isn't an object. */
-export function parseRpcLine(line: string): Record<string, unknown> | undefined {
-  const trimmed = line.trim();
-  if (trimmed === "" || trimmed[0] !== "{") return undefined;
+/** A parsed line: one message, or a JSON-RPC batch of them. */
+export interface RpcLine {
+  batch: boolean;
+  messages: RpcMessage[];
+}
+
+// A minimal skimmer over text JSON.parse has already accepted — enough to find
+// member and element SPANS, which JSON.parse doesn't report. Only the id's
+// source text is read this way: a large integer id loses digits as a number.
+
+function skipWs(t: string, i: number): number {
+  while (i < t.length && (t[i] === " " || t[i] === "\t" || t[i] === "\n" || t[i] === "\r")) i++;
+  return i;
+}
+
+function skipString(t: string, i: number): number {
+  for (i += 1; i < t.length; i++) {
+    if (t[i] === "\\") i++;
+    else if (t[i] === '"') return i + 1;
+  }
+  return i;
+}
+
+function skipValue(t: string, i: number): number {
+  const c = t[i];
+  if (c === '"') return skipString(t, i);
+  if (c === "{" || c === "[") {
+    let depth = 0;
+    while (i < t.length) {
+      const ch = t[i];
+      if (ch === '"') {
+        i = skipString(t, i);
+        continue;
+      }
+      if (ch === "{" || ch === "[") depth++;
+      else if (ch === "}" || ch === "]") {
+        depth--;
+        if (depth === 0) return i + 1;
+      }
+      i++;
+    }
+    return i;
+  }
+  while (i < t.length && !/[\s,\]}]/.test(t[i]!)) i++;
+  return i;
+}
+
+/** The source text of the object at `start`'s `id` member (last one wins, as
+ * in JSON.parse), or undefined when it has none. */
+function rawIdAt(t: string, start: number): string | undefined {
+  let found: string | undefined;
+  let i = start + 1;
+  for (;;) {
+    i = skipWs(t, i);
+    if (t[i] !== '"') return found;
+    const keyEnd = skipString(t, i);
+    const key = JSON.parse(t.slice(i, keyEnd)) as string;
+    i = skipWs(t, keyEnd);
+    if (t[i] !== ":") return found;
+    i = skipWs(t, i + 1);
+    const valueEnd = skipValue(t, i);
+    if (key === "id") found = t.slice(i, valueEnd);
+    i = skipWs(t, valueEnd);
+    if (t[i] !== ",") return found;
+    i += 1;
+  }
+}
+
+/**
+ * Parse one JSON-RPC line into its message(s): a single object, or a batch
+ * array (JSON-RPC 2.0 §6). Undefined for anything that isn't JSON-RPC shaped.
+ * Never throws.
+ */
+export function parseRpc(line: string): RpcLine | undefined {
+  const t = line.trim();
+  if (t === "" || (t[0] !== "{" && t[0] !== "[")) return undefined;
+  let value: unknown;
   try {
-    const msg = JSON.parse(trimmed) as unknown;
-    return msg && typeof msg === "object" && !Array.isArray(msg) ? (msg as Record<string, unknown>) : undefined;
+    value = JSON.parse(t);
+  } catch {
+    return undefined;
+  }
+  try {
+    if (isRecord(value)) return { batch: false, messages: [{ msg: value, ...optionalId(rawIdAt(t, 0)) }] };
+    if (!Array.isArray(value)) return undefined;
+    const messages: RpcMessage[] = [];
+    let i = skipWs(t, 1);
+    for (const element of value) {
+      const end = skipValue(t, i);
+      if (isRecord(element)) messages.push({ msg: element, ...optionalId(rawIdAt(t, i)) });
+      i = skipWs(t, end);
+      if (t[i] === ",") i = skipWs(t, i + 1);
+    }
+    return { batch: true, messages };
   } catch {
     return undefined;
   }
 }
 
-/** JSON-RPC ids are strings or numbers; normalized to a map key. */
-export function rpcIdKey(id: unknown): string | undefined {
+function optionalId(rawId: string | undefined): { rawId?: string } {
+  return rawId === undefined ? {} : { rawId };
+}
+
+/**
+ * A map key pairing a request with its response. Strings and safe integers
+ * compare by value; anything else (an unsafe integer, `null`, an object id a
+ * client shouldn't send but might) by its exact source text — so two ids that
+ * differ only past 2^53 never share a key. Undefined when there is no id.
+ */
+export function rpcIdKey(message: RpcMessage): string | undefined {
+  const { rawId } = message;
+  if (rawId === undefined) return undefined;
+  const id = message.msg.id;
   if (typeof id === "string") return `s:${id}`;
-  if (typeof id === "number" && Number.isFinite(id)) return `n:${id}`;
-  return undefined;
+  if (typeof id === "number" && Number.isSafeInteger(id)) return `n:${id}`;
+  return `x:${rawId}`;
 }
 
 function annotationsOf(rec: Record<string, unknown>): ObservedTool["annotations"] | undefined {
@@ -134,83 +254,129 @@ function annotationsOf(rec: Record<string, unknown>): ObservedTool["annotations"
 }
 
 /**
- * If this line is a `tools/list` RESULT, return its tools; else undefined. A
+ * If this message is a `tools/list` RESULT, return its tools; else undefined. A
  * plain result-with-a-tools-array is the only shape we care about — matching by
  * shape rather than by tracking request ids keeps the observer stateless and
  * robust to a server that re-lists after `notifications/tools/list_changed`.
- * Never throws — a non-JSON or unexpected line simply isn't a tool list.
+ * Descriptions come back whole; the caller caps what it stores.
  */
-export function toolsFromLine(line: string): ObservedTool[] | undefined {
-  const msg = parseRpcLine(line);
-  if (!msg) return undefined;
-  const result = msg.result;
-  if (!result || typeof result !== "object") return undefined;
-  const tools = (result as Record<string, unknown>).tools;
+export function toolsOf(message: RpcMessage): ObservedTool[] | undefined {
+  const result = message.msg.result;
+  if (!isRecord(result)) return undefined;
+  const tools = result.tools;
   if (!Array.isArray(tools)) return undefined;
   const out: ObservedTool[] = [];
   for (const t of tools) {
-    if (!t || typeof t !== "object") continue;
-    const rec = t as Record<string, unknown>;
-    if (typeof rec.name !== "string") continue;
-    const annotations = annotationsOf(rec);
+    if (!isRecord(t)) continue;
+    if (typeof t.name !== "string") continue;
+    const annotations = annotationsOf(t);
     out.push({
-      name: rec.name,
-      ...(typeof rec.description === "string" ? { description: rec.description } : {}),
-      ...(rec.inputSchema && typeof rec.inputSchema === "object"
-        ? { schema: safeStringify(rec.inputSchema) }
-        : {}),
+      name: t.name,
+      ...(typeof t.description === "string" ? { description: t.description } : {}),
+      ...(t.inputSchema && typeof t.inputSchema === "object" ? { schema: safeStringify(t.inputSchema) } : {}),
       ...(annotations ? { annotations } : {}),
     });
   }
   return out;
 }
 
-/** A `tools/call` REQUEST going client→server: the tool and its arguments. */
+/** The tools of the first `tools/list` result on a line (batches included). */
+export function toolsFromLine(line: string): ObservedTool[] | undefined {
+  for (const message of parseRpc(line)?.messages ?? []) {
+    const tools = toolsOf(message);
+    if (tools) return tools;
+  }
+  return undefined;
+}
+
+/**
+ * A `tools/call` REQUEST going client→server. Anything with that method is
+ * one, whatever its id — a missing, `null`, object or boolean id doesn't stop a
+ * server from running the tool, so it must not stop the gateway deciding on it.
+ */
 export interface ToolCallRequest {
-  idKey: string;
+  /** Pairs the call with its result; undefined for a notification (no id). */
+  idKey?: string;
+  /** The id's source text, echoed exactly in a refusal. */
+  rawId?: string;
+  /** The tool name, `""` when the request names none. */
   name: string;
   arguments: unknown;
 }
 
-export function toolCallFromLine(line: string): ToolCallRequest | undefined {
-  const msg = parseRpcLine(line);
-  if (!msg || msg.method !== "tools/call") return undefined;
-  const idKey = rpcIdKey(msg.id);
-  if (idKey === undefined) return undefined;
-  const params = msg.params;
-  if (!params || typeof params !== "object") return undefined;
-  const name = (params as Record<string, unknown>).name;
-  if (typeof name !== "string") return undefined;
-  return { idKey, name, arguments: (params as Record<string, unknown>).arguments };
+export function toolCallOf(message: RpcMessage): ToolCallRequest | undefined {
+  if (message.msg.method !== "tools/call") return undefined;
+  const params = isRecord(message.msg.params) ? message.msg.params : {};
+  const idKey = rpcIdKey(message);
+  return {
+    ...(idKey === undefined ? {} : { idKey }),
+    ...optionalId(message.rawId),
+    name: typeof params.name === "string" ? params.name : "",
+    arguments: params.arguments,
+  };
+}
+
+/** The `tools/call` requests on a line, batches included. */
+export function toolCallsFromLine(line: string): ToolCallRequest[] {
+  return (parseRpc(line)?.messages ?? []).flatMap((m) => toolCallOf(m) ?? []);
+}
+
+/** The ids a `notifications/cancelled` names (MCP: `params.requestId`), as keys. */
+export function cancelledIdKey(message: RpcMessage): string | undefined {
+  if (message.msg.method !== "notifications/cancelled") return undefined;
+  const params = message.msg.params;
+  if (!isRecord(params) || !("requestId" in params)) return undefined;
+  const id = params.requestId;
+  if (typeof id === "string") return `s:${id}`;
+  if (typeof id === "number" && Number.isSafeInteger(id)) return `n:${id}`;
+  // An unsafe integer here has lost its digits already; the safe-integer and
+  // string ids every real client uses are what is matched.
+  return undefined;
+}
+
+function stringLeaves(value: unknown, out: string[], depth = 0): void {
+  if (depth > 8 || out.length > 2_000) return;
+  if (typeof value === "string") {
+    if (value.trim() !== "") out.push(value);
+  } else if (Array.isArray(value)) {
+    for (const v of value) stringLeaves(v, out, depth + 1);
+  } else if (isRecord(value)) {
+    for (const v of Object.values(value)) stringLeaves(v, out, depth + 1);
+  }
 }
 
 /** The text a `tools/call` RESULT carries, flattened — content blocks of type
- * text plus any `structuredContent`, for the injection scan. */
-export function toolResultTextFromLine(line: string): { idKey: string; text: string; isError: boolean } | undefined {
-  const msg = parseRpcLine(line);
-  if (!msg) return undefined;
-  const idKey = rpcIdKey(msg.id);
+ * text plus any `structuredContent` they don't already say, for the injection
+ * scan and the excerpt. */
+export function toolResultOf(message: RpcMessage): { idKey: string; text: string; isError: boolean } | undefined {
+  const idKey = rpcIdKey(message);
   if (idKey === undefined) return undefined;
-  if (msg.error && typeof msg.error === "object") {
-    const message = (msg.error as Record<string, unknown>).message;
-    return { idKey, text: typeof message === "string" ? message : "", isError: true };
+  const { msg } = message;
+  if (isRecord(msg.error)) {
+    const text = msg.error.message;
+    return { idKey, text: typeof text === "string" ? text : "", isError: true };
   }
-  const result = msg.result;
-  if (!result || typeof result !== "object") return undefined;
-  const r = result as Record<string, unknown>;
+  const r = msg.result;
+  if (!isRecord(r)) return undefined;
   const parts: string[] = [];
   if (Array.isArray(r.content)) {
     for (const block of r.content) {
-      if (!block || typeof block !== "object") continue;
-      const b = block as Record<string, unknown>;
-      if (b.type === "text" && typeof b.text === "string") parts.push(b.text);
+      if (!isRecord(block)) continue;
+      if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
       // Resource blocks carry fetched documents — exactly where an injection lives.
-      const resource = b.resource as Record<string, unknown> | undefined;
-      if (resource && typeof resource.text === "string") parts.push(resource.text);
+      const resource = block.resource;
+      if (isRecord(resource) && typeof resource.text === "string") parts.push(resource.text);
     }
   }
   if (r.structuredContent !== undefined) {
-    const s = safeStringify(r.structuredContent);
+    // The spec has a server repeat its structured result as text, so most
+    // results say everything twice. Only structure that adds something — a
+    // string the text blocks don't contain — is counted again.
+    const said = parts.join("\n");
+    const leaves: string[] = [];
+    stringLeaves(r.structuredContent, leaves);
+    const adds = parts.length === 0 || leaves.some((leaf) => !said.includes(leaf));
+    const s = adds ? safeStringify(r.structuredContent) : undefined;
     if (s) parts.push(s);
   }
   if (parts.length === 0 && !("content" in r)) return undefined;
@@ -247,10 +413,19 @@ export function classifyTool(tool: Pick<ObservedTool, "name" | "annotations">): 
   return "write";
 }
 
-/** A JSON-RPC error response the gateway sends INSTEAD of forwarding a call it
- * refused — the client sees a failed tool call with a reason, never a hang. */
-export function refusalLine(id: unknown, message: string): string {
-  return `${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32001, message } })}\n`;
+/**
+ * A JSON-RPC error response the gateway sends INSTEAD of forwarding a call it
+ * refused — the client sees a failed tool call with a reason, never a hang.
+ * `rawId` is the request's id as it was spelled, echoed byte for byte (an
+ * integer past 2^53 would come back as a different number through JSON).
+ */
+export function refusalLine(rawId: string, message: string, code = -32001): string {
+  return `${errorResponse(rawId, message, code)}\n`;
+}
+
+/** One error response object as text, with the id spliced in verbatim. */
+export function errorResponse(rawId: string, message: string, code = -32001): string {
+  return `{"jsonrpc":"2.0","id":${rawId},"error":${JSON.stringify({ code, message })}}`;
 }
 
 export function safeStringify(value: unknown): string | undefined {

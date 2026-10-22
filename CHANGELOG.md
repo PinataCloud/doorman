@@ -10,6 +10,32 @@ under `## Unreleased`; a release renames its part of it.
 
 ## Unreleased
 
+### Fixed
+- `doorman gateway route`/`unroute`, `doorman mcp recognize`/`forget` and `doorman mcp server install`/`uninstall` work while `doorman watch` runs; watch only keeps the transcript store to itself, and an answer it saves no longer writes over a setting changed meanwhile.
+- `doorman gateway route`/`unroute` work while the app runs (the app follows the config change); `doorman mcp recognize` while the app runs says to quit the app instead of pointing at a control the app doesn't show.
+- The app takes the home directory from `$HOME`, as the guard and the CLI do; a run with a redirected `HOME` no longer reads or writes MCP configs in the account's real home, and a sandboxed run refuses any write that would land outside its own home.
+- The transcript store is rewritten through a temporary file after a retention prune, so a reader never sees half a file.
+- Registering Doorman's MCP server (Settings → Agents can ask Doorman, `doorman mcp server install`) no longer replaces an agent's MCP config it can't read, a server of your own named `doorman`, or a server list that isn't an object: that config is skipped with a message saying how to fix it, and the other agents still get the server.
+- Registering edits each MCP config in place — comments, trailing commas, indentation and key order kept — so VS Code `mcp.json` files with comments are accepted, and unregistering gives the file back byte for byte (a file Doorman created is removed). The `.doorman.bak` beside it keeps the original from before Doorman's first edit, with the original's permissions.
+- MCP configs that are symlinks are written through the link; read-only ones are refused, not replaced.
+- Registering no longer creates stable VS Code's `mcp.json` on a machine with only Insiders, no longer fails on a `.DS_Store` in VS Code's profiles folder, and finds Copilot CLI under `$COPILOT_HOME`. Fields you add to Doorman's entry are kept.
+- `doorman mcp` lists servers from configs with comments, trailing commas or a byte-order mark (Cursor, Zed, Windsurf, VS Code) and under `$COPILOT_HOME`; its recognized count adds up; a name in another Unicode spelling matches; and it no longer shows MCP rule counts the app hides.
+- `doorman mcp recognize` warns when no server by that name is configured or seen; `doorman mcp forget a…` says when the name fits several servers; `doorman mcp server status` shows a config it can't read as unreadable, with the reason.
+- A failed `doorman mcp server install` lists each failing config on its own line, prints `--json` on stdout, and only turns the setting on when the server landed somewhere.
+- The MCP config watcher keeps seeing changes after an editor saves by renaming a new file over the old one.
+- The guard no longer holds or denies an agent's calls to Doorman's own MCP tools (`doorman_check_tool_call` and the other three, which only read), so "check before you run" works; the tools are marked read-only, so Codex with `approval_policy=never` runs them.
+- `doorman_explain_last_block` lists one entry per call with how it ended (allowed, denied, timed out, handed to the agent's own prompt), shows the calling agent's own session first and says when entries come from other sessions, matches `/tmp` and `/private/tmp` and a trailing slash, skips a malformed record, and prints tool names on one line.
+- `doorman_status` and `doorman_check_tool_call` say when the guard is not installed in any agent, name pack and custom rules, report an unreadable policy file, name `doorman watch` when it answers, and an allow no longer reads as a safety clearance.
+- Doorman's MCP server answers every request before it exits at end of input, never answers a notification, offers its own protocol version for one it doesn't speak, echoes very large request ids exactly, caps a message at 8 MB and exits quietly when its reader goes away.
+- The MCP gateway passes tool-call arguments through byte for byte: a non-ASCII character split across two writes is no longer turned into `�`, and a last message the agent ends without a newline is forwarded.
+- The MCP gateway hands over everything a server wrote before it exited (a large last reply was cut off), answers calls still in flight with an error when the server dies, survives an agent or server that closes its end of the pipe, and stops a server that ignores SIGTERM instead of leaving it running.
+- The gateway's records (`observed.jsonl`, `calls.jsonl`) mask secrets in tool descriptions, schemas and results and are readable only by you; `observed.jsonl` grows only when a tool changes, not with every session.
+- `doorman gateway route`/`unroute` change only the server's own entry — comments, tabs, escapes and large numbers stay as written, numeric arguments are kept, and unrouting gives the file back byte for byte; `.doorman.bak` keeps the file from before Doorman's first edit, with its permissions.
+- `doorman gateway route` routes VS Code (`servers`, commented `mcp.json`) and Zed (`context_servers`) servers, a server named `--`, and, with `--project <dir>`, a project's server in `~/.claude.json` that shares its name with a user-level one.
+- `doorman gateway route` says what the gateway does in this build — it records the tools a server advertises and the calls it answers — instead of promising to hold risky calls; `doorman gateway observed` no longer names or counts MCP rules the app hides.
+- `doorman gateway calls` shows a refused, unattended or failed hold as such (not "ok"), shows a held call and its result as one row, and says "timed out after 60s".
+- When MCP gateway permissions come back, a call can't slip past them in a JSON-RPC batch or with an unusual id, a refusal is never written into the middle of a server's reply, and a held call the agent cancelled or stopped waiting for is not run when approved later.
+
 ## CLI 0.7.0 — 2026-10-21
 
 ### New

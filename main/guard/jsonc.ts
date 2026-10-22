@@ -438,10 +438,12 @@ type Item = (indent: string, multiline: boolean) => string;
 
 const hasOwn = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 
-const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+/** A JSON object (not an array, not null). */
+export const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-function jsonEqual(a: unknown, b: unknown): boolean {
+/** Deep equality of two JSON values; object key order doesn't matter. */
+export function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
   if (Array.isArray(a) || Array.isArray(b)) {

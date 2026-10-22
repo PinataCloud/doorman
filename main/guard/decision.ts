@@ -138,11 +138,57 @@ export function commandOfInput(toolName: string | undefined, input: unknown): st
   return undefined;
 }
 
+// ── Doorman's own MCP server ─────────────────────────────────────────────────
+//
+// The MCP server (mcp/doorman-mcp.ts) tells agents to ask
+// `doorman_check_tool_call` BEFORE a risky call — so its argument is, by
+// design, exactly the risky call. Evaluated like any other tool's input, the
+// check itself was held or denied (Claude Code, Codex: 2026-10-21), and the
+// "ask before you are blocked" path never ran. These four tools only READ
+// Doorman's own files; the input of a check is evaluated, never executed. So a
+// call to one of them is not evaluated at all — narrowly: the server name is
+// Doorman's own registration name and the tool name one of these four, in
+// the spellings a host's normalizeInput leaves them in.
+
+/** The name every host registers Doorman's MCP server under (mcp-register.ts). */
+export const DOORMAN_MCP_SERVER_NAME = "doorman";
+
+/** Doorman's own MCP tools — every one of them read-only. */
+export const DOORMAN_READ_ONLY_MCP_TOOLS: readonly string[] = [
+  "doorman_check_tool_call",
+  "doorman_explain_last_block",
+  "doorman_session_spend",
+  "doorman_status",
+];
+
+/** The host-specific spellings of one of those tools, after normalizeInput:
+ * `mcp__doorman__<tool>` (Claude Code, Codex, and every host normalized to
+ * it), `mcp_doorman_<tool>` (VS Code's dialect, passed through unsplit) and
+ * `doorman-<tool>` (Copilot CLI's sanitized `server-tool`). A bare tool name
+ * names no server, so it is never exempt. */
+const DOORMAN_TOOL_SPELLINGS: Readonly<Record<string, true>> = Object.fromEntries(
+  DOORMAN_READ_ONLY_MCP_TOOLS.flatMap((tool) => [
+    `mcp__${DOORMAN_MCP_SERVER_NAME}__${tool}`,
+    `mcp_${DOORMAN_MCP_SERVER_NAME}_${tool}`,
+    `${DOORMAN_MCP_SERVER_NAME}-${tool}`,
+  ]).map((name) => [name, true as const]),
+);
+
+/** Is this a call to one of Doorman's own read-only MCP tools? Exact match only
+ * (Object.hasOwn: the key is the agent's tool name). */
+export function isDoormanReadOnlyTool(toolName: string | undefined): boolean {
+  return typeof toolName === "string" && Object.hasOwn(DOORMAN_TOOL_SPELLINGS, toolName);
+}
+
 export function evaluateToolCall(
   input: GuardHookInput,
   policy: GuardPolicy,
   nowMs: number = Date.now(),
 ): GuardResult {
+  // Doorman's own read-only MCP tools: nothing to evaluate (see above).
+  if (isDoormanReadOnlyTool(input.tool_name)) {
+    return { findings: [], excepted: [], decision: { decision: "allow", detectors: [], warned: [] }, redacted: redact(JSON.stringify(input.tool_input ?? {})) };
+  }
   const raw = JSON.stringify(input.tool_input ?? {});
   const redacted = redact(raw);
   const target = toolTarget(input.tool_name, input.tool_input);

@@ -56,7 +56,36 @@ export interface RunningDoorman {
   stdio?: true;
 }
 
-/** The engine opened for one command, and how to put it away. */
+/** What a change touches, so that it waits only for whoever owns that.
+ *  · `data` — the store and everything else (the default): refused while any
+ *    other Doorman owns the data — the app, starting or running, or
+ *    `doorman watch`.
+ *  · `settings` — prefs, the guard's policy and agent configs, never the
+ *    store: refused while the app owns the data (it holds the prefs in memory
+ *    and would write over them), allowed while a `doorman watch` runs, which
+ *    takes the writer lock around each of its own prefs writes and reads the
+ *    file afresh under it (`underWriterLock`).
+ *  · `config` — agent config files and the build-stamped bundles they point
+ *    at, nothing the app keeps in memory: allowed whoever runs (the app's MCP
+ *    config watcher follows the file). Still one CLI writer at a time. */
+export type WriteScope = "data" | "settings" | "config";
+
+const SCOPE_RANK: Record<WriteScope, number> = { config: 0, settings: 1, data: 2 };
+
+/** How long `doorman watch` waits for a settings command to finish before it
+ * writes its own answer anyway — such a command holds the lock for
+ * milliseconds, and an answer must never be lost to it. */
+const WATCH_LOCK_WAIT_MS = 5_000;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** A heartbeat written by `doorman watch` (its version is `cli-<version>`), not the app. */
+function isCliWatch(owner: RunningDoorman): boolean {
+  return owner.version?.startsWith("cli-") === true;
+}
+
 export interface EngineHandle {
   engine: CaptureEngine;
   /** True when another Doorman (the app, `watch`, or another command) owned the
@@ -77,15 +106,18 @@ export interface EngineHandle {
  * The CLI shares the desktop app's data directory — one store, one prefs file,
  * one guard bundle and policy — so the two never disagree about what was found
  * or what is enforced. They must not both WRITE at once: whoever holds the
- * guard heartbeat (the app, or `doorman watch`) owns the store and the prefs,
- * and so does an app that is still starting (lib/data-owner.ts). While it
- * runs, read commands work on a temporary copy of the store and commands that
- * change prefs, policy or hooks refuse (`requireWritable`).
+ * guard heartbeat (the app, or `doorman watch`) owns the store, and so does
+ * an app that is still starting (lib/data-owner.ts). While it runs, read
+ * commands work on a temporary copy of the store and commands that change
+ * what it owns refuse (`requireWritable`, by WriteScope: the app owns prefs
+ * too, a `doorman watch` only the store).
  *
  * A command that writes first takes the CLI writer lock and only then checks
  * for the app — the app marks itself first and then waits for that lock — so
  * the two never write at once, whichever starts first. Two CLI commands don't
  * either: the second works on a copy, or refuses a change, until the first ends.
+ * `doorman watch` owns the store through its own lock (`requireWatch`), which
+ * the app waits for too, and takes the writer lock only around its writes.
  */
 export class CliContext {
   readonly dataDir: string;
@@ -102,8 +134,10 @@ export class CliContext {
   /** `--quiet`: no progress or notices on stderr; output, warnings and errors only. */
   quiet = false;
   private storeInstance: Store | undefined;
-  /** This command holds the CLI writer lock (taken by its first write). */
-  private writing = false;
+  /** The scope this command holds the CLI writer lock for (taken by its first write). */
+  private held: WriteScope | undefined;
+  /** `doorman watch`: owns the store for its whole run (the `watch` lock). */
+  private watching = false;
 
   constructor(readonly io: CliEnvironment) {
     this.dataDir = doormanDataDir(io.env, io.platform, io.home);
@@ -162,46 +196,128 @@ export class CliContext {
     }
   }
 
+  /** The desktop app, running or starting — not a `doorman watch`. A
+   * heartbeat that can't be read counts as the app: the safe reading. */
+  private appRunning(): RunningDoorman | undefined {
+    const beat = this.heartbeatOwner();
+    if (beat && !isCliWatch(beat)) return beat;
+    return this.startingApp();
+  }
+
+  /** Whoever owns the store besides this process: `running()`, or a
+   * `doorman watch` that has claimed it and not yet written its heartbeat. */
+  private storeOwner(): RunningDoorman | undefined {
+    const other = this.running();
+    if (other) return other;
+    const watch = liveLock(this.dataDir, "watch", this.io.now());
+    return watch && watch.pid !== process.pid ? { pid: watch.pid, version: "cli-" } : undefined;
+  }
+
   /**
-   * Claim the data for this command's writes: the CLI writer lock first, then
-   * the check that no other Doorman owns it. Held until the command ends
-   * (`releaseWrite`), so an app starting meanwhile waits for it.
+   * Claim the data for this command's writes in `scope`: the CLI writer lock
+   * first, then the check that nobody owning what the scope touches is
+   * running. Held until the command ends (`releaseWrite`), so an app starting
+   * meanwhile waits for it. A wider scope asked later is checked again; a
+   * refusal then keeps the narrower claim.
    */
-  private claimWrite(): { ok: true } | { ok: false; app?: RunningDoorman; cli?: { pid: number; command?: string } } {
-    if (this.writing) return { ok: true };
-    if (!takeLock(this.dataDir, "cli-writer", { pid: process.pid, by: "cli", command: this.commandName }, this.io.now())) {
+  private claimWrite(scope: WriteScope): { ok: true } | { ok: false; app?: RunningDoorman; cli?: { pid: number; command?: string } } {
+    if (this.watching) return { ok: true };
+    const fresh = this.held === undefined;
+    if (!fresh && SCOPE_RANK[this.held!] >= SCOPE_RANK[scope]) return { ok: true };
+    if (fresh && !takeLock(this.dataDir, "cli-writer", { pid: process.pid, by: "cli", command: this.commandName }, this.io.now())) {
       const holder = liveLock(this.dataDir, "cli-writer", this.io.now());
       return { ok: false, cli: { pid: holder?.pid ?? 0, ...(holder?.command ? { command: holder.command } : {}) } };
     }
-    const other = this.running();
+    const other = scope === "data" ? this.storeOwner() : scope === "settings" ? this.appRunning() : undefined;
     if (other) {
-      releaseLock(this.dataDir, "cli-writer", process.pid);
+      if (fresh) releaseLock(this.dataDir, "cli-writer", process.pid);
       return { ok: false, app: other };
     }
-    this.writing = true;
+    // A change starts from the prefs file as it is now that nobody else may
+    // write it, not as this command first read it.
+    if (fresh) this.storeInstance = undefined;
+    this.held = scope;
     return { ok: true };
   }
 
-  /** Let go of the writer lock (the dispatcher calls this when the command ends). */
+  /** Let go of the writer lock and of a watch's claim on the store (the
+   * dispatcher calls this when the command ends; watch, the moment it stops). */
   releaseWrite(): void {
-    if (!this.writing) return;
-    this.writing = false;
+    if (this.watching) {
+      this.watching = false;
+      releaseLock(this.dataDir, "watch", process.pid);
+    }
+    if (this.held === undefined) return;
+    this.held = undefined;
     releaseLock(this.dataDir, "cli-writer", process.pid);
   }
 
-  /** Refuse a change while another Doorman owns the data: it holds the prefs
-   * in memory and would write over this one. */
-  requireWritable(action: string): void {
-    const claim = this.claimWrite();
+  /**
+   * Refuse a change while another Doorman owns what it touches (WriteScope).
+   * `inApp: false` — the app has no control for this change — so the
+   * refusal says to quit it rather than point at a screen that isn't there.
+   */
+  requireWritable(action: string, options: { scope?: WriteScope; inApp?: boolean } = {}): void {
+    const claim = this.claimWrite(options.scope ?? "data");
     if (claim.ok) return;
     if (claim.cli) {
       const what = claim.cli.command ? `\`doorman ${claim.cli.command}\`` : "Another doorman command";
       throw new CliError(`${what}${processLabel(this.io.env, claim.cli.pid)} is changing this data right now. Run this again when it finishes.`);
     }
-    const who = processLabel(this.io.env, claim.app?.pid);
+    const owner = claim.app ?? {};
+    const who = processLabel(this.io.env, owner.pid);
+    if (isCliWatch(owner)) {
+      throw new CliError(`\`doorman watch\`${who} owns this data while it answers held calls. Stop it and run this again.`);
+    }
     throw new CliError(
-      `Doorman is running${who}, so it owns this data. ${action} in the app, or quit it (or stop \`doorman watch\`) and run this again.`,
+      options.inApp === false
+        ? `Doorman is running${who}, so it owns this data. Quit the app and run this again.`
+        : `Doorman is running${who}, so it owns this data. ${action} in the app, or quit it and run this again.`,
     );
+  }
+
+  /**
+   * `doorman watch`: own the store for as long as it runs — it ingests the
+   * guard's spool and answers held calls — through the `watch` lock, which
+   * the app waits for at start like the writer lock. The writer lock itself
+   * is let go at once, so settings and config changes still work while it
+   * runs; its own prefs writes go through `underWriterLock`.
+   */
+  requireWatch(action: string): void {
+    this.requireWritable(action);
+    if (!takeLock(this.dataDir, "watch", { pid: process.pid, by: "cli", command: this.commandName }, this.io.now())) {
+      // Unreachable while the data claim above holds (it checks this lock),
+      // but a claim that can't be had is never assumed.
+      this.releaseWrite();
+      throw new CliError("Another `doorman watch` is taking over this data right now. Run this again when it settles.");
+    }
+    this.watching = true;
+    this.held = undefined;
+    releaseLock(this.dataDir, "cli-writer", process.pid);
+  }
+
+  /**
+   * Run a read-modify-write of prefs and the guard's policy as the only
+   * writer. A `doorman watch` takes the writer lock for just this (waiting
+   * out a settings command, which holds it for milliseconds) and reads the
+   * prefs afresh, so a change another command made meanwhile is kept, not
+   * written over. Any other command already holds the lock it claimed.
+   */
+  underWriterLock<T>(fn: () => T): T {
+    if (!this.watching) return fn();
+    const started = Date.now();
+    let locked = takeLock(this.dataDir, "cli-writer", { pid: process.pid, by: "cli", command: this.commandName });
+    while (!locked && Date.now() - started < WATCH_LOCK_WAIT_MS) {
+      sleepSync(20);
+      locked = takeLock(this.dataDir, "cli-writer", { pid: process.pid, by: "cli", command: this.commandName });
+    }
+    if (!locked) this.log(`the writer lock is still held after ${WATCH_LOCK_WAIT_MS / 1000}s; writing anyway`);
+    this.storeInstance = undefined;
+    try {
+      return fn();
+    } finally {
+      if (locked) releaseLock(this.dataDir, "cli-writer", process.pid);
+    }
   }
 
   private store(): Store {
@@ -238,7 +354,7 @@ export class CliContext {
    * There is no evidence vault: that lives in the app's Keychain item.
    */
   async openEngine(options: { scan: boolean }): Promise<EngineHandle> {
-    const snapshot = !this.claimWrite().ok;
+    const snapshot = !this.claimWrite("data").ok;
     const realStore = join(this.dataDir, "store");
     let storeDir = realStore;
     let temp: string | undefined;

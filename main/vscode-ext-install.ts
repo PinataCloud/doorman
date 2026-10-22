@@ -156,7 +156,7 @@ export interface EditorInstallOutcome {
  * anything, so this is safe on every boot.
  */
 export function installEditorExtension(version: string, home: string = homedir()): EditorInstallOutcome {
-  if (!hookWritesAllowed()) return { ok: false, error: SANDBOX_READ_ONLY, installed: [], hosts: extensionStatus(home) };
+  if (!hookWritesAllowed(process.env, home)) return { ok: false, error: SANDBOX_READ_ONLY, installed: [], hosts: extensionStatus(home) };
   const vsix = vsixPath();
   if (!existsSync(vsix)) {
     return { ok: false, error: `the packaged extension is missing (${vsix})`, installed: [], hosts: extensionStatus(home) };
@@ -184,7 +184,7 @@ export function installEditorExtension(version: string, home: string = homedir()
 
 /** Remove it from every build that has it. */
 export function uninstallEditorExtension(home: string = homedir()): EditorInstallOutcome {
-  if (!hookWritesAllowed()) return { ok: false, error: SANDBOX_READ_ONLY, installed: [], hosts: extensionStatus(home) };
+  if (!hookWritesAllowed(process.env, home)) return { ok: false, error: SANDBOX_READ_ONLY, installed: [], hosts: extensionStatus(home) };
   const errors: string[] = [];
   for (const { variant, cli } of editorTargets(home)) {
     const listed = run(cli, listArgs());

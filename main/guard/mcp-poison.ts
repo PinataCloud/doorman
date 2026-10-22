@@ -25,6 +25,7 @@
  * with invisible characters escaped visible.
  */
 
+import { parseJsonc } from "./jsonc.js";
 import { foldForMatching, type SecuritySeverity } from "./security-detect.js";
 
 export type McpDetectorId = "mcp_tool_poisoning";
@@ -214,18 +215,11 @@ export function mcpServerRoots(
  */
 export function scanMcpConfigText(json: string, filePath: string): McpFinding[] {
   const capped = json.length > MCP_CONFIG_MAX_CHARS ? json.slice(0, MCP_CONFIG_MAX_CHARS) : json;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(capped);
-  } catch {
-    try {
-      parsed = JSON.parse(json);
-    } catch {
-      return []; // Not JSON (or truncated by the cap) — nothing trustworthy to walk.
-    }
-  }
-  if (!parsed || typeof parsed !== "object") return [];
-  const doc = parsed as Record<string, unknown>;
+  // JSONC, as the hosts read it (comments, trailing commas, a BOM): a strict
+  // parse let one `// my servers` line hide a poisoned entry from the scan.
+  // Not an object (or truncated by the cap) — nothing trustworthy to walk.
+  const doc = parseJsonc(capped) ?? parseJsonc(json);
+  if (!doc) return [];
 
   const findings: McpFinding[] = [];
   for (const { servers } of mcpServerRoots(doc, filePath)) {

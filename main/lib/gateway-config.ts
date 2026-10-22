@@ -2,100 +2,128 @@
  * Routing an MCP server through the Doorman gateway — the reversible config
  * surgery behind the "Route through gateway" toggle (MCP gateway, phase 1).
  *
- * Same discipline as the hook installer (guard/policy.ts mergeHookDocument):
- * parse, preserve everything unrelated, refuse malformed JSON, and store the
- * ORIGINAL so restore is exact. A gatewayed entry keeps the original command
- * under `_doorman_gateway`, which doubles as the "already routed" marker (so
- * routing is idempotent) and the restore source.
+ * The edit is BYTE-PRESERVING (guard/jsonc.ts `editJsonc`): only the routed
+ * entry's `command`/`args` and the marker change; every other byte — tabs,
+ * comments, key order, escapes, a number too large for a double — is the
+ * person's and stays exactly as written. A gatewayed entry keeps the original
+ * launch under `_doorman_gateway`, which doubles as the "already routed"
+ * marker (so routing is idempotent) and the restore source: `args` is stored
+ * verbatim (numbers stay numbers) and only when the entry had them, so unroute
+ * writes back the entry it found.
+ *
+ * Servers are found over the SAME roots the inventory and the poisoning scan
+ * walk (guard/mcp-poison.ts `mcpServerRoots`): `mcpServers` (Claude, Cursor,
+ * Windsurf…), `servers` (VS Code's mcp.json), `context_servers` (Zed), and
+ * the per-project blocks inside ~/.claude.json. A name can be declared both
+ * at the top level and for a project; `project` picks which.
  *
  * Only STDIO servers (a `command`) can be proxied this way — a remote `url`
  * server has no local process to wrap; those are left untouched and reported.
  *
  * Pure over the config text (no fs) so the tests can hold the surgery to
- * "preserves the world, round-trips exactly". The caller does the file IO with
- * the same care the hook installer takes (backup, atomic-ish write).
+ * "preserves the world, round-trips exactly". The caller does the file IO.
  */
+
+import { editJsonc, isPlainObject as isObject, readJsonc, type JsoncDialect } from "../guard/jsonc.js";
+import { mcpServerRoots } from "../guard/mcp-poison.js";
 
 export const GATEWAY_MARKER = "_doorman_gateway";
 
-interface StdioEntry {
-  command?: string;
-  args?: unknown;
-  env?: unknown;
-  [key: string]: unknown;
-}
+/** Editor configs (VS Code, Zed) are JSONC with trailing commas; a strict
+ * JSON file reads the same under it. */
+const DIALECT: JsoncDialect = { trailingCommas: true };
 
 interface GatewayOriginal {
   command: string;
-  args: string[];
+  /** Absent when the entry had no `args`. */
+  args?: unknown[];
 }
 
 export type RouteOutcome =
   | { ok: true; changed: boolean; json: string }
-  | { ok: false; reason: "not_json" | "no_such_server" | "remote_server" | "already" };
+  | { ok: false; reason: "not_json" | "no_such_server" | "remote_server" | "already" | "ambiguous"; projects?: string[] };
 
-/** The server names in a config doc that CAN be routed (stdio, on a matched
- * root), each with whether it is currently gatewayed. For the UI toggle. */
-export interface RoutableServer {
+/** One server entry in a config document. `project` is the project path of a
+ * per-project block (~/.claude.json `projects[…]`), `""` for the top level. */
+interface Located {
   name: string;
-  gatewayed: boolean;
-  transport: "stdio" | "http";
+  project: string;
+  entry: Record<string, unknown>;
 }
 
-/** Walk the same roots mcp-poison.ts does, returning [container, name, entry]
- * for every server, so route/restore/list share one traversal. */
-function eachServer(
-  doc: Record<string, unknown>,
-  filePath: string,
-): Array<[Record<string, unknown>, string, StdioEntry]> {
-  const isProjectMcpJson = /(?:^|[\\/])\.mcp\.json$/.test(filePath);
-  const roots: Record<string, unknown>[] = [];
-  if (isProjectMcpJson) {
-    const servers = (doc.mcpServers ?? doc) as Record<string, unknown>;
-    if (servers && typeof servers === "object") roots.push(servers);
-  } else {
-    if (doc.mcpServers && typeof doc.mcpServers === "object") roots.push(doc.mcpServers as Record<string, unknown>);
-    const projects = doc.projects;
-    if (projects && typeof projects === "object") {
-      for (const project of Object.values(projects as Record<string, unknown>)) {
-        const servers = (project as Record<string, unknown> | null)?.mcpServers;
-        if (servers && typeof servers === "object") roots.push(servers as Record<string, unknown>);
-      }
-    }
-  }
-  const out: Array<[Record<string, unknown>, string, StdioEntry]> = [];
-  for (const container of roots) {
-    for (const [name, entry] of Object.entries(container)) {
-      if (entry && typeof entry === "object") out.push([container, name, entry as StdioEntry]);
-    }
-  }
-  return out;
-}
-
-export function listRoutableServers(json: string, filePath: string): RoutableServer[] {
-  let doc: Record<string, unknown>;
+function readDoc(json: string): Record<string, unknown> | undefined {
   try {
-    doc = JSON.parse(json) as Record<string, unknown>;
-  } catch {
-    return [];
-  }
-  if (!doc || typeof doc !== "object") return [];
-  const out: RoutableServer[] = [];
-  for (const [, name, entry] of eachServer(doc, filePath)) {
-    const gatewayed = !!entry[GATEWAY_MARKER];
-    const transport = typeof entry.url === "string" && !entry.command ? "http" : "stdio";
-    out.push({ name, gatewayed, transport });
-  }
-  return out;
-}
-
-function parseDoc(json: string): Record<string, unknown> | undefined {
-  try {
-    const doc = JSON.parse(json);
-    return doc && typeof doc === "object" ? (doc as Record<string, unknown>) : undefined;
+    const doc = readJsonc(json, DIALECT);
+    return isObject(doc) ? doc : undefined;
   } catch {
     return undefined;
   }
+}
+
+function eachServer(doc: Record<string, unknown>, filePath: string): Located[] {
+  const out: Located[] = [];
+  for (const { projectPath, servers } of mcpServerRoots(doc, filePath)) {
+    if (!isObject(servers)) continue;
+    for (const [name, entry] of Object.entries(servers)) {
+      if (isObject(entry)) out.push({ name, project: projectPath, entry });
+    }
+  }
+  return out;
+}
+
+/**
+ * The entry `serverName` names. With `project` given, exactly that block
+ * (`""` = the top level). Without it: the only one, else the top-level one —
+ * the entry a person who typed just the name most likely means — else
+ * `ambiguous`, listing the projects that declare it.
+ */
+function locate(
+  doc: Record<string, unknown>,
+  filePath: string,
+  serverName: string,
+  project: string | undefined,
+): Located | { reason: "no_such_server" | "ambiguous"; projects?: string[] } {
+  const matches = eachServer(doc, filePath).filter((s) => s.name === serverName);
+  if (project !== undefined) return matches.find((s) => s.project === project) ?? { reason: "no_such_server" };
+  if (matches.length === 1) return matches[0]!;
+  const top = matches.find((s) => s.project === "");
+  if (top) return top;
+  if (matches.length === 0) return { reason: "no_such_server" };
+  return { reason: "ambiguous", projects: matches.map((s) => s.project) };
+}
+
+/** The projects (`""` = top level) under which `serverName` is declared. */
+export function serverScopes(json: string, filePath: string, serverName: string): string[] {
+  const doc = readDoc(json);
+  if (!doc) return [];
+  return eachServer(doc, filePath)
+    .filter((s) => s.name === serverName)
+    .map((s) => s.project);
+}
+
+/**
+ * Where an entry keeps its launch: `command` + `args` on the entry (every
+ * host), or Zed's older `command: { path, args }` object.
+ */
+function launchHolder(entry: Record<string, unknown>): { holder: Record<string, unknown>; key: "command" | "path" } | undefined {
+  if (typeof entry.command === "string") return { holder: entry, key: "command" };
+  if (isObject(entry.command) && typeof entry.command.path === "string") return { holder: entry.command, key: "path" };
+  return undefined;
+}
+
+function edited(json: string, doc: Record<string, unknown>): RouteOutcome {
+  try {
+    return { ok: true, changed: true, json: editJsonc(json, doc, DIALECT) };
+  } catch {
+    return { ok: false, reason: "not_json" };
+  }
+}
+
+function gatewayArgs(gatewayJs: string, name: string, original: GatewayOriginal): string[] {
+  // An argument as the gateway's argv receives it — the host would have
+  // stringified a number the same way.
+  const text = (arg: unknown): string => (typeof arg === "string" ? arg : typeof arg === "object" ? JSON.stringify(arg) : String(arg));
+  return [gatewayJs, "--server", name, "--", original.command, ...(original.args ?? []).map(text)];
 }
 
 /**
@@ -109,23 +137,31 @@ export function routeServerThroughGateway(
   serverName: string,
   gatewayJs: string,
   nodePath = "node",
+  project?: string,
 ): RouteOutcome {
-  const doc = parseDoc(json);
+  const doc = readDoc(json);
   if (!doc) return { ok: false, reason: "not_json" };
-  for (const [, name, entry] of eachServer(doc, filePath)) {
-    if (name !== serverName) continue;
-    if (entry[GATEWAY_MARKER]) return { ok: false, reason: "already" };
-    if (typeof entry.command !== "string") return { ok: false, reason: "remote_server" };
-    const original: GatewayOriginal = {
-      command: entry.command,
-      args: Array.isArray(entry.args) ? entry.args.filter((a): a is string => typeof a === "string") : [],
-    };
-    entry[GATEWAY_MARKER] = original;
-    entry.command = nodePath;
-    entry.args = [gatewayJs, "--server", serverName, "--", original.command, ...original.args];
-    return { ok: true, changed: true, json: `${JSON.stringify(doc, null, 2)}\n` };
-  }
-  return { ok: false, reason: "no_such_server" };
+  const found = locate(doc, filePath, serverName, project);
+  if (!("entry" in found)) return { ok: false, ...found };
+  const { entry } = found;
+  if (entry[GATEWAY_MARKER]) return { ok: false, reason: "already" };
+  const launch = launchHolder(entry);
+  if (!launch) return { ok: false, reason: "remote_server" };
+  const { holder, key } = launch;
+  const original: GatewayOriginal = {
+    command: holder[key] as string,
+    ...(Array.isArray(holder.args) ? { args: holder.args as unknown[] } : {}),
+  };
+  entry[GATEWAY_MARKER] = original;
+  holder[key] = nodePath;
+  holder.args = gatewayArgs(gatewayJs, serverName, original);
+  return edited(json, doc);
+}
+
+function markerOf(entry: Record<string, unknown>): GatewayOriginal | undefined {
+  const marker = entry[GATEWAY_MARKER];
+  if (!isObject(marker) || typeof marker.command !== "string") return undefined;
+  return { command: marker.command, ...(Array.isArray(marker.args) ? { args: marker.args as unknown[] } : {}) };
 }
 
 /**
@@ -139,39 +175,36 @@ export function retargetGatewayRoutes(
   gatewayJs: string,
   nodePath = "node",
 ): RouteOutcome {
-  const doc = parseDoc(json);
+  const doc = readDoc(json);
   if (!doc) return { ok: false, reason: "not_json" };
-  let found = false;
   let changed = false;
-  for (const [, name, entry] of eachServer(doc, filePath)) {
-    const original = entry[GATEWAY_MARKER] as GatewayOriginal | undefined;
-    if (!original || typeof original.command !== "string") continue;
-    found = true;
-    const originalArgs = Array.isArray(original.args)
-      ? original.args.filter((arg): arg is string => typeof arg === "string")
-      : [];
-    const args = [gatewayJs, "--server", name, "--", original.command, ...originalArgs];
-    if (entry.command === nodePath && JSON.stringify(entry.args) === JSON.stringify(args)) continue;
-    entry.command = nodePath;
-    entry.args = args;
+  for (const { name, entry } of eachServer(doc, filePath)) {
+    const original = markerOf(entry);
+    const launch = launchHolder(entry);
+    if (!original || !launch) continue;
+    const args = gatewayArgs(gatewayJs, name, original);
+    if (launch.holder[launch.key] === nodePath && JSON.stringify(launch.holder.args) === JSON.stringify(args)) continue;
+    launch.holder[launch.key] = nodePath;
+    launch.holder.args = args;
     changed = true;
   }
-  if (!found || !changed) return { ok: false, reason: "already" };
-  return { ok: true, changed: true, json: `${JSON.stringify(doc, null, 2)}\n` };
+  if (!changed) return { ok: false, reason: "already" };
+  return edited(json, doc);
 }
 
-/** Undo it — restore `command`/`args` from the marker and drop the marker. */
-export function restoreServer(json: string, filePath: string, serverName: string): RouteOutcome {
-  const doc = parseDoc(json);
+/** Undo it — restore the launch from the marker and drop the marker. */
+export function restoreServer(json: string, filePath: string, serverName: string, project?: string): RouteOutcome {
+  const doc = readDoc(json);
   if (!doc) return { ok: false, reason: "not_json" };
-  for (const [, name, entry] of eachServer(doc, filePath)) {
-    if (name !== serverName) continue;
-    const marker = entry[GATEWAY_MARKER] as GatewayOriginal | undefined;
-    if (!marker || typeof marker.command !== "string") return { ok: false, reason: "already" };
-    entry.command = marker.command;
-    entry.args = Array.isArray(marker.args) ? marker.args : [];
-    delete entry[GATEWAY_MARKER];
-    return { ok: true, changed: true, json: `${JSON.stringify(doc, null, 2)}\n` };
-  }
-  return { ok: false, reason: "no_such_server" };
+  const found = locate(doc, filePath, serverName, project);
+  if (!("entry" in found)) return { ok: false, ...found };
+  const { entry } = found;
+  const original = markerOf(entry);
+  const launch = launchHolder(entry);
+  if (!original || !launch) return { ok: false, reason: "already" };
+  launch.holder[launch.key] = original.command;
+  if (original.args) launch.holder.args = original.args;
+  else delete launch.holder.args;
+  delete entry[GATEWAY_MARKER];
+  return edited(json, doc);
 }

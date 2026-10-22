@@ -292,8 +292,8 @@ export class DoctorRunner {
    * previous bytes beside the file — nothing here is the only copy of anything. */
   private async apply(repair: PlannedRepair): Promise<boolean> {
     // Every repair rewrites a file in the real home — none of that from a
-    // sandboxed run.
-    if (!hookWritesAllowed()) {
+    // sandboxed run, unless the file really lies inside its redirected home.
+    if (!hookWritesAllowed(process.env, repair.file)) {
       this.deps.log(`sandboxed run: skipped repair ${repair.fix} — ${SANDBOX_READ_ONLY}`);
       return false;
     }

@@ -40,7 +40,7 @@ import { join } from "node:path";
 import { armedEscalation, customArmedEscalation, readArmedTaints } from "./armed.js";
 import { ruleShown } from "./rule-scope.js";
 import { customDetectorLabels, isCustomDetectorId } from "./custom-rules.js";
-import { evaluatePrompt, evaluateToolCall, guardSelfWrite, parsePolicy, type ExceptedFinding, type GuardHookInput } from "./decision.js";
+import { evaluatePrompt, evaluateToolCall, guardSelfWrite, isDoormanReadOnlyTool, parsePolicy, type ExceptedFinding, type GuardHookInput } from "./decision.js";
 import { decideEnforcement, type GuardFinding } from "./policy.js";
 import { secondOpinion, secondOpinionRawText, type SecondOpinionTelemetry } from "./second-opinion.js";
 import { MAX_COMMAND_CHARS, networkCallName, sanitizeExcerpt, scanWindow, type SecurityDetectorId } from "./security-detect.js";
@@ -201,6 +201,10 @@ async function main(): Promise<void> {
   const input: GuardHookInput | undefined = host.normalizeInput(raw);
   // Not a tool call this host wants evaluated — silence, exit 0.
   if (!input) return;
+  // Doorman's own read-only MCP tools (decision.ts isDoormanReadOnlyTool): the
+  // check's argument IS the risky call it asks about, and it is never run.
+  // Silence = the host's own flow, exactly as for any allowed call (rule 2).
+  if (isDoormanReadOnlyTool(input.tool_name)) return;
 
   let policyJson: string | undefined;
   try {

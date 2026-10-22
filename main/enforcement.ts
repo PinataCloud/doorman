@@ -216,6 +216,14 @@ export function hostArtifacts(
   return host.artifacts?.(homedir(), env) ?? [];
 }
 
+/** A sandboxed run writes a host's documents only when every one of them
+ * really lands inside its redirected home (lib/sandbox.ts); otherwise the
+ * whole host is refused before anything of it is touched. */
+function refuseForeignTargets(paths: readonly string[]): void {
+  const foreign = paths.find((path) => !hookWritesAllowed(process.env, path));
+  if (foreign !== undefined) throw new Error(`${SANDBOX_READ_ONLY} (${foreign})`);
+}
+
 /** Write an artefact only when its bytes differ — this runs on every boot and
  * policy sync, and a no-op rewrite churns the host's file watchers. */
 function writeArtifact(artifact: HostArtifact): void {
@@ -635,6 +643,9 @@ export function installGuard(userDataDir: string, policy: GuardPolicy, options: 
     };
     for (const plan of plans) {
       try {
+        // Each document checked where it really lands, not just where $HOME
+        // points: a sandbox fixture can link a real directory in (sandbox.ts).
+        refuseForeignTargets([...plan.artifacts, ...plan.companions, ...plan.hooks].map((d) => d.path));
         // What the entry points at (plugin files, consent) first, the hook
         // entry last: a write that fails midway leaves inert files behind,
         // never an entry pointing at nothing.
@@ -655,7 +666,7 @@ export function installGuard(userDataDir: string, policy: GuardPolicy, options: 
         try {
           const allowlist = `${hermesHome(home, process.env)}/shell-hooks-allowlist.json`;
           const cleaned = withoutLegacyAllowlistEntries(readDocument(allowlist));
-          if (cleaned !== undefined) writeDocumentAtomically(allowlist, cleaned);
+          if (cleaned !== undefined && hookWritesAllowed(process.env, allowlist)) writeDocumentAtomically(allowlist, cleaned);
         } catch {
           // a stale consent entry for a command nobody runs is inert
         }
@@ -712,16 +723,19 @@ export function uninstallGuard(): { ok: true } | { ok: false; error: string; fai
     const failures: GuardHostFailure[] = [];
     for (const host of HOSTS) {
       try {
-        for (const state of states.filter((s) => s.host === host)) {
+        const hostStates = states.filter((s) => s.host === host);
+        const companions = (host.companions ?? []).map((companion) => ({ companion, path: companion.path(home, process.env) }));
+        const artifacts = hostArtifacts(host);
+        refuseForeignTargets([...hostStates.map((s) => s.docPath), ...companions.map((c) => c.path), ...artifacts.map((a) => a.path)]);
+        for (const state of hostStates) {
           const next = host.remove(state.doc);
           if (next !== undefined) writeDocumentAtomically(state.docPath, next);
         }
-        for (const companion of host.companions ?? []) {
-          const path = companion.path(home, process.env);
+        for (const { companion, path } of companions) {
           const next = companion.remove(readDocument(path));
           if (next !== undefined) writeDocumentAtomically(path, next);
         }
-        removeArtifacts(hostArtifacts(host));
+        removeArtifacts(artifacts);
       } catch (err) {
         failures.push({ id: host.id, label: host.label, error: errorText(err) });
       }

@@ -28,6 +28,8 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
   statSync,
   watch,
   writeFileSync,
@@ -673,21 +675,26 @@ export class CaptureEngine {
   }
 
   /** Rewrite the turn store after a prune — and compact the findings ledger
-   * while we're here (it accumulates one line per status change). */
+   * while we're here (it accumulates one line per status change). Each
+   * through a temp file and a rename: another process reading the store
+   * meanwhile (the MCP server answering session spend, a CLI copying it)
+   * sees the old file or the new one, never half of one. */
   private rewriteStores(): void {
     try {
-      writeFileSync(
-        this.path("turns.jsonl"),
-        [...this.turns.values()].map((t) => JSON.stringify(t)).join("\n") +
-          (this.turns.size > 0 ? "\n" : ""),
-        { mode: 0o600 },
-      );
-      writeFileSync(
-        this.path("findings.jsonl"),
-        [...this.ledger.values()].map((r) => JSON.stringify(r)).join("\n") +
-          (this.ledger.size > 0 ? "\n" : ""),
-        { mode: 0o600 },
-      );
+      for (const [name, rows] of [
+        ["turns.jsonl", [...this.turns.values()]],
+        ["findings.jsonl", [...this.ledger.values()]],
+      ] as const) {
+        const path = this.path(name);
+        const temp = `${path}.${process.pid}.tmp`;
+        try {
+          writeFileSync(temp, rows.map((r) => JSON.stringify(r)).join("\n") + (rows.length > 0 ? "\n" : ""), { mode: 0o600 });
+          renameSync(temp, path);
+        } catch (err) {
+          rmSync(temp, { force: true });
+          throw err;
+        }
+      }
     } catch (err) {
       this.deps.log(`couldn't rewrite stores: ${String(err)}`);
     }

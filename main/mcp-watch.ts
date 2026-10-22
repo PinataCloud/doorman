@@ -17,7 +17,7 @@
  * find. The finding names the app it came from so the row is actionable.
  */
 
-import { statSync, readFileSync, watch, type FSWatcher } from "node:fs";
+import { statSync, readFileSync, watch } from "node:fs";
 import { join } from "node:path";
 import { scanMcpConfigText } from "./guard/mcp-poison.js";
 import { mintFindingRow, type FindingRow } from "./lib/findings.js";
@@ -30,8 +30,14 @@ interface FileCursor {
   mtimeMs: number;
 }
 
+/** The part of an fs.FSWatcher this file uses. */
+export interface WatchHandle {
+  close(): void;
+  on(event: "error", listener: () => void): unknown;
+}
+
 export class McpConfigWatcher {
-  private watchers = new Map<string, FSWatcher>();
+  private watchers = new Map<string, WatchHandle>();
   private timer: NodeJS.Timeout | undefined;
   private cursors = new Map<string, FileCursor>();
   /** Configured servers per config path — merged into the inventory. Keyed by
@@ -52,6 +58,8 @@ export class McpConfigWatcher {
       /** The configured-server set changed — the caller rebuilds the inventory. */
       onServers?(servers: McpConfigServer[]): void;
       log(message: string): void;
+      /** fs.watch; a test drives the events itself. */
+      watch?: (path: string, listener: (event: string) => void) => WatchHandle;
     },
   ) {}
 
@@ -95,7 +103,17 @@ export class McpConfigWatcher {
   private ensureWatch(path: string): void {
     if (this.watchers.has(path)) return;
     try {
-      const watcher = watch(path, () => this.scanIfChanged(path));
+      const watcher = (this.deps.watch ?? watch)(path, (event) => {
+        // An editor's atomic save (write a temp, rename it over the file)
+        // leaves this watcher on the OLD inode, deaf to every later change —
+        // and a deletion fires the same event. Re-arm on the path as it is now.
+        if (event === "rename") {
+          this.watchers.get(path)?.close();
+          this.watchers.delete(path);
+          this.ensureWatch(path);
+        }
+        this.scanIfChanged(path);
+      });
       watcher.on("error", () => {
         // A deleted file kills its watcher; the interval sweep re-arms it.
         this.watchers.get(path)?.close();

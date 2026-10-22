@@ -291,11 +291,17 @@ export interface VscodeProfile {
  * `User/profiles/<id>/`. Profiles are listed even when empty — a profile that
  * inherits the default for a resource simply has no file there, and the caller
  * decides whether an absent file means "inherited" (fine) or "unregistered".
+ *
+ * Only DIRECTORIES are profiles: Finder drops a `.DS_Store` file into any
+ * folder it shows, and treating it as a profile made registration try to
+ * create `profiles/.DS_Store/mcp.json`. VS Code's profile ids never start
+ * with a dot, so dot-entries are skipped even when the caller can't tell a
+ * file from a folder (`isDir` absent).
  */
 export function profiles(
   variant: VscodeVariant,
   home: string,
-  io: { exists(path: string): boolean; listDir(path: string): string[] },
+  io: { exists(path: string): boolean; listDir(path: string): string[]; isDir?(path: string): boolean },
 ): VscodeProfile[] {
   const base = userDir(variant, home);
   if (!io.exists(base)) return [];
@@ -303,8 +309,9 @@ export function profiles(
   const root = join(base, "profiles");
   if (io.exists(root)) {
     for (const name of io.listDir(root).sort()) {
+      if (name.startsWith(".")) continue;
       const dir = join(root, name);
-      if (io.exists(dir)) out.push({ id: name, dir, default: false });
+      if (io.isDir ? io.isDir(dir) : io.exists(dir)) out.push({ id: name, dir, default: false });
     }
   }
   return out;

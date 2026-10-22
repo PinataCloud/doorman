@@ -16,15 +16,19 @@
  *                    injection.
  *
  * The config WRITE is opt-in and per-server (the "Route through gateway"
- * toggle). It is the first thing this app writes into `~/.claude.json` /
- * `.mcp.json`, so it takes the hook installer's care: parse, preserve
- * everything, refuse malformed JSON, keep a `.bak` of the previous bytes, and
- * store the original command under a marker so restore is exact.
+ * toggle) into a file the person owns (`~/.claude.json`, `.mcp.json`, VS Code's
+ * `mcp.json`, Zed's settings), so it takes the hook installer's care: the edit
+ * is byte-preserving (lib/gateway-config.ts), a malformed file is refused, the
+ * write goes through lib/config-file.ts (through symlinks, keeping the mode,
+ * atomic), `<config>.doorman.bak` keeps the bytes from BEFORE Doorman's first
+ * edit (written once, with the file's own mode), and the original command
+ * sits under a marker so restore is exact.
  */
 
 import { nodeProgramForScript } from "./lib/node-launcher.js";
 import { hookWritesAllowed, SANDBOX_READ_ONLY } from "./lib/sandbox.js";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { backupOnce, readConfigFile, writeConfigFile } from "./lib/config-file.js";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { refreshGuardBundle } from "./enforcement.js";
 import {
@@ -68,16 +72,6 @@ export function refreshGatewayBundle(userDataDir: string): void {
   for (const file of GATEWAY_FILES) {
     copyFileSync(join(source, file), join(target, file));
   }
-}
-
-function writeConfigWithBackup(path: string, before: string, next: string): void {
-  try {
-    writeFileSync(`${path}.doorman.bak`, before);
-  } catch {
-    // A missing backup is not worth aborting a reversible, marker-tracked edit.
-  }
-  if (!hookWritesAllowed()) throw new Error(SANDBOX_READ_ONLY);
-  writeFileSync(path, next);
 }
 
 /** One line of observed.jsonl, as the gateway writes it. */
@@ -234,6 +228,9 @@ export interface GatewayCallRecord {
   unattended?: boolean;
   /** The hold machinery itself failed; `resolution` says what the policy did. */
   hold_error?: boolean;
+  /** allowed · denied · timeout · unattended · unavailable, or how a held
+   * call ended unanswered: cancelled · client_timeout · client_gone ·
+   * upstream_gone. */
   resolution?: string;
   /** Whether the call reached the server after an ask (2026-09-10): a refused
    * unattended ask has `forwarded: false` and `resolution: "unavailable"`. */
@@ -243,6 +240,38 @@ export interface GatewayCallRecord {
   decided_at?: string;
   hold_ms?: number;
   reason?: string;
+  /** Ties the records about one call together: a held call's decision record
+   * and its result record carry the same id. */
+  call?: string;
+  /** The hold window a timed-out hold ran for. */
+  hold_seconds?: number;
+  /** Refused because it rode in a JSON-RPC batch the gateway couldn't hold. */
+  batch_refused?: boolean;
+  /** The result was too large to read; nothing of it was recorded. */
+  oversized?: boolean;
+}
+
+/**
+ * One row per call: the records that share a `call` id (a held call's
+ * decision, then its result) folded into one, later fields over earlier —
+ * so the merged row carries both how the hold ended and what came back, and
+ * is dated by the last of them. Records from before `call` existed stay as
+ * they are. Order follows each call's first record.
+ */
+export function mergeGatewayCalls(records: readonly GatewayCallRecord[]): GatewayCallRecord[] {
+  const byCall = new Map<string, GatewayCallRecord>();
+  const out: GatewayCallRecord[] = [];
+  for (const rec of records) {
+    const seen = rec.call === undefined ? undefined : byCall.get(rec.call);
+    if (seen) {
+      Object.assign(seen, rec);
+      continue;
+    }
+    const row = { ...rec };
+    if (rec.call !== undefined) byCall.set(rec.call, row);
+    out.push(row);
+  }
+  return out;
 }
 
 export function readGatewayCalls(userDataDir: string): GatewayCallRecord[] {
@@ -355,71 +384,66 @@ const REASON_TEXT: Record<Exclude<RouteOutcome & { ok: false }, { ok: true }>["r
   no_such_server: "that server isn't in this config file any more",
   remote_server: "a remote (URL) MCP server has no local process to route",
   already: "already in that state",
+  ambiguous: "it is declared for more than one project in this file — name the project",
 };
 
-/** Route `serverName` in `configPath` through the gateway. Refreshes the bundle
- * first, so the path the config points at always exists. */
-export function routeServer(
-  userDataDir: string,
-  configPath: string,
-  serverName: string,
-): GatewayInstallResult {
-  let before: string;
+const CONFIG_LABEL = "The MCP config";
+
+/** Read, edit, and write back one config file. `backup`: keep the
+ * pre-Doorman original beside it first (only route makes one). */
+function rewriteConfig(configPath: string, edit: (text: string) => RouteOutcome, backup: boolean): GatewayInstallResult {
+  // Checked first: a sandboxed run must not leave even a backup behind.
+  if (!hookWritesAllowed(process.env, configPath)) return { ok: false, error: SANDBOX_READ_ONLY };
+  let read;
   try {
-    before = readFileSync(configPath, "utf8");
+    read = readConfigFile(configPath, CONFIG_LABEL);
   } catch (err) {
-    return { ok: false, error: `couldn't read the config file: ${String(err)}` };
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  refreshGatewayBundle(userDataDir);
-  const outcome = routeServerThroughGateway(before, configPath, serverName, gatewayScript(userDataDir), nodeProgramForScript(gatewayScript(userDataDir)));
+  if (!read.exists) return { ok: false, error: "the config file isn't there any more" };
+  const outcome = edit(read.text);
   if (!outcome.ok) {
     return outcome.reason === "already" ? { ok: true, changed: false } : { ok: false, error: REASON_TEXT[outcome.reason] };
   }
   try {
-    writeConfigWithBackup(configPath, before, outcome.json);
+    if (backup) backupOnce(configPath, read.text, read.mode);
+    writeConfigFile(configPath, outcome.json, CONFIG_LABEL);
   } catch (err) {
-    return { ok: false, error: `couldn't write the config file: ${String(err)}` };
+    return { ok: false, error: `couldn't write the config file: ${err instanceof Error ? err.message : String(err)}` };
   }
   return { ok: true, changed: true };
+}
+
+/** Route `serverName` in `configPath` through the gateway. Refreshes the bundle
+ * first, so the path the config points at always exists. `project` picks a
+ * per-project block of ~/.claude.json (`""` = the top level); without it the
+ * only entry of that name, else the top-level one. */
+export function routeServer(userDataDir: string, configPath: string, serverName: string, project?: string): GatewayInstallResult {
+  return rewriteConfig(
+    configPath,
+    (text) => {
+      refreshGatewayBundle(userDataDir);
+      const script = gatewayScript(userDataDir);
+      return routeServerThroughGateway(text, configPath, serverName, script, nodeProgramForScript(script), project);
+    },
+    true,
+  );
 }
 
 /** Rewrite every already-routed server in a config to this build's bundle. */
 export function retargetGatewayConfig(userDataDir: string, configPath: string): GatewayInstallResult {
-  let before: string;
-  try {
-    before = readFileSync(configPath, "utf8");
-  } catch (err) {
-    return { ok: false, error: `couldn't read the config file: ${String(err)}` };
-  }
-  refreshGatewayBundle(userDataDir);
-  const outcome = retargetGatewayRoutes(before, configPath, gatewayScript(userDataDir), nodeProgramForScript(gatewayScript(userDataDir)));
-  if (!outcome.ok) {
-    return outcome.reason === "already" ? { ok: true, changed: false } : { ok: false, error: REASON_TEXT[outcome.reason] };
-  }
-  try {
-    writeConfigWithBackup(configPath, before, outcome.json);
-  } catch (err) {
-    return { ok: false, error: `couldn't write the config file: ${String(err)}` };
-  }
-  return { ok: true, changed: true };
+  return rewriteConfig(
+    configPath,
+    (text) => {
+      refreshGatewayBundle(userDataDir);
+      const script = gatewayScript(userDataDir);
+      return retargetGatewayRoutes(text, configPath, script, nodeProgramForScript(script));
+    },
+    false,
+  );
 }
 
-/** Undo it. */
-export function unrouteServer(configPath: string, serverName: string): GatewayInstallResult {
-  let before: string;
-  try {
-    before = readFileSync(configPath, "utf8");
-  } catch (err) {
-    return { ok: false, error: `couldn't read the config file: ${String(err)}` };
-  }
-  const outcome = restoreServer(before, configPath, serverName);
-  if (!outcome.ok) {
-    return outcome.reason === "already" ? { ok: true, changed: false } : { ok: false, error: REASON_TEXT[outcome.reason] };
-  }
-  try {
-    writeConfigWithBackup(configPath, before, outcome.json);
-  } catch (err) {
-    return { ok: false, error: `couldn't write the config file: ${String(err)}` };
-  }
-  return { ok: true, changed: true };
+/** Undo it: the entry reads as it did before routing. */
+export function unrouteServer(configPath: string, serverName: string, project?: string): GatewayInstallResult {
+  return rewriteConfig(configPath, (text) => restoreServer(text, configPath, serverName, project), false);
 }

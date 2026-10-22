@@ -56,6 +56,24 @@ describe("extractMcpServers", () => {
     expect(servers[0]!.transport).toBe("http");
     expect(extractMcpServers("{not json", "/repo/.mcp.json")).toEqual([]);
   });
+
+  it("reads the JSONC the hosts write: comments (Cursor, Zed), trailing commas (Windsurf) and a BOM", () => {
+    const cursor = `// cursor comment\n{ "mcpServers": { "a": { "command": "x" } } }`;
+    expect(extractMcpServers(cursor, "/Users/x/.cursor/mcp.json").map((s) => s.name)).toEqual(["a"]);
+    const zed = `// Zed settings\n//\n{\n  /* servers */\n  "context_servers": { "z": { "command": { "path": "zed-mcp" } } }\n}`;
+    expect(extractMcpServers(zed, "/Users/x/.config/zed/settings.json").map((s) => s.name)).toEqual(["z"]);
+    const windsurf = `{ "mcpServers": { "w": { "command": "y", }, }, }`;
+    expect(extractMcpServers(windsurf, "/Users/x/.codeium/windsurf/mcp_config.json").map((s) => s.name)).toEqual(["w"]);
+    const bom = `\uFEFF{ "servers": { "b": { "command": "z" } } }`;
+    expect(extractMcpServers(bom, "/Users/x/Library/Application Support/Code/User/mcp.json").map((s) => s.name)).toEqual(["b"]);
+  });
+
+  it("names the project a per-project block belongs to", () => {
+    const doc = JSON.stringify({ mcpServers: { top: { command: "a" } }, projects: { "/repo": { mcpServers: { db: { command: "b" } } } } });
+    const servers = extractMcpServers(doc, "/Users/x/.claude.json");
+    expect(servers.find((s) => s.name === "db")!.project).toBe("/repo");
+    expect(servers.find((s) => s.name === "top")!.project).toBeUndefined();
+  });
 });
 
 describe("riskProfileFor", () => {
@@ -121,6 +139,24 @@ describe("buildMcpInventory", () => {
     expect(inv.servers).toHaveLength(1);
     expect(inv.servers[0]!.recognized).toBe(true);
     expect(inv.servers[0]!.calls).toBe(1);
+  });
+
+  it("counts recognized SERVERS, not recognized names, so the totals add up", () => {
+    const config = extractMcpServers(JSON.stringify({ mcpServers: { github: { command: "npx" }, notes: { command: "node" } } }), "/Users/x/.claude.json");
+    // `githbu` is a typo and `doorman` was unregistered: neither is a row.
+    const inv = buildMcpInventory(config, [], [], { recognized: ["github", "githbu", "doorman"] });
+    const unknown = inv.servers.filter((s) => !s.recognized).length;
+    expect(inv.recognized_count).toBe(1);
+    expect(inv.recognized_count + unknown).toBe(inv.servers.length);
+  });
+
+  it("matches a recognized name in either Unicode spelling (NFC vs NFD)", () => {
+    const decomposed = "cafe\u0301-tools";
+    const composed = "caf\u00e9-tools";
+    const config = extractMcpServers(JSON.stringify({ mcpServers: { [decomposed]: { command: "x" } } }), "/Users/x/.claude.json");
+    const inv = buildMcpInventory(config, [], [], { recognized: [composed], recognizedAt: { [composed]: "2026-09-01T00:00:00Z" } });
+    expect(inv.servers[0]!.recognized).toBe(true);
+    expect(inv.servers[0]!.recognized_at).toBe("2026-09-01T00:00:00Z");
   });
 });
 

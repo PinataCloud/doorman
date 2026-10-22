@@ -81,6 +81,9 @@ one after the other without stepping on each other:
 - While the app (or `doorman watch`) is running, read commands work on a copy
   of the store, and commands that change the policy, hooks, settings or the
   classifier model ask you to make the change in the app or quit it first.
+  Routing an MCP server through the gateway (`gateway route`/`unroute`) only
+  changes the agent's config, so it works either way; recognizing servers and
+  `mcp server install` work while `doorman watch` runs, but not the app.
 - When the app starts while a command is writing, it waits for that command,
   and a long scan stops at its next file and leaves the rest to the app.
   `doorman watch` hands over to a starting app by itself.

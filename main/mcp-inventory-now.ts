@@ -9,7 +9,7 @@
  * them over (`ingestConfigFindings`), so the inventory's open counts match.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { CaptureEngine } from "./capture.js";
 import { foldObservedTools, scanGatewayCalls, scanObservedTools } from "./gateway-install.js";
@@ -22,6 +22,8 @@ import type { Prefs } from "./state.js";
  * projects whose `.mcp.json` counts (the app takes them from captured turns). */
 export function discoverMcpServers(deps: {
   home: string;
+  /** For `$COPILOT_HOME`; the process's own when absent. */
+  env?: NodeJS.ProcessEnv;
   knownCwds: Iterable<string>;
   onFindings(rows: Parameters<CaptureEngine["ingestConfigFindings"]>[0]): void;
   log(message: string): void;
@@ -29,16 +31,28 @@ export function discoverMcpServers(deps: {
   const cwds = [...deps.knownCwds];
   const watcher = new McpConfigWatcher({
     claudeConfigPath: join(deps.home, ".claude.json"),
-    hostConfigPaths: mcpConfigPaths(deps.home, {
-      exists: (path) => existsSync(path),
-      listDir: (path) => {
-        try {
-          return readdirSync(path);
-        } catch {
-          return [];
-        }
+    hostConfigPaths: mcpConfigPaths(
+      deps.home,
+      {
+        exists: (path) => existsSync(path),
+        listDir: (path) => {
+          try {
+            return readdirSync(path);
+          } catch {
+            return [];
+          }
+        },
+        isDir: (path) => {
+          try {
+            return statSync(path).isDirectory();
+          } catch {
+            return false;
+          }
+        },
       },
-    }),
+      process.platform,
+      deps.env ?? process.env,
+    ),
     knownCwds: () => cwds,
     onFindings: (rows) => deps.onFindings(rows),
     log: deps.log,
@@ -61,10 +75,11 @@ export function engineCwds(engine: CaptureEngine): Set<string> {
 /** The Integrations screen's MCP inventory, as the app builds it. */
 export function mcpInventoryNow(
   engine: CaptureEngine,
-  opts: { dataDir: string; home: string; prefs: Prefs; policy: GuardPolicy; log(message: string): void },
+  opts: { dataDir: string; home: string; env?: NodeJS.ProcessEnv; prefs: Prefs; policy: GuardPolicy; log(message: string): void },
 ): { inventory: McpInventoryState; servers: McpConfigServer[] } {
   const servers = discoverMcpServers({
     home: opts.home,
+    ...(opts.env ? { env: opts.env } : {}),
     knownCwds: engineCwds(engine),
     onFindings: (rows) => engine.ingestConfigFindings(rows),
     log: opts.log,

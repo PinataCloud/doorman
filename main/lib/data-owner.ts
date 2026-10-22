@@ -18,6 +18,13 @@
  *    one), so the two can never both decide to write: whichever looks second
  *    sees the other. The app waits for it to clear at start; a long CLI scan
  *    stops at the next file once it sees the app's marker.
+ *  · `watch.json` — `doorman watch` owns the store for as long as it runs (it
+ *    ingests the guard's spool and answers held calls). Taken while it holds
+ *    the CLI writer lock, which it then lets go: it takes that one again only
+ *    around its own prefs writes, so commands that change settings or agent
+ *    configs still work while it runs (cli/context.ts WriteScope). The app
+ *    waits for it at start like the writer lock; the watch sees the app's
+ *    marker within a second and stops.
  *  · `model-download.json` — a model download is running (app or CLI), so the
  *    other one waits for it rather than fetching the same files.
  */
@@ -37,7 +44,7 @@ export interface LockRecord {
   model?: string;
 }
 
-export type LockName = "app" | "cli-writer" | "model-download";
+export type LockName = "app" | "cli-writer" | "watch" | "model-download";
 
 /** How long a just-started app counts as the owner without its heartbeat. */
 export const APP_START_GRACE_MS = 2 * 60_000;
@@ -142,8 +149,9 @@ export function appOwner(userDataDir: string, now: number = Date.now(), selfPid:
 
 /**
  * The app's side of the hand-over, at start: mark the data as the app's, then
- * wait for a CLI command that is writing to finish (a long scan stops at its
- * next file once it sees the marker). Resolves with how it ended; after
+ * wait for a CLI command that is writing, or a `doorman watch` that owns the
+ * store, to finish (a long scan stops at its next file, a watch at its next
+ * tick, once it sees the marker). Resolves with how it ended; after
  * `timeoutMs` the app goes ahead — a wedged CLI must not keep it from starting.
  */
 export async function claimForApp(
@@ -158,8 +166,8 @@ export async function claimForApp(
   const timeout = options.timeoutMs ?? 60_000;
   let waited = false;
   for (;;) {
-    const writer = liveLock(userDataDir, "cli-writer");
-    if (!writer || writer.pid === pid) return waited ? "waited" : "free";
+    const writer = [liveLock(userDataDir, "cli-writer"), liveLock(userDataDir, "watch")].find((lock) => lock && lock.pid !== pid);
+    if (!writer) return waited ? "waited" : "free";
     if (!waited) options.log?.(`waiting for \`doorman ${writer.command ?? "…"}\` (pid ${writer.pid}) to finish writing`);
     waited = true;
     if (Date.now() - started >= timeout) {

@@ -580,9 +580,11 @@ export async function startWatch(
     await retireWatch(other.pid!, label);
     replaced = `Took over from ${who}${abandoned ? `, whose terminal saw no key for ${Math.round(idleMs! / 60_000)} minutes` : ""}.`;
   }
-  // Watch writes the store (the guard's spool) and the policy for as long as
-  // it runs: it needs the data to itself, not a copy.
-  ctx.requireWritable("Answer held calls");
+  // Watch writes the store (the guard's spool) for as long as it runs: it
+  // needs the store to itself, not a copy. Prefs and the guard's policy it
+  // writes only on an answer, under the writer lock (decide), so commands
+  // that change settings or agent configs still work while it runs.
+  ctx.requireWatch("Answer held calls");
   const ui = ctx.errUi;
   const s = ui.style;
   const auto = options.auto;
@@ -648,15 +650,17 @@ export async function startWatch(
     answered.add(request.id);
     sent.delete(request.id);
     // resolveApproval: the policy change lands (and reaches the guard) before
-    // the verdict, so the next call in the session isn't held again.
-    const prefs = ctx.prefs();
-    const change = approvalPolicyChange(prefs.policy, request, verdict, choice, new Date(ctx.io.now()));
-    let syncError: string | undefined;
-    if (change.policy !== prefs.policy) {
+    // the verdict, so the next call in the session isn't held again. Read
+    // and written as the only writer: a settings command may have changed
+    // the prefs since this watch started.
+    const { change, syncError } = ctx.underWriterLock(() => {
+      const prefs = ctx.prefs();
+      const change = approvalPolicyChange(prefs.policy, request, verdict, choice, new Date(ctx.io.now()));
+      if (change.policy === prefs.policy) return { change, syncError: undefined };
       ctx.setPrefs({ policy: change.policy });
       const outcome = syncGuard(ctx.dataDir, ctx.policy());
-      if (!outcome.ok) syncError = outcome.error;
-    }
+      return { change, syncError: outcome.ok ? undefined : outcome.error };
+    });
     const ok = approvals.resolve(request.id, verdict, {
       silenced: change.silenced.length > 0 ? change.silenced : undefined,
       via,
@@ -891,6 +895,8 @@ export async function startWatch(
     spool.drain();
     spool.stop();
     handle.close();
+    // The store is let go: an app waiting to start goes ahead now.
+    ctx.releaseWrite();
     if (!auto) {
       stdin.off("data", onData);
       stdin.off("end", onEnd);

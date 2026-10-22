@@ -127,6 +127,15 @@ export interface AgentReasonInput {
    * is asking the person in Doorman. Absent → assumed listening, for callers
    * that describe a past record rather than a call being decided now. */
   appListening?: boolean;
+  /** A past record's `held` (the spool row): `false` on an `ask` means the
+   * guard never held it, so the host's own prompt asked. Absent → unknown. */
+  held?: boolean;
+  /** A past record's `decided_via` (hold.ts HoldTelemetry): `terminal` names
+   * `doorman watch` as where the person answered. */
+  decidedVia?: string;
+  /** A not-held `ask` because holding is switched off (`confirm.interactive`),
+   * which is not the same as Doorman being absent. */
+  holdingOff?: boolean;
   /** Where to look for a Docker Sandbox (sandbox.ts): inside one the app
    * can't run, so the text names the host-side `sbx exec` command instead of
    * "Doorman". Default: this process's environment. */
@@ -137,7 +146,9 @@ export interface AgentReasonInput {
  * The full agent-facing text: the human-facing reason (which names the rules,
  * never the values), the remedy, and how the human weighs in. Hosts with a
  * native ask print `ask` with this text as the prompt's explanation; hosts
- * without one print it as the deny reason.
+ * without one print it as the deny reason. The MCP server's explain tool
+ * describes PAST records with it too, which is what `allowed`, `held` and
+ * `decidedVia` are for.
  */
 export function agentFacingReason(input: AgentReasonInput): string {
   const base = (input.reason ?? "Doorman flagged this tool call.").trim().replace(/\s+$/, "");
@@ -146,9 +157,15 @@ export function agentFacingReason(input: AgentReasonInput): string {
   // Where the person answers: the app, or — in a sandbox, where it can't run —
   // `doorman watch` started from their computer.
   const watch = sandbox ? sandboxWatchCommand(sandbox) : undefined;
+  // Where a recorded answer was given.
+  const answeredIn = input.decidedVia === "terminal" ? "`doorman watch`" : "Doorman";
+  const seconds = input.policy?.confirm.hold_seconds;
   let outcome: string;
-  if (input.resolution === "denied") {
-    outcome = `The user denied this call in Doorman. ${NO_WORKAROUND} Ask them how to proceed.`;
+  if (input.resolution === "allowed") {
+    // Only a past record carries this: the guard prints nothing on an allow.
+    return `${base} The user allowed this call in ${answeredIn}, so it ran. Nothing more is needed for it.`;
+  } else if (input.resolution === "denied") {
+    outcome = `The user denied this call in ${answeredIn}. ${NO_WORKAROUND} Ask them how to proceed.`;
   } else if (input.resolution === "unavailable") {
     // Not a human decision — say so, and name the one thing that unblocks it.
     outcome = watch
@@ -156,15 +173,22 @@ export function agentFacingReason(input: AgentReasonInput): string {
         `${NO_WORKAROUND} Ask the user to run \`${watch}\` on their computer and approve it there.`
       : "Doorman could not reach the user for approval (the app is not running), so the call was not executed. " +
         `${NO_WORKAROUND} Ask the user to open Doorman and approve it.`;
-  } else if (input.resolution === "timeout") {
-    const seconds = input.policy?.confirm.hold_seconds;
+  } else if (input.resolution === "timeout" && input.decision === "deny") {
     const where = watch ? `from their computer with \`${watch}\`` : "in Doorman";
     outcome = `Nobody approved it${seconds ? ` within ${seconds}s` : ""}, so the call was not executed. ${NO_WORKAROUND} Ask the user to approve it ${where}.`;
+  } else if (input.resolution === "timeout") {
+    // `confirm.on_timeout: "ask"`: the unanswered hold went back to the host.
+    outcome = `Nobody answered in Doorman${seconds ? ` within ${seconds}s` : ""}, so the call needs the user's OK in your own permission prompt. ` +
+      "Wait for their answer rather than working around it.";
   } else if (input.decision === "deny") {
     outcome = sandbox
       ? `${NO_WORKAROUND} The user can review it from their computer with \`${sandboxFindingsCommand(sandbox)}\` and add an exception if it is intended.`
       : `${NO_WORKAROUND} The user can review and allow this call in Doorman (Security Radar) if it is intended.`;
-  } else if (input.resolution === "unattended" || input.appListening === false) {
+  } else if (input.held === false && input.holdingOff === true && input.appListening !== false) {
+    // Not held because holding is off: Doorman was there, it just doesn't hold.
+    outcome = "Doorman does not hold calls on this computer (holding is switched off), so this call needs the user's OK in your own permission prompt. " +
+      "Wait for their answer rather than working around it.";
+  } else if (input.resolution === "unattended" || input.appListening === false || input.held === false) {
     // An `ask` nobody in Doorman will answer (the app and `doorman watch` are
     // both absent, or the app vanished mid-hold): the host's own permission
     // prompt is what decides now, so don't send the agent waiting on Doorman.

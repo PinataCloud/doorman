@@ -19,7 +19,6 @@
 import { BrowserWindow, app, dialog, ipcMain, nativeImage, nativeTheme, net, protocol, safeStorage, shell } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, watch, writeFileSync, type FSWatcher } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, normalize, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { CaptureEngine } from "./capture.js";
@@ -145,6 +144,7 @@ import { ImportsWatcher } from "./lib/sandbox-import.js";
 import { surfaceShown } from "./lib/surface-scope.js";
 import { maskTurnText } from "./lib/masking.js";
 import { homeIsRedirected } from "./lib/sandbox.js";
+import { appHome } from "./lib/home.js";
 import { desktopPaths, integrateAppImage, refreshDesktopCaches } from "./lib/linux-desktop-entry.js";
 import {
   approvalContext,
@@ -238,6 +238,11 @@ if (process.env.DOORMAN_APPDATA_DIR) {
 
 app.setPath("userData", join(app.getPath("appData"), "Doorman"));
 
+/** The one home every agent config, transcript and MCP document resolves
+ * from — `$HOME` first, as the guard and the CLI go by (lib/home.ts), never
+ * Electron's own answer, which on macOS ignores a redirected `HOME`. */
+const userHome = appHome(() => app.getPath("home"));
+
 protocol.registerSchemesAsPrivileged([
   { scheme: "doorman", privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
@@ -283,7 +288,7 @@ let mcpServerState: McpServerState = { enabled: false, hosts: [] };
 function readMcpServerState(): McpServerState {
   const enabled = store.prefs().mcp_answers === true;
   try {
-    return { enabled, hosts: mcpServerStatus(app.getPath("userData"), app.getPath("home")) };
+    return { enabled, hosts: mcpServerStatus(app.getPath("userData"), userHome) };
   } catch (err) {
     return { enabled, hosts: [], error: err instanceof Error ? err.message : String(err) };
   }
@@ -372,7 +377,7 @@ function publishEditorStatusNow(): void {
  * with every MCP-capable host present, or take our entry back out
  * (mcp-install.ts switchMcpAnswers, which also recognizes our own server). */
 function applyMcpAnswers(enabled: boolean): void {
-  const outcome = switchMcpAnswers(enabled, app.getPath("userData"), app.getPath("home"), {
+  const outcome = switchMcpAnswers(enabled, app.getPath("userData"), userHome, {
     get: () => store.prefs(),
     set: (patch) => store.setPrefs(patch),
   });
@@ -835,7 +840,7 @@ function resolveAiContext(ref: unknown): AiContext | undefined {
   if (r.kind === "exposure" && typeof r.finding_id === "string") {
     const row = engine.shownFinding(r.finding_id);
     if (!row) return undefined;
-    const places = createPlaceResolver(all, { home: app.getPath("home") });
+    const places = createPlaceResolver(all, { home: userHome });
     const place = places.placeOf(row);
     const key = exposureKey(row.detector, place);
     const bucket = row.status === "open" ? "open" : "triaged";
@@ -904,7 +909,7 @@ function postureFacts(): PostureFacts {
   const modes = policy.modes as Record<string, string | undefined>;
   const enforceable = ALL_DETECTORS as readonly string[];
   const custom = (policy.custom_rules ?? []).filter((c) => c.enabled !== false && !c.after);
-  const places = createPlaceResolver(all, { home: app.getPath("home") });
+  const places = createPlaceResolver(all, { home: userHome });
   const open = all.filter((f) => f.status === "open");
   const byExposure = new Map<string, { rows: FindingRow[]; place: string }>();
   for (const f of open) {
@@ -1023,7 +1028,7 @@ function securityWeek(days = 7): SecurityWeek {
 
 /** The shadow-AI catalog against this machine (shadow-ai-now.ts). */
 function runShadowAiScan(): ShadowAiState {
-  return shadowAiNow(homedir(), engine);
+  return shadowAiNow(userHome, engine);
 }
 
 /**
@@ -1168,7 +1173,7 @@ function onHookDocumentChanged(): void {
 /** Watch the DIRECTORIES the documents live in (fs.watch on a file breaks
  * across the rename-into-place most editors and tools use). */
 function watchHookDocuments(): void {
-  const p = doctorPaths(homedir(), process.env.CODEX_HOME);
+  const p = doctorPaths(userHome, process.env.CODEX_HOME);
   const targets = [
     { dir: dirname(p.claudeSettings), files: new Set(["settings.json"]) },
     { dir: dirname(p.codexHooks), files: new Set(["hooks.json"]) },
@@ -1269,7 +1274,7 @@ function integrateLinuxAppImage(): void {
   const appImage = process.env.APPIMAGE;
   if (process.platform !== "linux" || !app.isPackaged || !appImage) return;
   try {
-    const paths = desktopPaths(process.env, homedir());
+    const paths = desktopPaths(process.env, userHome);
     // Decoded only if an icon has to be written: a current install costs one
     // file read and a stat per icon size.
     let master: Electron.NativeImage | undefined;
@@ -1498,7 +1503,7 @@ function openApp(name: string): Promise<boolean> {
 function launch(file: string, args: string[], options: { cwd?: string; verbatim?: boolean } = {}): Promise<boolean> {
   return new Promise((resolve) => {
     const child = spawn(file, args, {
-      cwd: options.cwd && existsSync(options.cwd) ? options.cwd : homedir(),
+      cwd: options.cwd && existsSync(options.cwd) ? options.cwd : userHome,
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -1598,7 +1603,7 @@ function recompute(): void {
     a.last_seen_at < b.last_seen_at ? 1 : a.last_seen_at > b.last_seen_at ? -1 : 0,
   );
   const alertCounts = alertsBySession(findings);
-  const exposureCounts = exposuresBySession(findings, app.getPath("home"));
+  const exposureCounts = exposuresBySession(findings, userHome);
   const turns = [...engine.turns.values()];
   const now = new Date();
   const labels = customLabels();
@@ -1687,8 +1692,8 @@ function recompute(): void {
       // Stamped with the exposure (rule × place) each row belongs to, resolved
       // over EVERY stored row so the renderer groups on the same key main
       // counted with — lib/exposures.ts, via lib/app-views.ts radarRows.
-      findings: radarRows(findings, app.getPath("home"), SNAPSHOT_FINDINGS),
-      exposures_by_task: exposuresByTask(findings, taskOf, app.getPath("home")),
+      findings: radarRows(findings, userHome, SNAPSHOT_FINDINGS),
+      exposures_by_task: exposuresByTask(findings, taskOf, userHome),
       guard_installed: isGuardInstalled(),
       // One row per REGISTERED host (guard/hosts/index.ts): the Settings card
       // and the coverage card name hosts from this, never from a hard-coded
@@ -2773,10 +2778,11 @@ if (!app.requestSingleInstanceLock()) {
         app.isPackaged ? {} : { flavour: "dev" },
       ),
       appVersion: app.getVersion(),
-      claudeProjectsDir: join(homedir(), ".claude", "projects"),
+      claudeProjectsDir: join(userHome, ".claude", "projects"),
+      home: userHome,
       // $CODEX_HOME, not a hard-coded ~/.codex: a custom-home install writes
       // its rollouts there (lib/codex-rollout.ts codexHomeDir).
-      codexSessionsDir: join(codexHomeDir(), "sessions"),
+      codexSessionsDir: join(codexHomeDir(process.env, userHome), "sessions"),
       policy: () => livePolicy(),
       retentionDays: () => store.prefs().retention_days,
       classifyInjection: async (text) => (await injectionClassifierInstance())?.classify(text) ?? null,
@@ -2875,11 +2881,11 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     mcpWatch = new McpConfigWatcher({
-      claudeConfigPath: join(homedir(), ".claude.json"),
+      claudeConfigPath: join(userHome, ".claude.json"),
       // Every other host's user-level config, VS Code's per-profile ones
       // included (mcpConfigPaths enumerates those against the real
       // filesystem). Absent files cost one stat per sweep and are never read.
-      hostConfigPaths: mcpConfigPaths(homedir(), {
+      hostConfigPaths: mcpConfigPaths(userHome, {
         exists: (path) => existsSync(path),
         listDir: (path) => {
           try {

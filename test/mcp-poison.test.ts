@@ -151,6 +151,12 @@ describe("scanning the other hosts' configs", () => {
     expect(findings.length).toBeGreaterThan(0);
   });
 
+  it("still finds it when the file has comments, trailing commas or a BOM, as the hosts allow", () => {
+    const commented = `\uFEFF// my servers\n{\n  "servers": ${JSON.stringify(poisoned)},\n}\n`;
+    const findings = scanMcpConfigText(commented, "/home/Library/Application Support/Code/User/mcp.json");
+    expect(findings.map((f) => f.key_name).join("\n")).toContain("fetch");
+  });
+
   it("still refuses to walk anything that is not a server map", () => {
     // ~/.claude.json also stores prompt history: a person SAYING the phrase is
     // not a poisoned server, and widening the container list must not change that.
