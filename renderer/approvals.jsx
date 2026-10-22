@@ -34,6 +34,31 @@
 function ApprovalPanel({ state }) {
   const queue = state.approvals || [];
   const [busy, setBusy] = useState(null);
+  const cardRef = useRef(null);
+  const bodyRef = useRef(null);
+  const requestId = queue.length > 0 ? queue[0].id : null;
+  // The window is sized to this card (main/approval-window.ts fitApprovalPanel):
+  // report the card's natural height whenever it changes — a context note, a
+  // longer preview, actions wrapping — so the bottom is never cut off. The body
+  // is measured, not the card, because the card itself is capped to the screen
+  // and scrolls past that.
+  useEffect(() => {
+    const card = cardRef.current;
+    const body = bodyRef.current;
+    if (!card || !body || typeof ResizeObserver === "undefined") return undefined;
+    const report = () => {
+      const s = getComputedStyle(card);
+      const chrome = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth", "marginTop", "marginBottom"].reduce(
+        (sum, key) => sum + (parseFloat(s[key]) || 0),
+        0,
+      );
+      window.doorman.fitApprovalPanel(Math.ceil(body.getBoundingClientRect().height + chrome));
+    };
+    const observer = new ResizeObserver(report);
+    observer.observe(body);
+    report();
+    return () => observer.disconnect();
+  }, [requestId]);
   if (queue.length === 0) return null;
   const request = queue[0];
   const answer = (verdict, options) => {
@@ -41,23 +66,23 @@ function ApprovalPanel({ state }) {
     window.doorman.resolveApproval(request.id, verdict, { ...(options || {}), via: "panel" }).then(() => setBusy(null));
   };
   return (
-    <div className="panel">
-      <div className="ap-head">
-        <SeverityBadge severity={request.max_severity || "high"} outcome="held" />
-        <span className="ap-title">{approvalTitle(request, state)}</span>
-        <span className="spacer" />
-        {queue.length > 1 ? <span className="chip">+{queue.length - 1}</span> : null}
-        <ApprovalCountdown request={request} state={state} />
-      </div>
-      <div className="panel-where mono">
-        {request.call_name || (request.tool_name || "tool") + (request.target ? " → " + request.target : "")}
-      </div>
-      {request.context_note ? <div className="ap-context">{request.context_note}</div> : null}
-      {request.description ? <div className="ap-desc" title={request.description}>{request.description}</div> : null}
-      <ApprovalPreview key={request.id} request={request} />
-      <ApprovalActions key={"actions-" + request.id} request={request} state={state} busy={busy} answer={answer} />
-      <div className="ap-foot">
-        {approvalFootnote(request, state)}
+    <div className="panel" ref={cardRef}>
+      <div ref={bodyRef}>
+        <div className="ap-head">
+          <SeverityBadge severity={request.max_severity || "high"} outcome="held" />
+          <span className="ap-title">{approvalTitle(request, state)}</span>
+          <span className="spacer" />
+          {queue.length > 1 ? <span className="chip">+{queue.length - 1}</span> : null}
+          <ApprovalCountdown request={request} state={state} />
+        </div>
+        <div className="panel-where mono">
+          {request.call_name || (request.tool_name || "tool") + (request.target ? " → " + request.target : "")}
+        </div>
+        {request.context_note ? <div className="ap-context">{request.context_note}</div> : null}
+        {request.description ? <div className="ap-desc" title={request.description}>{request.description}</div> : null}
+        <ApprovalPreview key={request.id} request={request} />
+        <ApprovalActions key={"actions-" + request.id} request={request} state={state} busy={busy} answer={answer} />
+        <div className="ap-foot">{approvalFootnote(request, state)}</div>
       </div>
     </div>
   );

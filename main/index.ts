@@ -28,6 +28,7 @@ import type { SessionSummary } from "./lib/turns.js";
 import { planFocus, planResume, resumeCommand } from "./lib/terminal-handoff.js";
 import {
   destroyApprovalPanel,
+  fitApprovalPanel,
   hideApprovalPanel,
   showApprovalPanel,
   updateApprovalPanel,
@@ -2235,6 +2236,8 @@ function registerIpc(): void {
     }
     return { ok: false };
   });
+  // The floating panel's card says how tall it is; its window follows.
+  ipcMain.on("panel:fit", (e, height: unknown) => fitApprovalPanel(e.sender.id, height));
   ipcMain.handle("approvals:resolve", (_e, id: unknown, verdict: unknown, rawOptions: unknown) => {
     if (typeof id !== "string" || (verdict !== "allow" && verdict !== "deny")) return { ok: false };
     const options =

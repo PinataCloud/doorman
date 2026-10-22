@@ -112,6 +112,8 @@ const api = {
       verdict,
       typeof options === "boolean" ? { silence: options } : options ?? {},
     ),
+  /** The floating panel's card height in CSS pixels; its window resizes to fit. */
+  fitApprovalPanel: (height: number) => ipcRenderer.send("panel:fit", height),
   installGuard: () => ipcRenderer.invoke("guard:install"),
   uninstallGuard: () => ipcRenderer.invoke("guard:uninstall"),
   setPrefs: (patch: unknown) => ipcRenderer.invoke("prefs:set", patch),

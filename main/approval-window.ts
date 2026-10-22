@@ -24,10 +24,16 @@
 
 import { BrowserWindow, screen } from "electron";
 import { join } from "node:path";
+import { fitPanelBounds } from "./lib/panel-fit.js";
 
 const PANEL_WIDTH = 460;
+/** The first paint's height, until the card reports its own (fitApprovalPanel). */
 const PANEL_HEIGHT = 336;
+const PANEL_MIN_HEIGHT = 160;
 const MARGIN = 16;
+
+/** The height the card last asked for, so a re-shown panel opens at it. */
+let contentHeight = PANEL_HEIGHT;
 
 let panel: BrowserWindow | null = null;
 
@@ -43,12 +49,15 @@ function place(win: BrowserWindow): void {
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const { x, y, width } = display.workArea;
-  win.setBounds({
-    x: Math.round(x + width - PANEL_WIDTH - MARGIN),
-    y: Math.round(y + MARGIN),
-    width: PANEL_WIDTH,
-    height: PANEL_HEIGHT,
-  });
+  win.setBounds(
+    fitPanelBounds(
+      { x: Math.round(x + width - PANEL_WIDTH - MARGIN), y: Math.round(y + MARGIN), width: PANEL_WIDTH, height: PANEL_HEIGHT },
+      contentHeight,
+      display.workArea,
+      MARGIN,
+      PANEL_MIN_HEIGHT,
+    ),
+  );
 }
 
 export function showApprovalPanel(deps: PanelDeps): void {
@@ -96,6 +105,20 @@ export function showApprovalPanel(deps: PanelDeps): void {
 
 export function hideApprovalPanel(): void {
   if (panel && !panel.isDestroyed() && panel.isVisible()) panel.hide();
+}
+
+/**
+ * The card's natural height, reported by the panel's renderer whenever it
+ * changes: the window follows it (lib/panel-fit.ts), in place. Only the panel's
+ * own page may resize it.
+ */
+export function fitApprovalPanel(senderId: number, height: unknown): void {
+  if (!panel || panel.isDestroyed() || panel.webContents.id !== senderId) return;
+  if (typeof height !== "number" || !Number.isFinite(height) || height <= 0) return;
+  contentHeight = height;
+  const bounds = panel.getBounds();
+  const next = fitPanelBounds(bounds, height, screen.getDisplayMatching(bounds).workArea, MARGIN, PANEL_MIN_HEIGHT);
+  if (next.height !== bounds.height || next.y !== bounds.y) panel.setBounds(next);
 }
 
 export function destroyApprovalPanel(): void {
