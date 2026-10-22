@@ -408,7 +408,7 @@ export interface MachineFacts {
 
 /**
  * THIS MAC — the subject a question gets when it wasn't asked beside any one
- * thing: the sidebar door, ⌘K, or an entry point with no reference.
+ * thing: an entry point with no reference.
  *
  * Why it exists: without it a general question carried NO local context. This
  * is the posture, the spend window, the newest sessions and the setup health, so a

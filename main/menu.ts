@@ -21,8 +21,6 @@ export interface MenuCallbacks {
   onOpenDataDir(): void;
   /** Go to a screen by its renderer id ("radar", "ledger", …). */
   onGo(screen: string): void;
-  /** Open Doorman AI with this Mac as the subject. */
-  onAsk(): void;
   /** The Guardrails switch — the same one Settings and the tray carry. */
   onToggleGuard(on: boolean): void;
 }
@@ -66,18 +64,13 @@ export function installAppMenu(callbacks: MenuCallbacks, view: MenuView = { guar
         { role: "about", label: "About Doorman" },
         { label: "Check for Updates…", click: () => callbacks.onCheckUpdates() },
         { type: "separator" },
-        // The guard's switch and the assistant's door, reachable without the
-        // window: what the tray menu offers, the app menu offers too.
+        // The guard's switch, reachable without the window: what the tray
+        // menu offers, the app menu offers too.
         {
           label: view.label ?? "Real time protection",
           type: "checkbox",
           checked: view.guardOn,
           click: () => callbacks.onToggleGuard(!view.guardOn),
-        },
-        {
-          label: "Ask Doorman AI…",
-          accelerator: "CmdOrCtrl+K",
-          click: () => callbacks.onAsk(),
         },
         {
           label: "Trace a Secret…",

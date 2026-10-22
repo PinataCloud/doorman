@@ -2694,10 +2694,6 @@ if (!app.requestSingleInstanceLock()) {
         showWindow();
         window?.webContents.send("nav:go", screen);
       },
-      onAsk: () => {
-        showWindow();
-        window?.webContents.send("nav:go", "ai");
-      },
       onToggleGuard: (on: boolean) => void setGuardWanted(on),
     };
     // The store is built after the menu; the first broadcast below corrects

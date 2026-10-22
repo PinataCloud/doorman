@@ -10,6 +10,9 @@ under `## Unreleased`; a release renames its part of it.
 
 ## Unreleased
 
+### Changed
+- The app menu no longer has Ask Doorman AI (⌘K). Doorman AI still opens from a finding or a held call.
+
 ## CLI 0.8.0 — 2026-10-21
 
 ### New
