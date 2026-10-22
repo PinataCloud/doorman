@@ -25,7 +25,7 @@ doorman status
 | `doorman guard install\|uninstall\|status` | The PreToolUse hook that watches, holds or blocks each agent's tool calls |
 | `doorman watch` | Answer held tool calls in this terminal while the desktop app is closed; on macOS and Linux its bottom line counts the agents running now (held · working · waiting for you · quiet) |
 | `doorman sbx ls\|watch\|pull` | From your computer, Docker Sandboxes running Doorman: list them, answer all their held calls in one terminal, bring their findings here |
-| `doorman policy`, `rules`, `packs`, `exceptions`, `custom-rules` | The policy the guard enforces, rule by rule |
+| `doorman policy`, `rules`, `packs`, `exceptions`, `custom-rules` | The policy the guard enforces, rule by rule ([how rules, packs and your own rules work](https://github.com/PinataCloud/doorman/blob/main/docs/rules.md)) |
 | `doorman mcp`, `doorman gateway` | MCP servers on this machine, Doorman's own MCP server, and the MCP gateway |
 | `doorman editor` | The VS Code companion |
 | `doorman doctor` | Check the guard, MCP and editor wiring, and repair it |

@@ -1,10 +1,12 @@
 /**
  * Shipped rule packs — new deterministic detections expressed in the custom
  * rule format (custom-rules.ts) instead of TypeScript, so they read as worked
- * examples of what a person can write, ship without a release, and can be
- * switched off per machine. A pack is a labelled set of rules; enabling it
- * copies the rules into the live policy under `pack:<pack>/<rule>` ids, where
- * the person can edit them like their own.
+ * examples of what a person can write and can be switched off per machine.
+ * They ship with the app like any code. A pack is a labelled set of rules;
+ * enabling it adds them to the live policy under `<pack>--<rule>` ids
+ * (packRules), and a rule of the person's own with the same id replaces the
+ * shipped one. docs/rules.md explains packs to people; CONTRIBUTING.md says
+ * how to add one.
  *
  * Only shapes that fit a `when` clause belong here. Detections that need the
  * redactor, a checksum, or the flow engine's taints stay in security-detect.ts

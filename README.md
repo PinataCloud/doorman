@@ -195,7 +195,8 @@ sbx run --name my-project claude . --kit "git+https://github.com/PinataCloud/doo
   level (Relaxed, Watchful, Balanced — the default — or Locked down), each
   rule's mode with its recent activity, rule packs, your own rules (with a
   dry-run editor), exceptions and your wallet addresses. The families shown
-  are narrowed by `main/guard/rule-scope.ts`.
+  are narrowed by `main/guard/rule-scope.ts`. [docs/rules.md](docs/rules.md)
+  explains rules, modes, packs and writing your own.
 - **The guard**: a PreToolUse hook that can watch, ask (hold the call until you
   answer in the app, a floating panel, a notification or VS Code), or block.
   Adapters live in `main/guard/hosts/`: Claude Code, Codex, Cursor, Gemini CLI,
@@ -350,6 +351,9 @@ files.
   payloads per agent.
 - `docs/shipped-surface.md`: what the packaged app contains, and what a
   downloader can read from it.
+- `docs/rules.md`: rules, modes, severity, levels, packs and your own rules,
+  for the people using Doorman. `CONTRIBUTING.md`: setting up, and adding a
+  rule pack or a built-in rule.
 
 Data lives under `~/Library/Application Support/Doorman/` (`%APPDATA%\Doorman`
 on Windows, `~/.config/Doorman` on Linux): `store/` (the turn store,

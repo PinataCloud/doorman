@@ -10,6 +10,9 @@ under `## Unreleased`; a release renames its part of it.
 
 ## Unreleased
 
+### New
+- A guide to rules: modes, severity, security levels, rule packs, exceptions and writing your own rules, with examples ([docs/rules.md](docs/rules.md)). Guardrails → Advanced links to it from Rule packs and Your rules, and so does `doorman custom-rules --help`. [CONTRIBUTING.md](CONTRIBUTING.md) says how to add a rule pack or a built-in rule.
+
 ## CLI 0.7.1 — 2026-10-21
 
 ### Fixed

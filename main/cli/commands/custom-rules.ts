@@ -38,9 +38,13 @@ function saveRules(ctx: CliContext, action: string, next: (own: CustomRule[]) =>
   });
 }
 
+/** The guide to rules, packs and writing your own, with every field and examples. */
+const RULES_GUIDE_URL = "https://github.com/PinataCloud/doorman/blob/main/docs/rules.md#your-own-rules";
+
 const customList: CliCommand = {
   name: "custom-rules",
   summary: "Your own rules (and the ones enabled packs add)",
+  notes: [`How to write one, with examples: ${RULES_GUIDE_URL}`],
   examples: [
     ["doorman custom-rules dry-run rule.json", "what a rule would have caught, before saving it"],
     ["doorman custom-rules add rule.json", "save it"],
@@ -71,6 +75,7 @@ const customAdd: CliCommand = {
     '   "when": {"tool" | "command" | "server" | "target" | "arg"},',
     '   "after"?, "scope"?}',
     "Try it first with `doorman custom-rules dry-run <file.json>`.",
+    `Every field, with examples: ${RULES_GUIDE_URL}`,
   ],
   flags: [["--replace", "replace a rule with the same id instead of refusing"]],
   examples: [

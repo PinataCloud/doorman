@@ -1665,6 +1665,18 @@ function GuardOffNotice({ wanted }) {
   );
 }
 
+/** The guide to rules, packs and writing your own (docs/rules.md). */
+const RULES_GUIDE_URL = "https://github.com/PinataCloud/doorman/blob/main/docs/rules.md";
+
+/** "How … work" after a card's note: the guide, in the browser. */
+function RulesGuideLink({ anchor, children }) {
+  return (
+    <button className="linkbtn" onClick={() => window.doorman.openExternal(RULES_GUIDE_URL + anchor)}>
+      {children}
+    </button>
+  );
+}
+
 /** Shipped rule packs: switchable sets of custom-format rules. */
 function RulePacksCard({ state }) {
   const packs = state.rule_packs || [];
@@ -1674,7 +1686,7 @@ function RulePacksCard({ state }) {
     <Card title="Rule packs" hint={enabled.size + " of " + packs.length + " on"}>
       <div className="cardnote lead">
         New detections in the same format as your own rules — examples you can copy, switchable per machine. They
-        appear in the feed under their own labels.
+        appear in the feed under their own labels. <RulesGuideLink anchor="#rule-packs">How packs work →</RulesGuideLink>
       </div>
       {packs.map((p) => (
         <div className="setting" key={p.id}>
@@ -2460,7 +2472,8 @@ function CustomRulesCard({ state, guardOff }) {
             title="No code runs; unsafe patterns are refused. Custom ids can never shadow a shipped rule."
           >
             Regexes over a call — tool, arguments, shell command, MCP server — optionally only after something earlier in
-            the session. Applies from the next call; dry run it against your last 14 days first.
+            the session. Applies from the next call; dry run it against your last 14 days first.{" "}
+            <RulesGuideLink anchor="#your-own-rules">How to write a rule, with examples →</RulesGuideLink>
           </div>
 
           {rules.length > 0 ? (
