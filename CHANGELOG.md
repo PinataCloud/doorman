@@ -10,10 +10,11 @@ under `## Unreleased`; a release renames its part of it.
 
 ## Unreleased
 
+## CLI 0.7.1 — 2026-10-21
+
 ### Fixed
 - `doorman gateway route`/`unroute`, `doorman mcp recognize`/`forget` and `doorman mcp server install`/`uninstall` work while `doorman watch` runs; watch only keeps the transcript store to itself, and an answer it saves no longer writes over a setting changed meanwhile.
 - `doorman gateway route`/`unroute` work while the app runs (the app follows the config change); `doorman mcp recognize` while the app runs says to quit the app instead of pointing at a control the app doesn't show.
-- The app takes the home directory from `$HOME`, as the guard and the CLI do; a run with a redirected `HOME` no longer reads or writes MCP configs in the account's real home, and a sandboxed run refuses any write that would land outside its own home.
 - The transcript store is rewritten through a temporary file after a retention prune, so a reader never sees half a file.
 - Registering Doorman's MCP server (Settings → Agents can ask Doorman, `doorman mcp server install`) no longer replaces an agent's MCP config it can't read, a server of your own named `doorman`, or a server list that isn't an object: that config is skipped with a message saying how to fix it, and the other agents still get the server.
 - Registering edits each MCP config in place — comments, trailing commas, indentation and key order kept — so VS Code `mcp.json` files with comments are accepted, and unregistering gives the file back byte for byte (a file Doorman created is removed). The `.doorman.bak` beside it keeps the original from before Doorman's first edit, with the original's permissions.
@@ -35,6 +36,18 @@ under `## Unreleased`; a release renames its part of it.
 - `doorman gateway route` says what the gateway does in this build — it records the tools a server advertises and the calls it answers — instead of promising to hold risky calls; `doorman gateway observed` no longer names or counts MCP rules the app hides.
 - `doorman gateway calls` shows a refused, unattended or failed hold as such (not "ok"), shows a held call and its result as one row, and says "timed out after 60s".
 - When MCP gateway permissions come back, a call can't slip past them in a JSON-RPC batch or with an unusual id, a refusal is never written into the middle of a server's reply, and a held call the agent cancelled or stopped waiting for is not run when approved later.
+
+## App 0.7.1 — 2026-10-21
+
+### Fixed
+- Settings → Agents can ask Doorman no longer replaces an agent's MCP config it can't read, a server of your own named `doorman`, or a server list that isn't an object: that config is skipped with a message saying how to fix it, and the other agents still get the server.
+- It edits each MCP config in place — comments, trailing commas, indentation and key order kept — so VS Code `mcp.json` files with comments are accepted, and turning it off gives the file back byte for byte. It no longer creates stable VS Code's `mcp.json` on a machine with only Insiders, no longer fails on a `.DS_Store` in VS Code's profiles folder, writes through symlinked configs, refuses read-only ones, and finds Copilot CLI under `$COPILOT_HOME`.
+- The guard no longer holds an agent's calls to Doorman's own MCP tools, which only read, so "check before you run" works; the tools are marked read-only, so Codex with `approval_policy=never` runs them.
+- Doorman's MCP server explains each held call once, with how it ended, names pack and custom rules, says when the guard isn't installed in any agent, and answers every request before it exits.
+- The MCP gateway passes tool-call arguments through byte for byte (a non-ASCII character split across two writes is no longer turned into `�`), hands over a server's last reply before exiting, survives broken pipes and stops its server with it.
+- The gateway's records mask secrets in tool descriptions, schemas and results and are readable only by you.
+- The app takes the home directory from `$HOME`, as the guard and the CLI do; a run with a redirected `HOME` no longer reads or writes MCP configs in the account's real home, and a sandboxed run refuses any write that would land outside its own home.
+- The transcript store is rewritten through a temporary file after a retention prune, and the MCP config watcher keeps seeing changes after an editor saves by renaming a new file over the old one.
 
 ## CLI 0.7.0 — 2026-10-21
 

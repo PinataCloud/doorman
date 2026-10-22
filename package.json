@@ -1,7 +1,7 @@
 {
   "name": "doorman",
   "productName": "Doorman",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Doorman for Mac — local-first token usage, Security Radar and event ledger for AI coding agents. 100% local: nothing leaves the machine.",
   "main": "build/main/index.js",
