@@ -725,16 +725,21 @@ export function uninstallGuard(): { ok: true } | { ok: false; error: string; fai
       try {
         const hostStates = states.filter((s) => s.host === host);
         const companions = (host.companions ?? []).map((companion) => ({ companion, path: companion.path(home, process.env) }));
-        const artifacts = hostArtifacts(host);
-        refuseForeignTargets([...hostStates.map((s) => s.docPath), ...companions.map((c) => c.path), ...artifacts.map((a) => a.path)]);
-        for (const state of hostStates) {
-          const next = host.remove(state.doc);
-          if (next !== undefined) writeDocumentAtomically(state.docPath, next);
-        }
-        for (const { companion, path } of companions) {
+        const artifacts = hostArtifacts(host).filter((a) => existsSync(a.path));
+        // What this host will actually rewrite or delete: a host with nothing
+        // of ours (an agent whose config folder lies outside a sandboxed HOME,
+        // say, through XDG_CONFIG_HOME) has nothing to refuse.
+        const documents = hostStates.flatMap((s) => {
+          const next = host.remove(s.doc);
+          return next === undefined ? [] : [{ path: s.docPath, next }];
+        });
+        const companionWrites = companions.flatMap(({ companion, path }) => {
           const next = companion.remove(readDocument(path));
-          if (next !== undefined) writeDocumentAtomically(path, next);
-        }
+          return next === undefined ? [] : [{ path, next }];
+        });
+        refuseForeignTargets([...documents.map((d) => d.path), ...companionWrites.map((c) => c.path), ...artifacts.map((a) => a.path)]);
+        for (const { path, next } of documents) writeDocumentAtomically(path, next);
+        for (const { path, next } of companionWrites) writeDocumentAtomically(path, next);
         removeArtifacts(artifacts);
       } catch (err) {
         failures.push({ id: host.id, label: host.label, error: errorText(err) });

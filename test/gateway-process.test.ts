@@ -334,6 +334,8 @@ describe("the end of a session", () => {
     const g = compiled({ FAKE_PIDFILE: pidfile });
     await waitFor(() => existsSync(pidfile) && readFileSync(pidfile, "utf8"));
     g.gw.stdout.destroy();
+    // The gateway leaves once its client has; writes racing that are the test's to lose.
+    g.gw.stdin.on("error", () => {});
     for (let i = 0; i < 200; i++) g.gw.stdin.write(`${JSON.stringify(call(i, "echo", { text: "x".repeat(10_000) }))}\n`);
     await g.exited;
     expect(g.err()).not.toContain("EPIPE");

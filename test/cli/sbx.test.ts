@@ -25,7 +25,9 @@ const ROOT = join(__dirname, "..", "..");
 const FAKE_SBX = join(ROOT, "test", "fixtures", "fake-sbx.mjs");
 const CLI = join(ROOT, "build", "main", "cli", "index.js");
 
-async function until(check: () => boolean, what: string, ms = 15_000): Promise<void> {
+/** Generous: every sandbox here is a fake `sbx` plus a CLI process, several of
+ * them at once, and a shared CI runner can take seconds per process. */
+async function until(check: () => boolean, what: string, ms = 45_000): Promise<void> {
   const started = Date.now();
   while (!check()) {
     if (Date.now() - started > ms) throw new Error(`timed out waiting for ${what}`);
@@ -163,7 +165,7 @@ describe("doorman sbx", () => {
     expect(host.seen.err.split("Sandbox nokit:").length - 1).toBe(1);
     // eslint-disable-next-line no-console
     if (process.env.SHOW_SBX_OUTPUT) console.log(`${host.seen.err}\n----- stdout -----\n${host.seen.out}`);
-  }, 60_000);
+  }, 120_000);
 
   it("a host killed outright ends every watch inside at once: their stdin ends", async () => {
     sandboxes([{ name: "alpha" }, { name: "beta" }]);

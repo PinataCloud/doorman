@@ -56,7 +56,7 @@ describe("doorman guard and policy commands", () => {
   let home: string;
   let appData: string;
   let dataDir: string;
-  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR };
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DOORMAN_APPDATA_DIR: process.env.DOORMAN_APPDATA_DIR, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "doorman-cli-guard-"));
@@ -275,6 +275,18 @@ describe("doorman guard and policy commands", () => {
       expect(off.out).toMatch(/Claude Code\s+missing/);
       expect(carriesGuardMarker(readFileSync(settings(), "utf8"))).toBe(false);
       expect(prefs().guard_wanted).toBe(false);
+    });
+
+    // GitHub's runners set XDG_CONFIG_HOME, so OpenCode's folder lies outside
+    // the redirected HOME, where a sandboxed run may not write.
+    it("uninstalls in a sandboxed run while an agent without our entry keeps its config outside HOME", async () => {
+      const cli = builtMain();
+      process.env.XDG_CONFIG_HOME = join(root, "outside", ".config");
+      writeFileSync(settings(), "{}");
+      expect((await run(["guard", "install"], cli)).code).toBe(0);
+      const off = await run(["guard", "uninstall"], cli);
+      expect(off.code, off.err).toBe(0);
+      expect(carriesGuardMarker(readFileSync(settings(), "utf8"))).toBe(false);
     });
 
     it("matches a mistyped subcommand against the family's commands", async () => {
