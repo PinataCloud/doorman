@@ -1,0 +1,72 @@
+<!doctype html>
+<!-- The README's "three kinds of rules" graphic, docs/images/rules-kinds-light.png
+     and -dark.png. To re-render: serve the repository root over HTTP, open
+     docs/graphics/kinds.html?theme=light (then ?theme=dark) in Chromium at
+     1200 wide with device scale 2, and screenshot the page's full height with a
+     transparent background. -->
+<html><head><meta charset="utf-8"><style>
+@font-face { font-family: Hanken; src: url(../../assets/fonts/HankenGroteskVariable.ttf); font-weight: 100 900; }
+html, body { margin: 0; background: transparent; }
+body { width: 1200px; font-family: Hanken, sans-serif; padding: 8px 0 12px; box-sizing: border-box; }
+body.light { --card: #FFFFFF; --line: #DDD0EE; --title: #1E1E24; --text: #5F5F65; --tag: #F1E8FF; --tagtext: #5a2a9a; --track: #F7F3FC; --muted: #808086; }
+body.dark  { --card: #2A0A47; --line: #4b2370; --title: #F3E9FF; --text: #cbb9e6; --tag: #1D0033; --tagtext: #d9b8ff; --track: #1D0033; --muted: #a891c8; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 0 8px; }
+.card { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 24px 24px 20px; position: relative; overflow: hidden;
+  box-shadow: 0 1px 0 #ffffff08 inset, 0 12px 30px #1d003314; }
+.card p:last-of-type { margin-bottom: 16px; }
+.card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--stripe); }
+.k1 { --stripe: linear-gradient(90deg, #7A23CF, #953BED); }
+.k2 { --stripe: linear-gradient(90deg, #953BED, #FF3AB4); }
+.k3 { --stripe: linear-gradient(90deg, #FF3AB4, #FF8AD1); }
+.icon { width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center; background: var(--stripe); box-shadow: 0 8px 20px #953BED40; }
+.icon svg { width: 24px; height: 24px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+h3 { margin: 18px 0 8px; font-size: 22px; font-weight: 750; color: var(--title); letter-spacing: -.2px; }
+p { margin: 0 0 6px; font-size: 15.5px; line-height: 1.45; color: var(--text); }
+.tag { align-self: flex-start; margin-top: auto; display: inline-block; font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--tagtext); background: var(--tag);
+  border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; }
+.modes { margin: 22px 8px 0; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px 22px 20px; }
+.modes .head { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+.track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.m { border-radius: 12px; padding: 12px 14px; background: var(--track); border: 1px solid var(--line); position: relative; }
+.m .n { font: 800 14px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1.5px; padding: 3px 8px; border-radius: 6px; display: inline-block; }
+.m .d { margin-top: 8px; font-size: 15px; color: var(--text); line-height: 1.35; }
+.obs .n   { background: #80808633; color: var(--title); }
+.warn .n  { background: #FF3AB4; color: #fff; }
+.ask .n   { background: #C48A10; color: #fff; }
+.block .n { background: #B3261E; color: #fff; }
+.bar { height: 6px; border-radius: 6px; margin-top: 14px; background: linear-gradient(90deg, #80808666, #FF3AB4, #C48A10, #B3261E); }
+</style></head><body>
+<div class="cards">
+  <div class="card k1">
+    <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg></div>
+    <h3>Built-in rules</h3>
+    <p>Credentials, secrets, wallet keys and personal data, found by detectors that know the real formats.</p>
+    <p>One security level sets them all.</p>
+    <span class="tag">secret_egress</span>
+  </div>
+  <div class="card k2">
+    <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 4-8 4-8-4 8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 17l8 4 8-4"/></svg></div>
+    <h3>Rule packs</h3>
+    <p>Named sets of rules you switch on per machine. Crypto wallets: 12 rules for transfers, key exports and exchange APIs.</p>
+    <span class="tag">crypto_operations--evm_send</span>
+  </div>
+  <div class="card k3">
+    <div class="icon"><svg viewBox="0 0 24 24"><path d="M8 4c-2 0-3 1-3 3v2c0 1.5-1 2.5-2 3 1 .5 2 1.5 2 3v2c0 2 1 3 3 3"/><path d="M16 4c2 0 3 1 3 3v2c0 1.5 1 2.5 2 3-1 .5-2 1.5-2 3v2c0 2-1 3-3 3"/></svg></div>
+    <h3>Your own rules</h3>
+    <p>Patterns over the tool, the shell command, an MCP server or any argument. No code runs.</p>
+    <p>Dry run on your last 14 days first.</p>
+    <span class="tag">custom:no-prod-apply</span>
+  </div>
+</div>
+<div class="modes">
+  <div class="head"><span>What a rule does to a matching call</span><span>quieter → stricter</span></div>
+  <div class="track">
+    <div class="m obs"><span class="n">OBSERVE</span><div class="d">Record it, let it run</div></div>
+    <div class="m warn"><span class="n">WARN</span><div class="d">Let it run, raise a heads-up</div></div>
+    <div class="m ask"><span class="n">ASK</span><div class="d">Hold it until you answer</div></div>
+    <div class="m block"><span class="n">BLOCK</span><div class="d">Refuse it, no questions</div></div>
+  </div>
+  <div class="bar"></div>
+</div>
+<script>document.body.className = new URLSearchParams(location.search).get("theme") || "light"; document.fonts.ready.then(() => window.done = true);</script>
+</body></html>

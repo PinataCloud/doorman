@@ -46,18 +46,15 @@ Hugging Face with its benchmark and file fingerprints. Built with Llama.
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/rules-light.png" alt="Guardrails: the Crypto wallets rule pack and four rules of your own, each with its mode" width="49%">
-  <img src="docs/screenshots/held-call-dark.png" alt="A cast send to mainnet held by the Crypto wallets pack, waiting for Deny or Allow" width="49%">
+  <img src="docs/screenshots/rules-hero.png" alt="Guardrails showing the Crypto wallets rule pack and four rules of your own, and in front of it a cast send to mainnet held by that pack, waiting for Deny or Allow" width="100%">
 </p>
 
-| Built-in rules | Rule packs | Your own rules |
-|---|---|---|
-| Credentials, secrets, wallet keys and personal data, recognised by detectors that know the real formats | Named sets of rules you switch on per machine, such as Crypto wallets: 12 rules for transfers, key exports and exchange APIs | Patterns over the tool, the shell command, an MCP server or any argument. No code runs |
-| One security level sets them all, from Relaxed to Locked down | Written in the same format as your own rules, so every pack is a worked example to copy | Try it against your last 14 days before you save it |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/rules-kinds-dark.png">
+  <img src="docs/images/rules-kinds-light.png" alt="Three kinds of rules. Built-in rules: credentials, secrets, wallet keys and personal data, found by detectors that know the real formats; one security level sets them all. Rule packs: named sets of rules you switch on per machine, such as Crypto wallets, 12 rules for transfers, key exports and exchange APIs. Your own rules: patterns over the tool, the shell command, an MCP server or any argument; no code runs; dry run on your last 14 days first. What a rule does to a matching call, quieter to stricter: observe (record it, let it run), warn (let it run, raise a heads-up), ask (hold it until you answer), block (refuse it)." width="100%">
+</picture>
 
-Each rule decides what happens to a matching call: **observe** it,
-**warn** about it, **ask** you (the agent waits for your Allow or Deny), or
-**block** it. A rule of your own is a few lines of JSON:
+A rule of your own is a few lines of JSON:
 
 ```json
 {

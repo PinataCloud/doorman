@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- The README's rules hero, docs/screenshots/rules-hero.png. To re-render:
+     serve the repository root over HTTP (`python3 -m http.server`), open
+     docs/graphics/hero.html in Chromium at 1200×640 with device scale 2,
+     screenshot the page and scale it to 1800 wide. Its two windows are
+     docs/screenshots/rules-light.png and held-call-dark.png, taken on the demo
+     machine (scripts/demo-fixture.mjs) with docs/rules.md's example rules. -->
+<html><head><meta charset="utf-8"><style>
+@font-face { font-family: Hanken; src: url(../../assets/fonts/HankenGroteskVariable.ttf); font-weight: 100 900; }
+html, body { margin: 0; }
+/* A background of its own, so body's isn't propagated to the canvas and the
+   rounded corners render transparent. */
+html { background: linear-gradient(transparent, transparent); }
+body { width: 1200px; height: 640px; overflow: hidden; position: relative; font-family: Hanken, sans-serif; border-radius: 20px;
+  background:
+    radial-gradient(circle at 12% 18%, #953BED66, transparent 42%),
+    radial-gradient(circle at 88% 85%, #FF3AB455, transparent 40%),
+    radial-gradient(circle at 70% 10%, #7A23CF44, transparent 35%),
+    linear-gradient(135deg, #1D0033 0%, #2A0A47 55%, #1D0033 100%); }
+.dots { position: absolute; inset: 0; background-image: radial-gradient(#ffffff16 1px, transparent 1.2px); background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 30%, transparent 80%); }
+.win { position: absolute; border-radius: 12px; overflow: hidden; background: #fff; }
+.bar { height: 26px; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
+.bar i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+.bar i:nth-child(1) { background: #FF5F57; } .bar i:nth-child(2) { background: #FEBC2E; } .bar i:nth-child(3) { background: #28C840; }
+.win img { display: block; width: 100%; }
+.a { left: 46px; top: 64px; width: 740px; transform: perspective(1800px) rotateY(9deg) rotateX(3deg); transform-origin: left center;
+  box-shadow: 0 40px 90px #0009, 0 0 0 1px #ffffff22; }
+.a .bar { background: #F7F3FC; border-bottom: 1px solid #DDD0EE; }
+.b { right: 40px; top: 196px; width: 610px; transform: perspective(1800px) rotateY(-7deg) rotateX(2deg); transform-origin: right center;
+  box-shadow: 0 0 0 1px #FF3AB4aa, 0 0 60px #FF3AB455, 0 40px 90px #000a; background: #1D0033; }
+.b .bar { background: #2A0A47; border-bottom: 1px solid #4b2370; }
+.chip { position: absolute; display: flex; align-items: center; gap: 9px; padding: 9px 15px 9px 12px; border-radius: 999px;
+  background: #1D0033cc; border: 1px solid #ffffff30; color: #F3E9FF; font-size: 16px; font-weight: 600; letter-spacing: .1px;
+  box-shadow: 0 10px 30px #0007; backdrop-filter: blur(6px); white-space: nowrap; }
+.chip b { font-weight: 800; }
+.chip span.muted { color: #cdb8ec; font-weight: 500; }
+.dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 12px currentColor; }
+.c1 { left: 70px; top: 22px; } .c1 .dot { background: #953BED; color: #953BED; }
+.c2 { left: 300px; top: 560px; } .c2 .dot { background: #A97FE0; color: #A97FE0; }
+.c3 { right: 64px; top: 140px; } .c3 .dot { background: #FF3AB4; color: #FF3AB4; }
+</style></head><body>
+<div class="dots"></div>
+<div class="win a"><div class="bar"><i></i><i></i><i></i></div><img src="../screenshots/rules-light.png"></div>
+<div class="win b"><div class="bar"><i></i><i></i><i></i></div><img src="../screenshots/held-call-dark.png"></div>
+<div class="chip c1"><span class="dot"></span><b>Rule packs</b><span class="muted">switch one on, per machine</span></div>
+<div class="chip c2"><span class="dot"></span><b>Your own rules</b><span class="muted">a few lines of JSON, no code</span></div>
+<div class="chip c3"><span class="dot"></span><b>Held for you</b><span class="muted">the agent waits for Allow or Deny</span></div>
+<script>Promise.all([...document.images].map(i => i.decode())).then(() => document.fonts.ready).then(() => window.done = true);</script>
+</body></html>
