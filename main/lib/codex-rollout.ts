@@ -75,12 +75,36 @@ function toInt(value: unknown): number {
   return Math.floor(n);
 }
 
+const CODEX_AMBIENT_TAGS = new Set([
+  "apps_instructions",
+  "codex_apps_client_time_context",
+  "codex_apps_open_page_instructions",
+  "collaboration_mode",
+  "context_window",
+  "context_window_guidance",
+  "environment_context",
+  "environments_instructions",
+  "external_codex_apps_open_page",
+  "image",
+  "multi_agent_mode",
+  "plugins_instructions",
+  "realtime_conversation",
+  "recommended_plugins",
+  "skills_instructions",
+  "tools",
+  "user_instructions",
+]);
+
 /** Ambient context Codex injects as user messages: XML-ish wrappers
  * (<environment_context>, <user_instructions>) and the unwrapped AGENTS.md
  * injection ("# AGENTS.md instructions for <path>…"). Neither is a human
  * prompt — as titles, turns or search text they are pure pollution. */
 function isAmbientUserText(text: string): boolean {
-  return text.startsWith("<") || /^#\s*AGENTS\.md instructions/i.test(text);
+  const tag = /^<\/?([a-z][\w:-]*)(?:\s|>)/i.exec(text)?.[1];
+  return (
+    (tag !== undefined && CODEX_AMBIENT_TAGS.has(tag.toLowerCase())) ||
+    /^#\s*AGENTS\.md instructions/i.test(text)
+  );
 }
 
 /**

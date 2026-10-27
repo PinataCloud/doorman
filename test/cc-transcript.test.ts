@@ -122,6 +122,28 @@ describe("parseClaudeTranscript", () => {
     expect(turns).toHaveLength(0);
   });
 
+  it("keeps user prompts that begin with markup", () => {
+    const prompts = [
+      '<div class="card">Fix the accessibility issue</div>',
+      "<configuration>\n  <cache enabled=\"true\" />\n</configuration>",
+    ];
+    const contents = prompts
+      .map((content, index) =>
+        JSON.stringify({
+          type: "user",
+          uuid: `markup-${index}`,
+          timestamp: `2026-08-20T10:00:0${index}.000Z`,
+          sessionId: SESSION,
+          message: { role: "user", content },
+        }),
+      )
+      .join("\n");
+
+    const { turns, detect } = parseClaudeTranscript(contents, SESSION);
+    expect(turns.map((turn) => turn.text)).toEqual(prompts);
+    expect(detect.map((unit) => unit.raw)).toEqual(prompts);
+  });
+
   it("captures tool_result blocks as tool_output units, named by their tool_use id", () => {
     const contents = [
       assistantLine({

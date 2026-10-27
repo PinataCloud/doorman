@@ -63,6 +63,22 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
+const CLAUDE_INTERNAL_USER_TAGS = new Set([
+  "command-args",
+  "command-message",
+  "command-name",
+  "local-command-caveat",
+  "local-command-stderr",
+  "local-command-stdout",
+  "system-reminder",
+  "task-notification",
+]);
+
+function isInternalUserText(text: string): boolean {
+  const tag = /^<\/?([a-z][\w-]*)(?:\s|>)/i.exec(text)?.[1];
+  return tag !== undefined && CLAUDE_INTERNAL_USER_TAGS.has(tag.toLowerCase());
+}
+
 /** The Bash program name, or a file-tool path — what security-detect calls the target. */
 export function toolTarget(toolName: string | undefined, input: unknown): string | undefined {
   if (!input || typeof input !== "object") return undefined;
@@ -175,7 +191,7 @@ export function parseClaudeTranscript(
       if (typeof content !== "string" || content === "") continue;
       // Command wrappers (<command-name>…) and ambient attachments are not
       // human prompts; they'd pollute both search and titles.
-      if (content.startsWith("<")) continue;
+      if (isInternalUserText(content)) continue;
       if (!at) continue;
       const id = str(obj.uuid);
       if (!id) continue;

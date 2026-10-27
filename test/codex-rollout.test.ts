@@ -164,6 +164,23 @@ describe("parseCodexRollout", () => {
     expect(parsed.turns).toHaveLength(1);
   });
 
+  it("keeps user prompts that begin with markup", () => {
+    const prompts = [
+      '<div class="card">Fix the accessibility issue</div>',
+      "<configuration>\n  <cache enabled=\"true\" />\n</configuration>",
+    ];
+    const contents = prompts
+      .map((message, index) =>
+        line("event_msg", { type: "user_message", message }, `2026-08-20T12:00:0${index}.000Z`),
+      )
+      .join("\n");
+
+    const parsed = parseCodexRollout(contents, SESSION);
+    expect(parsed.turns.map((turn) => turn.text)).toEqual(prompts);
+    expect(parsed.detect.map((unit) => unit.raw)).toEqual(prompts);
+    expect(parsed.first_prompt).toBe(prompts[0]);
+  });
+
   it("collects tool calls as detect units anchored to the settling turn", () => {
     const contents = [
       line("session_meta", { session_id: SESSION }),
