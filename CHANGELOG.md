@@ -10,6 +10,16 @@ under `## Unreleased`; a release renames its part of it.
 
 ## Unreleased
 
+## CLI 0.8.2 — 2026-10-27
+
+### Fixed
+- Prompts that start with HTML or XML (for example a pasted `<div>…` or `<svg>…`) now show up in `doorman sessions` and search. Before, any prompt starting with `<` was dropped as if Claude Code or Codex had injected it.
+
+## App 0.8.2 — 2026-10-27
+
+### Fixed
+- Prompts that start with HTML or XML (for example a pasted `<div>…` or `<svg>…`) now show up in session titles, turns and search. Before, any prompt starting with `<` was dropped as if Claude Code or Codex had injected it.
+
 ## CLI 0.8.1 — 2026-10-22
 
 ### Changed
